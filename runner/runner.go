@@ -129,7 +129,7 @@ func (r *Runner) Run() Result {
 		if r.harness.HooksInHeadless {
 			r.prepareToolCall()
 			r.runHeadless()
-			r.checkHookEvents("headless")
+			r.runChecks("headless")
 		} else {
 			r.skip(r.harness.Name + " does not fire hooks in headless mode")
 		}
@@ -139,14 +139,14 @@ func (r *Runner) Run() Result {
 		r.server.ClearLog()
 		r.prepareToolCall()
 		r.runInteractive()
-		r.checkHookEvents("interactive")
+		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
 		os.Remove("/tmp/belt-hook-events.log")
 		r.server.ClearLog()
 		r.prepareToolCall()
 		r.runACP()
-		r.checkHookEvents("acp")
+		r.runChecks("acp")
 	}
 
 	return r.finish()

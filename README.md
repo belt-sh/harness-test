@@ -1,8 +1,8 @@
 # harness-test
 
-Test hooks and plugins against AI coding agent CLIs. Supports 13 agents, 4 API formats, 7 hook formats, headless and interactive (PTY/TUI) modes.
+Conformance test suite for AI coding agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
 
-The tool is agent-agnostic — it tests whether a harness correctly calls hook commands, not what those commands do. Bring your own hook commands or use the built-in test hooks.
+Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection. Agent-agnostic — bring your own hooks or use the built-in test suite.
 
 ## Quick start
 
@@ -20,7 +20,21 @@ harness-test --list
 harness-test --detect
 ```
 
-## What it does
+## What it verifies
+
+Each run checks:
+
+| Check | What it tests |
+|-------|--------------|
+| **Prompt/response** | Agent sends a request, mock server responds, agent produces output |
+| **Hook events** | Lifecycle hooks fire (SessionStart, PromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact) |
+| **API requests** | Mock server received requests in the correct format |
+| **Streaming** | Agent uses SSE streaming (not blocking request/response) |
+| **Model selection** | Correct model name appears in API requests |
+| **Tool calls** | Agent makes tool calls and sends results back |
+| **Context injection** | Hook output (injected context) appears in the agent's response |
+
+## How it works
 
 For each harness, the tool:
 
