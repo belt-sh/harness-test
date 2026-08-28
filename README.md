@@ -1,130 +1,197 @@
 # harness-test
 
-Cross-harness plugin testing tool for belt. Installs AI coding agent CLIs, configures
-hooks pointing at a built-in mock inference server, runs each harness in headless and
-interactive (PTY) modes, and verifies that hooks fire and the agent talks to the mock.
+Test hooks and plugins against AI coding agent CLIs. Supports 13 agents, 4 API formats, 7 hook formats, headless and interactive (PTY/TUI) modes.
+
+The tool is agent-agnostic — it tests whether a harness correctly calls hook commands, not what those commands do. Bring your own hook commands or use the built-in test hooks.
 
 ## Quick start
 
 ```bash
 # Build
-cd tools/harness-test && go build -o harness-test .
+go build -o harness-test .
 
-# Run all harnesses in a container (the intended way)
-docker build -t harness-test -f tests/Dockerfile .
-docker run harness-test --harness all
+# Run in Docker (recommended — installs CLIs automatically)
+cd tests && docker compose run test --harness claude
 
-# Run a single harness
-docker run harness-test --harness claude
+# List harnesses
+harness-test --list
 
-# List available harnesses
-docker run harness-test --list
+# Detect what's installed
+harness-test --detect
 ```
 
-## What it tests
+## What it does
 
-For each harness the tool runs these phases:
+For each harness, the tool:
 
-1. **Install** — installs the CLI if not found (`npm install -g`, `pip install`, `curl | bash`)
-2. **Endpoint** — sets env vars pointing at the built-in mock server
-3. **Config** — writes auth/trust/provider config files to a temp HOME
-4. **Hooks** — registers hook commands for all supported events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact)
-5. **Headless** — runs `<harness> -p "prompt"` and checks output
-6. **Interactive** — starts a PTY session, sends a prompt, waits for response
-7. **Verify** — checks `/tmp/belt-hook-events.log` for hook events, checks mock server request log
+1. **Installs the CLI** if missing (npm, pip, curl)
+2. **Starts a mock inference server** that speaks the right API format
+3. **Writes hook configs** with test commands that log events to a file
+4. **Runs headless mode** (`<agent> -p "prompt"`) and checks output
+5. **Runs interactive mode** (PTY session — types prompt, waits for response)
+6. **Verifies** hook events fired and the mock server received API requests
 
 ## Mock server
 
-Built into the binary. Serves three API formats on a random localhost port:
+Built into the binary. Starts on a random port and speaks all 4 API formats:
 
-| Endpoint | Format | Used by |
+| Endpoint | Format | Harnesses |
 |---|---|---|
-| `POST /v1/chat/completions` | OpenAI Chat | Copilot, Grok, Pi, Hermes, OpenCode |
-| `POST /v1/responses` | OpenAI Responses | Codex |
-| `POST /v1/messages` | Anthropic Messages | Claude |
+| `POST /v1/chat/completions` | OpenAI Chat Completions | copilot, hermes, pi, kimi, goose, qwen, droid |
+| `POST /v1/responses` | OpenAI Responses | codex, grok, opencode, kilo |
+| `POST /v1/messages` | Anthropic Messages | claude |
+| `POST /v1beta/models/:model:streamGenerateContent` | Gemini | gemini |
 
-All endpoints support streaming (SSE) and non-streaming. When `toolCallMode` is on,
-the first response is a tool call (`Read README.md`), triggering PreToolUse/PostToolUse
-hooks.
+All endpoints support streaming (SSE) and non-streaming.
 
-Utilities: `GET /log`, `GET /log/count`, `DELETE /log`, `POST /response`.
+### Tool calls
+
+When `PrepareToolCall` is set, the first response includes a tool call (e.g., `Read README.md`). The runner sends a tool result back, triggering PreToolUse/PostToolUse hooks. This tests the full tool-call lifecycle.
+
+### Server-only mode
+
+```bash
+harness-test --server
+```
+
+Starts just the mock server — useful for manual testing or developing hooks. Endpoints:
+
+- `GET /log` — show request log
+- `GET /log/count` — request count
+- `DELETE /log` — clear log
+- `POST /response` — set custom response body
+
+## Hook formats
+
+The tool generates test hooks in 7 formats:
+
+| Format | Harnesses | Config file |
+|---|---|---|
+| JSONNested | claude, codex, grok, droid, goose, qwen, gemini, cursor, windsurf | `hooks.json` or `settings.json` |
+| JSONCopilot | copilot | `hooks.json` with `version:1`, `bash` field |
+| TOML | kimi | `config.toml` with `[[hooks]]` entries |
+| YAML | hermes | `config.yaml` hooks block |
+| TypeScript (extension) | pi | `.ts` with `pi.on(event, ...)` |
+| TypeScript (plugin) | opencode, kilo | `.ts` exporting plugin object |
+
+### Writing your own hooks
+
+Test hooks are shell commands that log an event tag to a file:
+
+```bash
+echo SESSION_START >> /tmp/hook-events.log
+```
+
+For PromptSubmit hooks, the command also outputs context to inject:
+
+```bash
+echo PROMPT >> /tmp/hook-events.log && echo 'The project codename is TEST-123.'
+```
+
+The runner checks `/tmp/belt-hook-events.log` for event tags after each phase. To test your own hook commands, modify the `writeHooks()` method in `runner/runner.go` or create a custom hook config and use `--server` mode.
+
+## Headless vs interactive
+
+**Headless** — runs `<agent> -p "What is the project codename?"` and captures stdout. Fast, deterministic. Most harnesses support this via `-p`, `exec`, or `--prompt` flags.
+
+**Interactive (PTY)** — starts a real terminal session via `github.com/creack/pty`. Types the prompt character by character, waits for response patterns, sends `/compact` if supported, then exits. Tests the full TUI flow including onboarding dismissal, slow input for anti-paste protection, and exit commands.
+
+Key PTY features:
+- `SlowInput` — types characters with 5ms delay (bypasses crossterm paste detection)
+- `OnboardingDismiss` — pattern-matched dialog dismissal (theme, trust, continue prompts)
+- `WaitForAny` — waits for any of several patterns in terminal output
+- `CompactCommand` — tests `/compact` or `/compress` after a warmup prompt
 
 ## Harness matrix
 
-| Harness | Binary | Install | API | Hook Format | Hooks Headless | Hooks Interactive |
+| Harness | Binary | API | Hook Format | Events | Headless | Interactive |
 |---|---|---|---|---|---|---|
-| claude | `claude` | `npm -g @anthropic-ai/claude-code` | Anthropic | JSON (settings.json) | ✅ | ✅ |
-| codex | `codex` | `npm -g @openai/codex` + belt plugin | Responses | JSON (plugin) | ✅ | ✅ |
-| copilot | `copilot` | `npm -g @github/copilot` | OpenAI | JSON (Copilot v1) | ✅ | ✅ |
-| grok | `grok` | `curl x.ai/cli/install.sh` | OpenAI | JSON (nested) | ❌ | ✅ (PTY) |
-| pi | `pi` | `npm -g @earendil-works/pi-coding-agent` | OpenAI | TS extension | ✅ | ✅ |
-| hermes | `hermes` | `pip install hermes-agent` | OpenAI | YAML + shell script | ✅ | ✅ |
-| opencode | `opencode` | `npm -g opencode-ai` | OpenAI | TS plugin (belt) | ✅ | ✅ |
+| claude | `claude` | Anthropic | JSONNested | 6 | ✅ | ✅ |
+| codex | `codex` | Responses | JSONNested | 6 | ✅ | ✅ |
+| copilot | `copilot` | OpenAI | JSONCopilot | 2 | ✅ | ✅ |
+| droid | `droid` | OpenAI | JSONNested | 6 | ✅ | ✅ |
+| gemini | `gemini` | Gemini | JSONNested | 6 | ✅ | ✅ |
+| goose | `goose` | OpenAI | JSONNested | 4 | ✅ | ✅ |
+| grok | `grok` | Responses | JSONNested | 4 | ✅ | ✅ |
+| hermes | `hermes` | OpenAI | YAML | 4 | ✅ | ✅ |
+| kilo | `kilo` | Responses | TSPlugin | 4 | ✅ | ✅ |
+| kimi | `kimi` | OpenAI | TOML | 4 | ✅ | ✅ |
+| opencode | `opencode` | Responses | TSPlugin | 4 | ✅ | ✅ |
+| pi | `pi` | OpenAI | TSExtension | 2 | ✅ | ✅ |
+| qwen | `qwen` | OpenAI | JSONNested | 6 | ✅ | ✅ |
 
-## Event coverage
+## Adding a new harness
 
-The Claude plugin is the reference. Each harness maps these lifecycle events to its native names:
+Add an entry to `harness.All` in `harness/registry.go`:
 
-| Event | Claude | Codex | Copilot | Grok | Pi | Hermes |
-|---|---|---|---|---|---|---|
-| SessionStart | `SessionStart` | `SessionStart` | — | — | — | — |
-| PromptSubmit | `UserPromptSubmit` | `UserPromptSubmit` | `userPromptSubmitted` | `UserPromptSubmit` | `before_agent_start` | `pre_llm_call` |
-| PreToolUse | `PreToolUse` | `PreToolUse` | — | `PreToolUse` | — | `pre_tool_call` |
-| PostToolUse | `PostToolUse` | `PostToolUse` | — | `PostToolUse` | — | `post_tool_call` |
-| Stop | `Stop` | `Stop` | `agentStop` | `Stop` | `agent_end` | `subagent_stop` |
-| PreCompact | `PreCompact` | `PreCompact` | — | — | — | — |
+```go
+"myagent": {
+    Name: "myagent", Binary: "myagent",
+    InstallCmd: []string{"npm", "install", "-g", "myagent-cli"},
+    APIFormat: OpenAI,                          // or Responses, Anthropic, Gemini
+    EnvVars: map[string]string{
+        "MYAGENT_BASE_URL": "{{.BaseURL}}",     // mock server URL
+    },
+    APIKeyEnvVar: "MYAGENT_API_KEY",
+    DefaultModel: "gpt-4o-mini",
+    HookFormat:    JSONNested,                  // or JSONCopilot, TOML, YAML, TSExtension, TSPlugin
+    HookConfigDir: ".myagent",                  // relative to $HOME
+    Events: Events{
+        PromptSubmit: "UserPromptSubmit",        // harness-specific event name
+        Stop:         "Stop",
+    },
+    HeadlessCmd:         []string{"myagent", "-p"},
+    HooksInHeadless:     true,
+    InteractiveCmd:      []string{"myagent"},
+    ExitCommand:         "/exit",
+    HooksInInteractive:  true,
+},
+```
+
+The runner handles everything from this config — no per-harness code needed.
 
 ## Architecture
 
 ```
-harness-test binary
-├── server/     Mock inference server (OpenAI + Anthropic + Responses)
-├── harness/    Data-driven harness configs (registry.go)
-├── runner/     Test runner (install → config → hooks → run → verify)
-│   └── pty.go  PTY session for interactive/TUI testing
-└── main.go     CLI entry point
+harness-test
+├── main.go         CLI: --harness, --detect, --install, --server, --hooks
+├── harness/
+│   ├── harness.go  Harness struct (API format, hook format, events, commands)
+│   ├── registry.go 13 harness configs (pure data, no code)
+│   ├── detect.go   5-probe system detection (config-dir, PATH, known-path, npm, env-var)
+│   └── install.go  Hook config generation for 7 formats
+├── runner/
+│   ├── runner.go   Test runner (install → config → hooks → headless → interactive → verify)
+│   └── pty.go      PTY session management (start, send, wait, close)
+└── server/
+    ├── server.go   Mock server + request log + tool call mode
+    ├── chat.go     OpenAI Chat Completions (streaming + non-streaming)
+    ├── responses.go OpenAI Responses format
+    ├── anthropic.go Anthropic Messages format
+    ├── gemini.go   Gemini generateContent format
+    └── types.go    Shared request/response types
 ```
 
-Each harness is a pure data struct — no per-harness code paths in the runner.
-Adding a new harness means adding an entry to `harness.All` in `registry.go`.
+## Docker
 
-## Adding a new harness
+The Dockerfile installs Node.js, Go, Python, git, and bubblewrap (for Codex sandboxing). Runs as non-root `testuser` with npm globals in `~/.npm-global/`.
 
-```go
-"myharness": {
-    Name: "myharness", Binary: "myharness",
-    InstallCmd: []string{"npm", "install", "-g", "myharness"},
-    APIFormat: harness.OpenAI,
-    EnvVars: map[string]string{
-        "MYHARNESS_BASE_URL": "{{.BaseURL}}",
-    },
-    APIKeyEnvVar: "MYHARNESS_API_KEY",
-    DefaultModel: "gpt-4o-mini",
-    HookFormat:    harness.JSONNested,
-    HookConfigDir: ".myharness",
-    Events: harness.Events{
-        PromptSubmit: "UserPromptSubmit",
-        Stop:         "Stop",
-    },
-    HeadlessCmd:     []string{"myharness", "-p"},
-    HooksInHeadless: true,
-    InteractiveCmd:  []string{"myharness"},
-    ExitCommand:     "/exit",
-    HooksInInteractive: true,
-    CanInject:       true,
-},
+```bash
+cd tests
+docker compose build
+docker compose run test --harness all          # all harnesses, both modes
+docker compose run test --harness claude,grok   # specific harnesses
+docker compose run test --harness all --mode headless  # headless only
 ```
 
-## Special cases
+## Detection
 
-**Codex** — hooks only load through the plugin system. Uses `PreserveHome` (real HOME
-with installed belt plugin) and passes model provider config via `-c` flags.
+`harness-test --detect` probes the system for installed harnesses using 5 strategies:
 
-**Grok** — `-p` mode skips hooks (dispatcher is in TUI/pager layer). Tests use
-interactive PTY mode with mock auth (`auth.json`) and trusted folders.
-
-**Hermes** — `-z` mode is silent. Uses `hermes chat -q` instead. Config `base_url` is
-ignored when `--provider` is set; `OPENROUTER_BASE_URL` env var overrides the hardcoded URL.
-
-**OpenCode** — uses TypeScript plugin modules, not JSON hooks. Belt plugin provides
-context injection via `experimental.chat.system.transform`.
+| Probe | What it checks | Example |
+|---|---|---|
+| config-dir | `~/.claude/`, `~/.codex/` exist | Agent was used on this machine |
+| path-lookup | Binary in PATH | Currently installed |
+| known-path | Binary at `~/.local/bin/`, `~/.grok/bin/` | Installed but not in PATH |
+| package-reg | `npm list -g --json` | npm-installed globally |
+| env-var | `CLAUDECODE`, `CODEX_SANDBOX` set | Running inside this agent now |
