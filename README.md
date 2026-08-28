@@ -1,10 +1,10 @@
 # harness-test
 
-Conformance test suite for AI coding agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
+Conformance test suite for AI agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection.
 
-Built for [belt.sh](https://belt.sh) — skills, knowledge, and tools for every coding agent. Open source and agent-agnostic.
+Built for [belt.sh](https://belt.sh) — skills, knowledge, and tools for every AI agent. Open source and agent-agnostic.
 
 [![CI](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml)
 
@@ -31,7 +31,7 @@ You're building something like [T3 Code](https://github.com/pingdotgg/t3code) �
 harness-test --harness claude,grok,opencode --mode acp
 ```
 
-### "I'm building a coding agent and want to verify my hook/API implementation"
+### "I'm building a agent and want to verify my hook/API implementation"
 
 You're building a new agent CLI and want to verify it speaks the right API format, fires hooks at the right time, and handles the prompt/response lifecycle correctly. Add your agent to the registry and get instant conformance testing.
 
