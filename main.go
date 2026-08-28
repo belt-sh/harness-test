@@ -92,7 +92,7 @@ func main() {
 
 	if *listFlag {
 		fmt.Println("Available harnesses:")
-		fmt.Printf("  %-12s %-10s %-8s %-10s\n", "NAME", "BINARY", "API", "HOOKS")
+		fmt.Printf("  %-12s %-10s %-8s %-10s %-5s\n", "NAME", "BINARY", "API", "HOOKS", "ACP")
 		names := make([]string, 0, len(harness.All))
 		for name := range harness.All {
 			names = append(names, name)
@@ -100,8 +100,12 @@ func main() {
 		sort.Strings(names)
 		for _, name := range names {
 			h := harness.All[name]
-			fmt.Printf("  %-12s %-10s %-8s %-10s\n",
-				name, h.Binary, apiName(h.APIFormat), hookName(h.HookFormat))
+			acp := "—"
+			if len(h.ACPCmd) > 0 {
+				acp = "✓"
+			}
+			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s\n",
+				name, h.Binary, apiName(h.APIFormat), hookName(h.HookFormat), acp)
 		}
 		return
 	}

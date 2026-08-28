@@ -9,6 +9,13 @@ var standardEvents = Events{
 	PreCompact:   "PreCompact",
 }
 
+func withACP(h Harness, cmd []string, args []string) Harness {
+	h.ACPCmd = cmd
+	h.ACPArgs = args
+	h.HooksInACP = true
+	return h
+}
+
 func tsPluginHarness(name, binary, installPkg, hookDir string) Harness {
 	return Harness{
 		Name: name, Binary: binary,
@@ -196,6 +203,9 @@ var All = map[string]Harness{
 		ExitCommand:          "/exit",
 		CompactCommand:       "/compact",
 		HooksInInteractive:   true,
+		ACPCmd:     []string{"grok", "agent", "stdio"},
+		ACPArgs:    []string{"--always-approve"},
+		HooksInACP: true,
 	},
 	"pi": {
 		Name: "pi", Binary: "pi",
@@ -378,7 +388,8 @@ var All = map[string]Harness{
 		CompactCommand:          "/compress",
 		HooksInInteractive:      true,
 	},
-	"opencode": tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
+	"opencode": withACP(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
+		[]string{"opencode", "acp"}, nil),
 	"droid": {
 		Name: "droid", Binary: "droid",
 		InstallCmd: []string{"npm", "install", "-g", "droid"},
