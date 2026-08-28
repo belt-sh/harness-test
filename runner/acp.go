@@ -99,10 +99,13 @@ func (d *ACPDriver) Start() error {
 	d.scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	go d.readLoop()
 
-	// Initialize
+	// Initialize with capabilities
 	initResult, err := d.call("initialize", map[string]any{
 		"protocolVersion": 1,
 		"clientInfo":      map[string]string{"name": "harness-test", "version": "1.0.0"},
+		"capabilities": map[string]any{
+			"permissionRequests": true,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
@@ -232,17 +235,37 @@ func (d *ACPDriver) readLoop() {
 			continue
 		}
 
-		if msg.ID != nil {
-			// Response to a request
+		if msg.ID != nil && msg.Method == "" {
+			// Response to a request we made
 			d.responses <- msg.Result
 		} else if msg.Method == "session/update" {
-			// Notification
 			var upd acpUpdate
 			if json.Unmarshal(msg.Params, &upd) == nil {
 				d.updates <- upd
 			}
+		} else if msg.Method == "session/request_permission" {
+			// Agent wants tool approval — auto-approve
+			d.autoApprove(msg)
 		}
 	}
+}
+
+// autoApprove responds to permission requests with "allow".
+func (d *ACPDriver) autoApprove(msg acpResponse) {
+	if msg.ID == nil {
+		return
+	}
+	resp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      *msg.ID,
+		"result": map[string]any{
+			"decision": "allow",
+		},
+	}
+	data, _ := json.Marshal(resp)
+	data = append(data, '\n')
+	d.stdin.Write(data)
+	d.appendOutput("[acp] auto-approved tool permission\n")
 }
 
 func extractUpdateText(upd acpUpdate) string {
