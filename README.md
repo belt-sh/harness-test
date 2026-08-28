@@ -90,11 +90,38 @@ echo PROMPT >> /tmp/hook-events.log && echo 'The project codename is TEST-123.'
 
 The runner checks `/tmp/belt-hook-events.log` for event tags after each phase. To test your own hook commands, modify the `writeHooks()` method in `runner/runner.go` or create a custom hook config and use `--server` mode.
 
-## Headless vs interactive
+## Three control modes
 
-**Headless** — runs `<agent> -p "What is the project codename?"` and captures stdout. Fast, deterministic. Most harnesses support this via `-p`, `exec`, or `--prompt` flags.
+The tool drives agents in three ways:
 
-**Interactive (PTY)** — starts a real terminal session via `github.com/creack/pty`. Types the prompt character by character, waits for response patterns, sends `/compact` if supported, then exits. Tests the full TUI flow including onboarding dismissal, slow input for anti-paste protection, and exit commands.
+```
+harness-test --harness claude --mode headless      # CLI args
+harness-test --harness claude --mode interactive    # PTY/TUI
+harness-test --harness claude --mode acp            # Agent Client Protocol
+harness-test --harness claude --mode both           # headless + interactive (default)
+```
+
+### Headless (CLI args)
+
+Runs `<agent> -p "prompt"` and captures stdout. Fast, deterministic. Most harnesses support this via `-p`, `exec`, or `--prompt` flags.
+
+### Interactive (PTY)
+
+Starts a real terminal session via `github.com/creack/pty`. Types the prompt character by character, waits for response patterns, sends `/compact` if supported, then exits. Tests the full TUI flow including onboarding dismissal, slow input for anti-paste protection, and exit commands.
+
+### ACP (Agent Client Protocol)
+
+Launches the agent in ACP mode (`<agent> acp`) and communicates via JSON-RPC over stdio. Structured, programmatic — no terminal emulation, no output parsing. The flow:
+
+1. `initialize` — negotiate protocol version and capabilities
+2. `session/new` — create a session
+3. `session/prompt` — send user turns
+4. `session/update` — receive agent messages, tool calls, status
+5. `session/close` — end the session
+
+ACP is the standard protocol for editors (T3 Code, Zed, Cursor) to control agents. Testing hooks via ACP verifies they fire through the programmatic path, not just CLI/TUI.
+
+Agents with ACP support: claude (`claude acp`). More agents are adopting ACP.
 
 Key PTY features:
 - `SlowInput` — types characters with 5ms delay (bypasses crossterm paste detection)
@@ -161,8 +188,10 @@ harness-test
 │   ├── detect.go   5-probe system detection (config-dir, PATH, known-path, npm, env-var)
 │   └── install.go  Hook config generation for 7 formats
 ├── runner/
-│   ├── runner.go   Test runner (install → config → hooks → headless → interactive → verify)
-│   └── pty.go      PTY session management (start, send, wait, close)
+│   ├── runner.go   Test runner (install → config → hooks → run → verify)
+│   ├── driver.go   Driver interface (headless, PTY, ACP all implement this)
+│   ├── pty.go      PTY driver — terminal session management
+│   └── acp.go      ACP driver — JSON-RPC over stdio
 └── server/
     ├── server.go   Mock server + request log + tool call mode
     ├── chat.go     OpenAI Chat Completions (streaming + non-streaming)

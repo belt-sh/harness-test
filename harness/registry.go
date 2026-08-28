@@ -88,6 +88,9 @@ var All = map[string]Harness{
 			{Pattern: "theme"}, {Pattern: "Theme"}, {Pattern: "style"},
 			{Pattern: "trust"}, {Pattern: "Trust"}, {Pattern: "onboarding"},
 		},
+		ACPCmd:     []string{"claude", "acp"},
+		ACPArgs:    []string{"--model", "{{.Model}}"},
+		HooksInACP: true,
 	},
 	"codex": {
 		Name: "codex", Binary: "codex",

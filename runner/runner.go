@@ -32,6 +32,7 @@ const (
 	ModeBoth Mode = iota
 	ModeHeadless
 	ModeInteractive
+	ModeACP
 )
 
 type HookSource int
@@ -82,6 +83,8 @@ func (r *Runner) SetMode(m string) {
 		r.mode = ModeHeadless
 	case "interactive":
 		r.mode = ModeInteractive
+	case "acp":
+		r.mode = ModeACP
 	default:
 		r.mode = ModeBoth
 	}
@@ -137,6 +140,13 @@ func (r *Runner) Run() Result {
 		r.prepareToolCall()
 		r.runInteractive()
 		r.checkHookEvents("interactive")
+	}
+	if r.mode == ModeACP {
+		os.Remove("/tmp/belt-hook-events.log")
+		r.server.ClearLog()
+		r.prepareToolCall()
+		r.runACP()
+		r.checkHookEvents("acp")
 	}
 
 	return r.finish()
@@ -669,6 +679,59 @@ func (r *Runner) runInteractive() {
 	}
 
 	r.pass("interactive session completed")
+}
+
+func (r *Runner) runACP() {
+	if len(r.harness.ACPCmd) == 0 || !r.harness.HooksInACP {
+		r.skip(r.harness.Name + " does not support ACP mode")
+		return
+	}
+
+	fmt.Println("[phase 7] ACP (JSON-RPC over stdio)")
+
+	dir := r.workDir()
+
+	var args []string
+	args = append(args, r.harness.ACPCmd[1:]...)
+	for _, a := range r.harness.ACPArgs {
+		args = append(args, r.expand(a))
+	}
+
+	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, os.Environ())
+	if err := driver.Start(); err != nil {
+		r.fail("ACP start: " + err.Error())
+		return
+	}
+	defer driver.Close()
+	r.pass("ACP session started")
+
+	prompt := "What is the project codename? Reply ONLY the codename."
+	if err := driver.SendPrompt(prompt); err != nil {
+		r.fail("ACP prompt: " + err.Error())
+		return
+	}
+
+	_, err := driver.WaitForResponse(
+		[]string{"mock", "hello", "Hello", "codename", "server"},
+		60*time.Second,
+	)
+	if err != nil {
+		r.fail("ACP response: " + err.Error())
+		return
+	}
+	r.pass("ACP prompt answered")
+
+	if r.harness.CompactCommand != "" {
+		driver.SendCommand(r.harness.CompactCommand)
+		time.Sleep(3 * time.Second)
+	}
+
+	r.lastOutput = driver.Output()
+	if os.Getenv("HARNESS_DEBUG") != "" {
+		fmt.Printf("    [debug] ACP output (%d bytes):\n%s\n", len(r.lastOutput), r.lastOutput)
+	}
+
+	r.pass("ACP session completed")
 }
 
 func (r *Runner) checkHookEvents(phase string) {

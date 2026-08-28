@@ -85,6 +85,11 @@ type Harness struct {
 	HooksInInteractive      bool
 	OnboardingDismiss       []DismissAction
 
+	// ACP (Agent Client Protocol) mode — JSON-RPC over stdio
+	ACPCmd          []string // command to start agent in ACP mode (e.g. ["claude", "acp"])
+	ACPArgs         []string // extra args for ACP mode
+	HooksInACP      bool
+
 	// Setup
 	PreserveHome bool // don't override HOME (harness needs installed plugins)
 }

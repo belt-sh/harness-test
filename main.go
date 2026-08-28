@@ -16,7 +16,7 @@ import (
 func main() {
 	var (
 		harnessName  = flag.String("harness", "", "harness to test (or 'all')")
-		mode         = flag.String("mode", "both", "test mode: headless, interactive, or both")
+		mode         = flag.String("mode", "both", "test mode: headless, interactive, both, or acp")
 		hooks        = flag.String("hooks", "mock", "hook source: mock (test scripts) or belt (real belt hooks)")
 		listFlag     = flag.Bool("list", false, "list available harnesses")
 		detectFlag   = flag.Bool("detect", false, "detect installed harnesses on this system")
