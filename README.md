@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://belt.sh"><strong>belt.sh</strong></a> — connect your coding agent to skills, knowledge, and tools. It learns from your sessions.
+</p>
+
+---
+
 # harness-test
 
 Conformance test suite for AI coding agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
