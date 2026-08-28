@@ -1,0 +1,8 @@
+services:
+  test:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    # Default: --harness all --mode both
+    # Override: docker compose run test --harness claude --mode headless
+    # Belt hooks: docker compose run test --harness all --hooks belt
