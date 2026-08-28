@@ -1,10 +1,10 @@
 # harness-test
 
-Conformance test suite for AI agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
+Conformance test suite for agent CLIs. Tests 13 agents across 3 control modes (CLI, PTY, ACP), 4 API formats, and 7 hook formats.
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection.
 
-Built for [belt.sh](https://belt.sh) — connect your AI agent to skills, knowledge, and tools.
+Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge, and tools.
 
 [![CI](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml)
 
