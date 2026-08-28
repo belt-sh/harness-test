@@ -4,7 +4,7 @@ Conformance test suite for AI agent CLIs. Tests 13 agents across 3 control modes
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection.
 
-Built for [belt.sh](https://belt.sh) — skills, knowledge, and tools for every AI agent. Open source and agent-agnostic.
+Built for [belt.sh](https://belt.sh) — connect your AI agent to skills, knowledge, and tools.
 
 [![CI](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml)
 
