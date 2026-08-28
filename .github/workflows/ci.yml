@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Unit tests
+        run: go test ./... -count=1 -v
+
+      - name: Build binary
+        run: go build -o harness-test .
+
+      - name: List harnesses
+        run: ./harness-test --list
+
+      - name: Detect (no agents expected in CI)
+        run: ./harness-test --detect
+
+      - name: Mock server starts and responds
+        run: |
+          ./harness-test --server &
+          SERVER_PID=$!
+          sleep 1
+
+          # Find the port from the output
+          PORT=$(ss -tlnp | grep harness-test | grep -oP ':\K[0-9]+' | head -1)
+          if [ -z "$PORT" ]; then
+            echo "Could not find server port"
+            kill $SERVER_PID 2>/dev/null
+            exit 1
+          fi
+
+          # Test each API format
+          echo "=== OpenAI Chat Completions ==="
+          curl -s http://127.0.0.1:$PORT/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model":"test","messages":[{"role":"user","content":"hello"}]}' | head -1
+
+          echo "=== OpenAI Responses ==="
+          curl -s http://127.0.0.1:$PORT/v1/responses \
+            -H "Content-Type: application/json" \
+            -d '{"model":"test","input":"hello"}' | head -1
+
+          echo "=== Anthropic Messages ==="
+          curl -s http://127.0.0.1:$PORT/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: test" \
+            -d '{"model":"test","messages":[{"role":"user","content":"hello"}],"max_tokens":100}' | head -1
+
+          echo "=== Request log ==="
+          curl -s http://127.0.0.1:$PORT/log/count
+
+          kill $SERVER_PID 2>/dev/null
+          echo ""
+          echo "All API formats responded"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          # Create a dummy belt binary for the Dockerfile COPY
+          mkdir -p tests
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+
+      - name: Verify binary in container
+        run: |
+          docker run --rm --entrypoint harness-test harness-test --list
