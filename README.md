@@ -4,6 +4,51 @@ Conformance test suite for AI coding agent CLIs. Tests 13 agents across 3 contro
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection. Agent-agnostic — bring your own hooks or use the built-in test suite.
 
+[![CI](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml)
+
+## Use cases
+
+### "I'm building a plugin/hooks product and need to test it works across agents"
+
+You have a product (like [belt](https://belt.sh), an MCP server, or a custom hook system) and need to verify it works inside Claude, Codex, Cursor, Grok, and others. The harness-test installs each agent CLI, points it at a mock LLM, writes your hook configs, runs a prompt, and verifies everything fires.
+
+```bash
+# Test your hooks against all 13 agents
+docker compose run test --harness all
+
+# Test against specific agents
+docker compose run test --harness claude,codex,grok
+```
+
+### "I'm building an agent control surface and need to test ACP conformance"
+
+You're building something like [T3 Code](https://github.com/pingdotgg/t3code) — an editor or app that controls agents via ACP. The harness-test verifies agents respond correctly to ACP session lifecycle, handle tool permissions, and stream responses properly.
+
+```bash
+# Test ACP protocol with agents that support it
+harness-test --harness claude,grok,opencode --mode acp
+```
+
+### "I'm building a coding agent and want to verify my hook/API implementation"
+
+You're building a new agent CLI and want to verify it speaks the right API format, fires hooks at the right time, and handles the prompt/response lifecycle correctly. Add your agent to the registry and get instant conformance testing.
+
+```go
+// Add to harness/registry.go
+"myagent": {
+    Name: "myagent", Binary: "myagent",
+    APIFormat: OpenAI,
+    HookFormat: JSONNested,
+    Events: Events{PromptSubmit: "UserPromptSubmit", Stop: "Stop"},
+    HeadlessCmd: []string{"myagent", "-p"},
+    HooksInHeadless: true,
+},
+```
+
+```bash
+harness-test --harness myagent
+```
+
 ## Quick start
 
 ```bash
@@ -20,6 +65,44 @@ harness-test --list
 harness-test --detect
 ```
 
+### Use as a CI step
+
+```yaml
+# .github/workflows/test.yml
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      # Option A: test against installed agents
+      - run: |
+          go install github.com/belt-sh/harness-test@latest
+          harness-test --harness claude,codex --mode headless
+
+      # Option B: test against all agents in Docker
+      - run: |
+          git clone https://github.com/belt-sh/harness-test.git
+          cd harness-test/tests
+          docker compose run test --harness all
+```
+
+### Use the mock server standalone
+
+```bash
+harness-test --server
+# Listening at http://127.0.0.1:PORT
+#
+# Now point your agent at it:
+# ANTHROPIC_BASE_URL=http://127.0.0.1:PORT claude -p "hello"
+# OPENAI_BASE_URL=http://127.0.0.1:PORT/v1 codex exec "hello"
+```
+
+The mock server speaks all 4 API formats on the same port. Useful for developing hooks without burning API credits.
+
 ## What it verifies
 
 Each run checks:
@@ -34,16 +117,35 @@ Each run checks:
 | **Tool calls** | Agent makes tool calls and sends results back |
 | **Context injection** | Hook output (injected context) appears in the agent's response |
 
-## How it works
+## Three control modes
 
-For each harness, the tool:
+```
+harness-test --harness claude --mode headless      # CLI args
+harness-test --harness claude --mode interactive    # PTY/TUI
+harness-test --harness claude --mode acp            # Agent Client Protocol
+harness-test --harness claude --mode both           # headless + interactive (default)
+```
 
-1. **Installs the CLI** if missing (npm, pip, curl)
-2. **Starts a mock inference server** that speaks the right API format
-3. **Writes hook configs** with test commands that log events to a file
-4. **Runs headless mode** (`<agent> -p "prompt"`) and checks output
-5. **Runs interactive mode** (PTY session — types prompt, waits for response)
-6. **Verifies** hook events fired and the mock server received API requests
+| Mode | Transport | What it tests |
+|------|-----------|--------------|
+| **Headless** | CLI args + stdout | `agent -p "prompt"` — fast, deterministic |
+| **Interactive** | PTY terminal | Full TUI flow: onboarding, typing, `/compact`, exit |
+| **ACP** | JSON-RPC over stdio | Programmatic session control (editors, T3 Code, Zed) |
+
+### ACP protocol support
+
+The ACP driver handles:
+
+| Method | Direction | Status |
+|--------|-----------|--------|
+| `initialize` | client → agent | ✓ (declares capabilities) |
+| `session/new` | client → agent | ✓ |
+| `session/prompt` | client → agent | ✓ |
+| `session/update` | agent → client | ✓ (text, tool calls) |
+| `session/request_permission` | agent → client | ✓ (auto-approve) |
+| `session/close` | client → agent | ✓ |
+
+Agents with ACP: claude (`claude acp`), grok (`grok agent stdio`), opencode (`opencode acp`).
 
 ## Mock server
 
@@ -60,20 +162,16 @@ All endpoints support streaming (SSE) and non-streaming.
 
 ### Tool calls
 
-When `PrepareToolCall` is set, the first response includes a tool call (e.g., `Read README.md`). The runner sends a tool result back, triggering PreToolUse/PostToolUse hooks. This tests the full tool-call lifecycle.
+When `PrepareToolCall` is set, the first response includes a tool call (e.g., `Read README.md`). The runner sends a tool result back, testing the full tool-call lifecycle.
 
-### Server-only mode
+### Server utilities
 
-```bash
-harness-test --server
 ```
-
-Starts just the mock server — useful for manual testing or developing hooks. Endpoints:
-
-- `GET /log` — show request log
-- `GET /log/count` — request count
-- `DELETE /log` — clear log
-- `POST /response` — set custom response body
+GET  /log        — show request log (JSON array)
+GET  /log/count  — request count
+DELETE /log      — clear log
+POST /response   — set custom response body
+```
 
 ## Hook formats
 
@@ -81,7 +179,7 @@ The tool generates test hooks in 7 formats:
 
 | Format | Harnesses | Config file |
 |---|---|---|
-| JSONNested | claude, codex, grok, droid, goose, qwen, gemini, cursor, windsurf | `hooks.json` or `settings.json` |
+| JSONNested | claude, codex, grok, droid, goose, qwen, gemini, cursor, windsurf | `hooks.json` / `settings.json` |
 | JSONCopilot | copilot | `hooks.json` with `version:1`, `bash` field |
 | TOML | kimi | `config.toml` with `[[hooks]]` entries |
 | YAML | hermes | `config.yaml` hooks block |
@@ -90,141 +188,74 @@ The tool generates test hooks in 7 formats:
 
 ### Writing your own hooks
 
-Test hooks are shell commands that log an event tag to a file:
+Test hooks are shell commands that log to a file:
 
 ```bash
+# SessionStart hook
 echo SESSION_START >> /tmp/hook-events.log
+
+# PromptSubmit hook (with context injection)
+echo PROMPT >> /tmp/hook-events.log && echo 'Injected context here.'
 ```
 
-For PromptSubmit hooks, the command also outputs context to inject:
-
-```bash
-echo PROMPT >> /tmp/hook-events.log && echo 'The project codename is TEST-123.'
-```
-
-The runner checks `/tmp/belt-hook-events.log` for event tags after each phase. To test your own hook commands, modify the `writeHooks()` method in `runner/runner.go` or create a custom hook config and use `--server` mode.
-
-## Three control modes
-
-The tool drives agents in three ways:
-
-```
-harness-test --harness claude --mode headless      # CLI args
-harness-test --harness claude --mode interactive    # PTY/TUI
-harness-test --harness claude --mode acp            # Agent Client Protocol
-harness-test --harness claude --mode both           # headless + interactive (default)
-```
-
-### Headless (CLI args)
-
-Runs `<agent> -p "prompt"` and captures stdout. Fast, deterministic. Most harnesses support this via `-p`, `exec`, or `--prompt` flags.
-
-### Interactive (PTY)
-
-Starts a real terminal session via `github.com/creack/pty`. Types the prompt character by character, waits for response patterns, sends `/compact` if supported, then exits. Tests the full TUI flow including onboarding dismissal, slow input for anti-paste protection, and exit commands.
-
-### ACP (Agent Client Protocol)
-
-Launches the agent in ACP mode (`<agent> acp`) and communicates via JSON-RPC over stdio. Structured, programmatic — no terminal emulation, no output parsing. The flow:
-
-1. `initialize` — negotiate protocol version and capabilities
-2. `session/new` — create a session
-3. `session/prompt` — send user turns
-4. `session/update` — receive agent messages, tool calls, status
-5. `session/close` — end the session
-
-ACP is the standard protocol for editors (T3 Code, Zed, Cursor) to control agents. Testing hooks via ACP verifies they fire through the programmatic path, not just CLI/TUI.
-
-Agents with ACP support: claude (`claude acp`). More agents are adopting ACP.
-
-Key PTY features:
-- `SlowInput` — types characters with 5ms delay (bypasses crossterm paste detection)
-- `OnboardingDismiss` — pattern-matched dialog dismissal (theme, trust, continue prompts)
-- `WaitForAny` — waits for any of several patterns in terminal output
-- `CompactCommand` — tests `/compact` or `/compress` after a warmup prompt
+The runner checks the log file after each phase. To test your own product's hooks, replace the commands with your own — e.g., `my-product hook session-start`.
 
 ## Harness matrix
 
-| Harness | Binary | API | Hook Format | Events | Headless | Interactive |
-|---|---|---|---|---|---|---|
-| claude | `claude` | Anthropic | JSONNested | 6 | ✅ | ✅ |
-| codex | `codex` | Responses | JSONNested | 6 | ✅ | ✅ |
-| copilot | `copilot` | OpenAI | JSONCopilot | 2 | ✅ | ✅ |
-| droid | `droid` | OpenAI | JSONNested | 6 | ✅ | ✅ |
-| gemini | `gemini` | Gemini | JSONNested | 6 | ✅ | ✅ |
-| goose | `goose` | OpenAI | JSONNested | 4 | ✅ | ✅ |
-| grok | `grok` | Responses | JSONNested | 4 | ✅ | ✅ |
-| hermes | `hermes` | OpenAI | YAML | 4 | ✅ | ✅ |
-| kilo | `kilo` | Responses | TSPlugin | 4 | ✅ | ✅ |
-| kimi | `kimi` | OpenAI | TOML | 4 | ✅ | ✅ |
-| opencode | `opencode` | Responses | TSPlugin | 4 | ✅ | ✅ |
-| pi | `pi` | OpenAI | TSExtension | 2 | ✅ | ✅ |
-| qwen | `qwen` | OpenAI | JSONNested | 6 | ✅ | ✅ |
-
-## Adding a new harness
-
-Add an entry to `harness.All` in `harness/registry.go`:
-
-```go
-"myagent": {
-    Name: "myagent", Binary: "myagent",
-    InstallCmd: []string{"npm", "install", "-g", "myagent-cli"},
-    APIFormat: OpenAI,                          // or Responses, Anthropic, Gemini
-    EnvVars: map[string]string{
-        "MYAGENT_BASE_URL": "{{.BaseURL}}",     // mock server URL
-    },
-    APIKeyEnvVar: "MYAGENT_API_KEY",
-    DefaultModel: "gpt-4o-mini",
-    HookFormat:    JSONNested,                  // or JSONCopilot, TOML, YAML, TSExtension, TSPlugin
-    HookConfigDir: ".myagent",                  // relative to $HOME
-    Events: Events{
-        PromptSubmit: "UserPromptSubmit",        // harness-specific event name
-        Stop:         "Stop",
-    },
-    HeadlessCmd:         []string{"myagent", "-p"},
-    HooksInHeadless:     true,
-    InteractiveCmd:      []string{"myagent"},
-    ExitCommand:         "/exit",
-    HooksInInteractive:  true,
-},
-```
-
-The runner handles everything from this config — no per-harness code needed.
+| Harness | Binary | API | Hook Format | Events | Headless | Interactive | ACP |
+|---|---|---|---|---|---|---|---|
+| claude | `claude` | Anthropic | JSONNested | 6 | ✓ | ✓ | ✓ |
+| codex | `codex` | Responses | JSONNested | 6 | ✓ | ✓ | — |
+| copilot | `copilot` | OpenAI | JSONCopilot | 2 | ✓ | ✓ | — |
+| droid | `droid` | OpenAI | JSONNested | 6 | ✓ | ✓ | — |
+| gemini | `gemini` | Gemini | JSONNested | 6 | ✓ | ✓ | — |
+| goose | `goose` | OpenAI | JSONNested | 4 | ✓ | ✓ | — |
+| grok | `grok` | Responses | JSONNested | 4 | ✓ | ✓ | ✓ |
+| hermes | `hermes` | OpenAI | YAML | 4 | ✓ | ✓ | — |
+| kilo | `kilo` | Responses | TSPlugin | 4 | ✓ | ✓ | — |
+| kimi | `kimi` | OpenAI | TOML | 4 | ✓ | ✓ | — |
+| opencode | `opencode` | Responses | TSPlugin | 4 | ✓ | ✓ | ✓ |
+| pi | `pi` | OpenAI | TSExtension | 2 | ✓ | ✓ | — |
+| qwen | `qwen` | OpenAI | JSONNested | 6 | ✓ | ✓ | — |
 
 ## Architecture
 
 ```
 harness-test
-├── main.go         CLI: --harness, --detect, --install, --server, --hooks
+├── main.go          CLI: --harness, --detect, --install, --server, --hooks, --mode
 ├── harness/
-│   ├── harness.go  Harness struct (API format, hook format, events, commands)
-│   ├── registry.go 13 harness configs (pure data, no code)
-│   ├── detect.go   5-probe system detection (config-dir, PATH, known-path, npm, env-var)
-│   └── install.go  Hook config generation for 7 formats
+│   ├── harness.go   Harness struct (API format, hook format, events, commands, ACP)
+│   ├── registry.go  13 harness configs (pure data, no per-harness code)
+│   ├── detect.go    5-probe detection (config-dir, PATH, known-path, npm, env-var)
+│   └── install.go   Hook config generation for 7 formats
 ├── runner/
-│   ├── runner.go   Test runner (install → config → hooks → run → verify)
-│   ├── driver.go   Driver interface (headless, PTY, ACP all implement this)
-│   ├── pty.go      PTY driver — terminal session management
-│   └── acp.go      ACP driver — JSON-RPC over stdio
+│   ├── runner.go    Orchestrator (install → config → hooks → run → verify)
+│   ├── driver.go    Driver interface (all control modes implement this)
+│   ├── checks.go    Verification checks (hooks, API, streaming, model, tool calls)
+│   ├── pty.go       PTY driver — terminal session management
+│   └── acp.go       ACP driver — JSON-RPC over stdio, auto-approve permissions
 └── server/
-    ├── server.go   Mock server + request log + tool call mode
-    ├── chat.go     OpenAI Chat Completions (streaming + non-streaming)
+    ├── server.go    Mock LLM server + request log + tool call mode
+    ├── chat.go      OpenAI Chat Completions (streaming + non-streaming)
     ├── responses.go OpenAI Responses format
     ├── anthropic.go Anthropic Messages format
-    ├── gemini.go   Gemini generateContent format
-    └── types.go    Shared request/response types
+    ├── gemini.go    Gemini generateContent format
+    └── types.go     Shared request/response types
 ```
+
+Each harness is a pure data struct — no per-harness code paths. Adding a new harness means adding an entry to the registry. The runner, mock server, and drivers are fully generic.
 
 ## Docker
 
-The Dockerfile installs Node.js, Go, Python, git, and bubblewrap (for Codex sandboxing). Runs as non-root `testuser` with npm globals in `~/.npm-global/`.
+The Dockerfile installs Node.js, Go, Python, git, and bubblewrap (for Codex sandboxing). Runs as non-root `testuser`.
 
 ```bash
 cd tests
 docker compose build
-docker compose run test --harness all          # all harnesses, both modes
-docker compose run test --harness claude,grok   # specific harnesses
+docker compose run test --harness all               # all harnesses, both modes
+docker compose run test --harness claude,grok        # specific harnesses
 docker compose run test --harness all --mode headless  # headless only
+docker compose run test --harness claude --mode acp  # ACP mode
 ```
 
 ## Detection
@@ -238,3 +269,7 @@ docker compose run test --harness all --mode headless  # headless only
 | known-path | Binary at `~/.local/bin/`, `~/.grok/bin/` | Installed but not in PATH |
 | package-reg | `npm list -g --json` | npm-installed globally |
 | env-var | `CLAUDECODE`, `CODEX_SANDBOX` set | Running inside this agent now |
+
+## Contributing
+
+Add a harness: one entry in `harness/registry.go`. Add a check: one function in `runner/checks.go`. Add a control mode: implement `Driver` in a new file.
