@@ -44,93 +44,33 @@ jobs:
 
   harness:
     runs-on: ubuntu-latest
-    needs: [unit]
+    needs: [unit, docker]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - harness: claude
-            install: npm install -g @anthropic-ai/claude-code
-          - harness: codex
-            install: npm install -g @openai/codex
-          - harness: copilot
-            install: npm install -g @github/copilot
-          - harness: gemini
-            install: npm install -g @google/gemini-cli
-          - harness: kimi
-            install: npm install -g @moonshot-ai/kimi-code
-          - harness: kilo
-            install: npm install -g @kilocode/cli
-          - harness: opencode
-            install: npm install -g opencode-ai
-          - harness: pi
-            install: npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-          - harness: qwen
-            install: npm install -g @qwen-code/qwen-code
-          - harness: droid
-            install: npm install -g droid
-          - harness: hermes
-            install: pip install --break-system-packages hermes-agent
-          - harness: goose
-            install: |
-              mkdir -p ~/.local/bin
-              curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/goose-x86_64-unknown-linux-gnu.tar.bz2 | tar -xj --strip-components=0 -C ~/.local/bin
-          - harness: grok
-            install: curl -fsSL https://x.ai/cli/install.sh | bash
-
+        harness:
+          - claude
+          - codex
+          - copilot
+          - droid
+          - gemini
+          - goose
+          - grok
+          - hermes
+          - kilo
+          - kimi
+          - opencode
+          - pi
+          - qwen
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - uses: actions/setup-python@v5
-        if: matrix.harness == 'hermes'
-        with:
-          python-version: '3.12'
-
-      - name: Build harness-test
-        run: go build -o harness-test .
-
-      - name: Install ${{ matrix.harness }}
+      - name: Build Docker image
         run: |
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.grok/bin:$PATH"
-          ${{ matrix.install }}
-
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
       - name: Test ${{ matrix.harness }} (headless)
-        run: |
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.grok/bin:$PATH"
-          ./harness-test --harness ${{ matrix.harness }} --mode headless
-        timeout-minutes: 5
-
-  acp:
-    runs-on: ubuntu-latest
-    needs: [unit]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - harness: opencode
-            install: npm install -g opencode-ai
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - run: go build -o harness-test .
-      - name: Install ${{ matrix.harness }}
-        run: ${{ matrix.install }}
-      - name: Test ${{ matrix.harness }} (ACP)
-        run: ./harness-test --harness ${{ matrix.harness }} --mode acp
+        run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode headless
         timeout-minutes: 5
 
   docker:
