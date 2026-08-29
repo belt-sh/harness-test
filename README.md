@@ -1,6 +1,6 @@
 # harness-test
 
-Conformance test suite for coding agent CLIs. Tests 13 agents across 4 control modes, 4 API formats, and 7 hook formats.
+Conformance test suite for coding agent CLIs. Tests 15 agents across 4 control modes, 4 API formats, and 7 hook formats.
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection.
 
@@ -42,7 +42,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
 | [Kiro](https://kiro.dev) | — | ✅ | — | ✅ | — | JSONNested | OpenAI |
-| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅ | TSExtension | OpenAI |
+| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | OpenAI |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
 | [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
@@ -52,6 +52,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 ¹ `claude -p --output-format stream-json` — claude's own streaming protocol, not ACP.
 ² `codex exec --experimental-json` — JSONL event stream over stdout.
 ³ `pi --mode json` — structured JSONL output (provider URL not overridable).
+⁴ `omp --mode json` — Oh My Pi is a Pi fork (bun runtime) with native ACP, plugins, and multi-model roles.
 
 ### Control modes
 
