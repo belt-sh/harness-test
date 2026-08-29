@@ -681,6 +681,41 @@ func (r *Runner) runInteractive() {
 	r.pass("interactive session completed")
 }
 
+func (r *Runner) writeACPConfig(dir string) {
+	switch r.harness.Name {
+	case "opencode":
+		// opencode ACP defaults to its built-in provider. Override HOME and write
+		// config that points the openai provider at our mock server.
+		if r.harness.PreserveHome {
+			tmpHome, _ := os.MkdirTemp("", "acp-opencode-")
+			os.Setenv("HOME", tmpHome)
+			r.home = tmpHome
+		}
+		cfgDir := filepath.Join(r.home, ".config", "opencode")
+		os.MkdirAll(cfgDir, 0755)
+		model := strings.TrimPrefix(r.harness.DefaultModel, "openai/")
+		cfg := fmt.Sprintf(`{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai": {
+      "apiKey": "mock-key",
+      "baseURL": "%s/v1",
+      "models": {
+        "%s": {}
+      }
+    }
+  }
+}`, r.baseURL, model)
+		os.WriteFile(filepath.Join(cfgDir, "opencode.json"), []byte(cfg), 0644)
+
+		// Also write auth.json so opencode sees the openai credential
+		authDir := filepath.Join(r.home, ".local", "share", "opencode")
+		os.MkdirAll(authDir, 0755)
+		auth := `{"openai":{"apiKey":"mock-key"}}`
+		os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(auth), 0644)
+	}
+}
+
 func (r *Runner) runACP() {
 	if len(r.harness.ACPCmd) == 0 || !r.harness.HooksInACP {
 		r.skip(r.harness.Name + " does not support ACP mode")
@@ -696,6 +731,9 @@ func (r *Runner) runACP() {
 	for _, a := range r.harness.ACPArgs {
 		args = append(args, r.expand(a))
 	}
+
+	// Write ACP-specific config files (some agents need config in the project dir)
+	r.writeACPConfig(dir)
 
 	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, os.Environ())
 	if err := driver.Start(); err != nil {

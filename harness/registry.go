@@ -389,7 +389,7 @@ var All = map[string]Harness{
 		HooksInInteractive:      true,
 	},
 	"opencode": withACP(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
-		[]string{"opencode", "acp"}, nil),
+		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"droid": {
 		Name: "droid", Binary: "droid",
 		InstallCmd: []string{"npm", "install", "-g", "droid"},
