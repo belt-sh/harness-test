@@ -7,6 +7,7 @@ Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selectio
 Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge, and tools.
 
 [![CI](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/ci.yml)
+[![Nightly](https://github.com/belt-sh/harness-test/actions/workflows/nightly.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/nightly.yml)
 
 ## Compatibility matrix
 

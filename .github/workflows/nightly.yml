@@ -1,0 +1,74 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # 4 AM UTC daily
+  workflow_dispatch: # manual trigger
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - harness: claude
+            modes: headless,sdk
+          - harness: codex
+            modes: headless
+          - harness: copilot
+            modes: headless,acp
+          - harness: droid
+            modes: headless,acp
+          - harness: gemini
+            modes: headless,acp
+          - harness: goose
+            modes: headless,acp
+          - harness: grok
+            modes: headless,acp
+          - harness: hermes
+            modes: headless,acp
+          - harness: kilo
+            modes: headless,acp
+          - harness: kimi
+            modes: headless,acp
+          - harness: opencode
+            modes: headless,acp
+          - harness: pi
+            modes: headless
+          - harness: qwen
+            modes: headless,acp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+
+      - name: Test ${{ matrix.harness }}
+        id: test
+        run: |
+          results=""
+          for mode in $(echo "${{ matrix.modes }}" | tr ',' ' '); do
+            echo "=== ${{ matrix.harness }} ($mode) ==="
+            if docker run --rm harness-test --harness ${{ matrix.harness }} --mode $mode 2>&1 | tee /tmp/out.log; then
+              results="${results}${mode}:pass,"
+            else
+              results="${results}${mode}:fail,"
+            fi
+            # Extract version from output
+            ver=$(grep -oP '→ version: \K.*' /tmp/out.log | head -1)
+            if [ -n "$ver" ]; then
+              echo "version=$ver" >> $GITHUB_OUTPUT
+            fi
+          done
+          echo "results=$results" >> $GITHUB_OUTPUT
+        timeout-minutes: 10
+
+      - name: Report
+        if: always()
+        run: |
+          echo "### ${{ matrix.harness }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.test.outputs.version || 'unknown' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Results**: ${{ steps.test.outputs.results }}" >> $GITHUB_STEP_SUMMARY
