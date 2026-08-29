@@ -1,0 +1,25 @@
+name: SDK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [claude, codex, pi]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Test ${{ matrix.harness }}
+        run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode sdk
+        timeout-minutes: 5
