@@ -73,6 +73,24 @@ jobs:
         run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode headless
         timeout-minutes: 5
 
+  acp:
+    runs-on: ubuntu-latest
+    needs: [unit, docker]
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [opencode]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Test ${{ matrix.harness }} (ACP)
+        run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode acp
+        timeout-minutes: 5
+
   docker:
     runs-on: ubuntu-latest
     needs: [unit]
