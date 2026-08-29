@@ -261,23 +261,16 @@ func (r *Runner) checkBinary() {
 
 func (r *Runner) detectVersion() {
 	for _, flag := range []string{"--version", "-v", "version"} {
-		cmd := exec.Command(r.harness.Binary, flag)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, r.harness.Binary, flag)
 		cmd.Env = os.Environ()
 		out, err := cmd.Output()
+		cancel()
 		if err != nil {
 			continue
 		}
 		ver := strings.TrimSpace(string(out))
-		// Extract version from common formats: "name v1.2.3", "1.2.3", "name 1.2.3"
-		for _, line := range strings.Split(ver, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			// Take first line, strip common prefixes
-			ver = line
-			break
-		}
+		ver, _, _ = strings.Cut(ver, "\n")
 		r.result.Version = ver
 		fmt.Printf("  → version: %s\n", ver)
 		return
@@ -549,30 +542,23 @@ func (r *Runner) workDir() string {
 	return r.home
 }
 
-func (r *Runner) runHeadless() {
-	if len(r.harness.HeadlessCmd) == 0 {
-		r.skip("no headless command configured")
-		return
-	}
-
-	fmt.Println("[phase 5] headless prompt")
-
+func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	dir := r.workDir()
 	prompt := "What is the project codename? Reply ONLY the codename."
 
 	var args []string
-	args = append(args, r.harness.HeadlessCmd[1:]...)
+	args = append(args, cmdSlice[1:]...)
 	if !r.harness.PromptViaStdin {
 		args = append(args, prompt)
 	}
-	for _, a := range r.harness.HeadlessModelArgs {
+	for _, a := range extraArgs {
 		args = append(args, r.expand(a))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.harness.HeadlessCmd[0], args...)
+	cmd := exec.CommandContext(ctx, cmdSlice[0], args...)
 	cmd.Env = os.Environ()
 	cmd.Dir = dir
 	if r.harness.PromptViaStdin {
@@ -582,21 +568,33 @@ func (r *Runner) runHeadless() {
 	out, err := cmd.CombinedOutput()
 	r.lastOutput = string(out)
 	if os.Getenv("HARNESS_DEBUG") != "" {
-		if len(out) > 0 {
-			fmt.Printf("    [debug] output:\n%s\n", r.lastOutput)
-		} else {
-			fmt.Printf("    [debug] no output, err=%v\n", err)
-		}
+		fmt.Printf("    [debug] %s output (%d bytes):\n%s\n", label, len(out), r.lastOutput)
 	}
 	if err != nil && len(out) > 0 {
-		r.pass(fmt.Sprintf("headless produced output (%d bytes, exit: %v)", len(out), err))
+		r.pass(fmt.Sprintf("%s produced output (%d bytes, exit: %v)", label, len(out), err))
 	} else if err != nil {
-		r.fail("headless: " + err.Error())
+		r.fail(label + ": " + err.Error())
 	} else if len(out) > 0 {
-		r.pass(fmt.Sprintf("headless produced output (%d bytes)", len(out)))
+		r.pass(fmt.Sprintf("%s produced output (%d bytes)", label, len(out)))
 	} else {
-		r.fail("headless produced no output")
+		r.fail(label + " produced no output")
 	}
+
+	if r.harness.Events.Stop != "" {
+		time.Sleep(3 * time.Second)
+	}
+
+	return out
+}
+
+func (r *Runner) runHeadless() {
+	if len(r.harness.HeadlessCmd) == 0 {
+		r.skip("no headless command configured")
+		return
+	}
+
+	fmt.Println("[phase 5] headless prompt")
+	out := r.runOneShot("headless", r.harness.HeadlessCmd, r.harness.HeadlessModelArgs)
 
 	if len(r.harness.PostHeadlessCmd) > 0 {
 		var parsed struct {
@@ -606,16 +604,12 @@ func (r *Runner) runHeadless() {
 			r.sessionID = parsed.SessionID
 		}
 		if r.sessionID == "" {
-			r.sessionID = r.findLatestSessionID(dir)
+			r.sessionID = r.findLatestSessionID(r.workDir())
 		}
 	}
 
-	if r.harness.Events.Stop != "" {
-		time.Sleep(3 * time.Second)
-	}
-
 	for _, step := range r.harness.PostHeadlessCmd {
-		r.runPostHeadless(dir, step)
+		r.runPostHeadless(r.workDir(), step)
 	}
 }
 
@@ -743,16 +737,15 @@ func (r *Runner) runInteractive() {
 	r.pass("interactive session completed")
 }
 
-func (r *Runner) writeACPConfig(dir string) {
+func (r *Runner) writeACPConfig() {
 	switch r.harness.Name {
 	case "opencode", "kilo":
 		// opencode/kilo ACP defaults to built-in provider. Set "model" key to
-		// select our custom openai provider instead.
-		if r.harness.PreserveHome {
-			tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
-			os.Setenv("HOME", tmpHome)
-			r.home = tmpHome
-		}
+		// select our custom openai provider instead. Both use PreserveHome,
+		// so we create a temp HOME for clean provider config.
+		tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
+		os.Setenv("HOME", tmpHome)
+		r.home = tmpHome
 		cfgDir := filepath.Join(r.home, ".config", r.harness.Name)
 		os.MkdirAll(cfgDir, 0755)
 		model := strings.TrimPrefix(r.harness.DefaultModel, "openai/")
@@ -783,7 +776,7 @@ func (r *Runner) runACP() {
 	}
 
 	// Write ACP-specific config files (some agents need config in the project dir)
-	r.writeACPConfig(dir)
+	r.writeACPConfig()
 
 	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, os.Environ())
 	if err := driver.Start(); err != nil {
@@ -829,49 +822,7 @@ func (r *Runner) runSDK() {
 	}
 
 	fmt.Println("[phase 8] SDK (stream-json over stdio)")
-
-	dir := r.workDir()
-	prompt := "What is the project codename? Reply ONLY the codename."
-
-	var args []string
-	args = append(args, r.harness.SDKCmd[1:]...)
-	if !r.harness.PromptViaStdin {
-		args = append(args, prompt)
-	}
-	for _, a := range r.harness.SDKArgs {
-		args = append(args, r.expand(a))
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, r.harness.SDKCmd[0], args...)
-	cmd.Env = os.Environ()
-	cmd.Dir = dir
-	if r.harness.PromptViaStdin {
-		cmd.Stdin = strings.NewReader(prompt)
-	}
-
-	out, err := cmd.CombinedOutput()
-	r.lastOutput = string(out)
-
-	if os.Getenv("HARNESS_DEBUG") != "" {
-		fmt.Printf("    [debug] SDK output (%d bytes):\n%s\n", len(out), r.lastOutput)
-	}
-
-	if err != nil && len(out) > 0 {
-		r.pass(fmt.Sprintf("SDK produced output (%d bytes, exit: %v)", len(out), err))
-	} else if err != nil {
-		r.fail("SDK: " + err.Error())
-	} else if len(out) > 0 {
-		r.pass(fmt.Sprintf("SDK produced output (%d bytes)", len(out)))
-	} else {
-		r.fail("SDK produced no output")
-	}
-
-	if r.harness.Events.Stop != "" {
-		time.Sleep(3 * time.Second)
-	}
+	r.runOneShot("SDK", r.harness.SDKCmd, r.harness.SDKArgs)
 }
 
 func (r *Runner) checkHookEvents(phase string) {

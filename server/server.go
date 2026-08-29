@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
@@ -245,11 +244,10 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyDER, _ := x509.MarshalECPrivateKey(key)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}, nil
 }
 
 func (s *MockServer) Close() {

@@ -108,20 +108,22 @@ func (r *Runner) checkModelSelection(phase string) {
 	}
 	fmt.Printf("[check] model selection (%s)\n", phase)
 
-	for _, e := range r.server.Log() {
+	entries := r.server.Log()
+	var fallbackModel string
+	for _, e := range entries {
 		if strings.Contains(string(e.Body), r.harness.DefaultModel) ||
 			strings.Contains(e.Path, r.harness.DefaultModel) ||
 			e.Model == r.harness.DefaultModel {
 			r.pass(fmt.Sprintf("%s: model %s in request", phase, r.harness.DefaultModel))
 			return
 		}
-	}
-	// If default model wasn't found, check if ANY model was used (agent may override)
-	for _, e := range r.server.Log() {
-		if e.Model != "" {
-			r.pass(fmt.Sprintf("%s: model %s in request (agent-selected)", phase, e.Model))
-			return
+		if fallbackModel == "" && e.Model != "" {
+			fallbackModel = e.Model
 		}
+	}
+	if fallbackModel != "" {
+		r.pass(fmt.Sprintf("%s: model %s in request (agent-selected)", phase, fallbackModel))
+		return
 	}
 	r.skip(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
 }
