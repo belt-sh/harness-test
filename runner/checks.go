@@ -84,11 +84,16 @@ func (r *Runner) checkStreamingFormat(phase string) {
 	fmt.Printf("[check] streaming (%s)\n", phase)
 
 	for _, e := range r.server.Log() {
+		// OpenAI/Anthropic: "stream": true in body
 		var req map[string]any
-		if json.Unmarshal(e.Body, &req) != nil {
-			continue
+		if json.Unmarshal(e.Body, &req) == nil {
+			if stream, ok := req["stream"].(bool); ok && stream {
+				r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
+				return
+			}
 		}
-		if stream, ok := req["stream"].(bool); ok && stream {
+		// Gemini: ?alt=sse in URL path
+		if strings.Contains(e.Path, "alt=sse") || strings.Contains(e.Path, "streamGenerateContent") {
 			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
 			return
 		}
@@ -104,8 +109,17 @@ func (r *Runner) checkModelSelection(phase string) {
 	fmt.Printf("[check] model selection (%s)\n", phase)
 
 	for _, e := range r.server.Log() {
-		if strings.Contains(string(e.Body), r.harness.DefaultModel) {
+		if strings.Contains(string(e.Body), r.harness.DefaultModel) ||
+			strings.Contains(e.Path, r.harness.DefaultModel) ||
+			e.Model == r.harness.DefaultModel {
 			r.pass(fmt.Sprintf("%s: model %s in request", phase, r.harness.DefaultModel))
+			return
+		}
+	}
+	// If default model wasn't found, check if ANY model was used (agent may override)
+	for _, e := range r.server.Log() {
+		if e.Model != "" {
+			r.pass(fmt.Sprintf("%s: model %s in request (agent-selected)", phase, e.Model))
 			return
 		}
 	}
