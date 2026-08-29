@@ -95,9 +95,7 @@ var All = map[string]Harness{
 			{Pattern: "theme"}, {Pattern: "Theme"}, {Pattern: "style"},
 			{Pattern: "trust"}, {Pattern: "Trust"}, {Pattern: "onboarding"},
 		},
-		ACPCmd:     []string{"claude", "acp"},
-		ACPArgs:    []string{"--model", "{{.Model}}"},
-		HooksInACP: true,
+		// claude's stream-json mode is its own protocol, not ACP v1 JSON-RPC
 	},
 	"codex": {
 		Name: "codex", Binary: "codex",
@@ -164,6 +162,8 @@ var All = map[string]Harness{
 		InteractivePromptInArgs: true,
 		ExitCommand:             "/exit",
 		HooksInInteractive:  true,
+		ACPCmd:              []string{"copilot", "--acp"},
+		HooksInACP:         true,
 	},
 	"grok": {
 		Name: "grok", Binary: "grok",
@@ -204,7 +204,6 @@ var All = map[string]Harness{
 		CompactCommand:       "/compact",
 		HooksInInteractive:   true,
 		ACPCmd:     []string{"grok", "agent", "stdio"},
-		ACPArgs:    []string{"--always-approve"},
 		HooksInACP: true,
 	},
 	"pi": {
@@ -286,6 +285,8 @@ var All = map[string]Harness{
 		ExitCommand:         "/exit",
 		HooksInInteractive:  true,
 		OnboardingDismiss: []DismissAction{{Pattern: "Don't trust", SendUp: true}},
+		ACPCmd:              []string{"kimi", "acp"},
+		HooksInACP:         true,
 	},
 	"goose": {
 		Name: "goose", Binary: "goose",
@@ -322,6 +323,8 @@ var All = map[string]Harness{
 		InteractiveCmd:   []string{"goose"},
 		ExitCommand:      "/exit",
 		HooksInInteractive: true,
+		ACPCmd:             []string{"goose", "acp"},
+		HooksInACP:        true,
 	},
 	"gemini": {
 		Name: "gemini", Binary: "gemini",
@@ -359,6 +362,8 @@ var All = map[string]Harness{
 		ExitCommand:             "/exit",
 		CompactCommand:          "/compress",
 		HooksInInteractive:      true,
+		ACPCmd:                  []string{"gemini", "--acp"},
+		HooksInACP:             true,
 	},
 	"qwen": {
 		Name: "qwen", Binary: "qwen",
