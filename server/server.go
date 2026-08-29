@@ -1,9 +1,17 @@
 package server
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -23,9 +31,25 @@ type LogEntry struct {
 	Model     string            `json:"model,omitempty"`
 }
 
+// LLMHosts are API domains that agents call. Used by --intercept mode to
+// map these to 127.0.0.1 via /etc/hosts so all LLM traffic hits the mock.
+var LLMHosts = []string{
+	"api.openai.com",
+	"api.anthropic.com",
+	"generativelanguage.googleapis.com",
+	"api.x.ai",
+	"openrouter.ai",
+	"api.moonshot.cn",
+	"dashscope.aliyuncs.com",
+	"api.factory.ai",
+	"kilo.codes",
+	"opencode.ai",
+}
+
 type MockServer struct {
-	srv      *http.Server
-	listener net.Listener
+	srv         *http.Server
+	listener    net.Listener
+	tlsListener net.Listener
 
 	mu           sync.Mutex
 	log          []LogEntry
@@ -159,9 +183,81 @@ func (s *MockServer) Start() (string, error) {
 	return fmt.Sprintf("http://%s", s.listener.Addr()), nil
 }
 
+// StartIntercept starts both HTTP (random port) and HTTPS (port 443) listeners.
+// The TLS listener uses a self-signed cert covering all LLM API domains.
+// Pair with WriteHostsFile to redirect all agent LLM traffic to the mock.
+func (s *MockServer) StartIntercept() (string, error) {
+	baseURL, err := s.Start()
+	if err != nil {
+		return "", err
+	}
+
+	cert, err := selfSignedCert(LLMHosts)
+	if err != nil {
+		return baseURL, fmt.Errorf("generate cert: %w", err)
+	}
+
+	tlsLn, err := tls.Listen("tcp", "127.0.0.1:443", &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	})
+	if err != nil {
+		return baseURL, fmt.Errorf("tls listen :443: %w", err)
+	}
+	s.tlsListener = tlsLn
+
+	tlsSrv := &http.Server{Handler: s.srv.Handler}
+	go tlsSrv.Serve(tlsLn)
+
+	return baseURL, nil
+}
+
+// HostsEntries returns /etc/hosts lines mapping LLM API domains to 127.0.0.1.
+func HostsEntries() string {
+	var lines []string
+	for _, host := range LLMHosts {
+		lines = append(lines, fmt.Sprintf("127.0.0.1 %s", host))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func selfSignedCert(hosts []string) (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{Organization: []string{"harness-test"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	for _, h := range hosts {
+		tmpl.DNSNames = append(tmpl.DNSNames, h)
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
 func (s *MockServer) Close() {
 	if s.srv != nil {
 		s.srv.Close()
+	}
+	if s.tlsListener != nil {
+		s.tlsListener.Close()
 	}
 }
 

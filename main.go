@@ -23,6 +23,7 @@ func main() {
 		installFlag  = flag.String("install", "", "install belt hooks for a harness (name or 'detected')")
 		installScope = flag.String("scope", "user", "install scope: user or project")
 		serverOnly   = flag.Bool("server", false, "run mock server only (no tests)")
+		intercept    = flag.Bool("intercept", false, "intercept all LLM traffic via /etc/hosts + TLS (requires root/Docker)")
 	)
 	flag.Parse()
 
@@ -138,13 +139,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	baseURL, err := srv.Start()
+	var baseURL string
+	var err error
+	if *intercept {
+		baseURL, err = srv.StartIntercept()
+	} else {
+		baseURL, err = srv.Start()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start mock server: %v\n", err)
 		os.Exit(1)
 	}
 	defer srv.Close()
-	fmt.Printf("Mock server at %s\n\n", baseURL)
+	if *intercept {
+		fmt.Printf("Mock server at %s (intercept: HTTPS on :443)\n\n", baseURL)
+	} else {
+		fmt.Printf("Mock server at %s\n\n", baseURL)
+	}
 
 	var targets []string
 	if *harnessName == "all" {
@@ -174,6 +185,9 @@ func main() {
 		r.SetMode(*mode)
 		if *hooks == "belt" {
 			r.SetHookSource(runner.HooksBelt)
+		}
+		if *intercept {
+			r.SetIntercept(true)
 		}
 		result := r.Run()
 		results = append(results, result)

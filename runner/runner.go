@@ -57,6 +57,7 @@ type Runner struct {
 	savedEnv     []string
 	mode         Mode
 	hookSource   HookSource
+	intercept    bool
 	failed       bool
 	result       Result
 	lastOutput   string
@@ -77,6 +78,10 @@ func New(h harness.Harness, srv *server.MockServer, baseURL string) *Runner {
 
 func (r *Runner) SetHookSource(s HookSource) {
 	r.hookSource = s
+}
+
+func (r *Runner) SetIntercept(on bool) {
+	r.intercept = on
 }
 
 func (r *Runner) SetMode(m string) {
@@ -115,6 +120,9 @@ func (r *Runner) Run() Result {
 	r.savedEnv = os.Environ()
 	fmt.Printf("=== %s ===\n", r.harness.Name)
 
+	if r.intercept {
+		r.setupIntercept()
+	}
 	r.setupHome()
 	r.checkBinary()
 	if r.failed {
@@ -180,6 +188,22 @@ func (r *Runner) finish() Result {
 		os.Setenv(k, v)
 	}
 	return r.result
+}
+
+func (r *Runner) setupIntercept() {
+	entries := server.HostsEntries()
+	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("  ⚠ intercept: can't write /etc/hosts (%v) — run as root or in Docker\n", err)
+		return
+	}
+	f.WriteString("\n# harness-test intercept\n" + entries + "\n")
+	f.Close()
+
+	os.Setenv("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+	os.Setenv("PYTHONHTTPSVERIFY", "0")
+	os.Setenv("SSL_CERT_DIR", "/dev/null")
+	fmt.Printf("  → intercept: %d LLM domains → 127.0.0.1 (TLS bypass enabled)\n", len(server.LLMHosts))
 }
 
 func (r *Runner) setupHome() {
