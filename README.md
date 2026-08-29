@@ -19,6 +19,8 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 [![hermes](https://github.com/belt-sh/harness-test/actions/workflows/hermes.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/hermes.yml)
 [![kilo](https://github.com/belt-sh/harness-test/actions/workflows/kilo.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/kilo.yml)
 [![kimi](https://github.com/belt-sh/harness-test/actions/workflows/kimi.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/kimi.yml)
+[![kiro](https://github.com/belt-sh/harness-test/actions/workflows/kiro.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/kiro.yml)
+[![omp](https://github.com/belt-sh/harness-test/actions/workflows/omp.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/omp.yml)
 [![opencode](https://github.com/belt-sh/harness-test/actions/workflows/opencode.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/opencode.yml)
 [![pi](https://github.com/belt-sh/harness-test/actions/workflows/pi.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/pi.yml)
 [![qwen](https://github.com/belt-sh/harness-test/actions/workflows/qwen.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/qwen.yml)
@@ -39,11 +41,13 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | OpenAI |
 | [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
+| [Kiro](https://kiro.dev) | — | ✅ | — | ✅ | — | JSONNested | OpenAI |
+| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅ | TSExtension | OpenAI |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
 | [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
 
-**13/13** headless · **10/13** ACP · **3/13** SDK · **26 mode-tests in CI**
+**15/15** headless · **12/15** ACP · **4/15** SDK · **31 mode-tests in CI**
 
 ¹ `claude -p --output-format stream-json` — claude's own streaming protocol, not ACP.
 ² `codex exec --experimental-json` — JSONL event stream over stdout.

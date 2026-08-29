@@ -34,6 +34,10 @@ jobs:
             modes: headless,acp
           - harness: opencode
             modes: headless,acp
+          - harness: kiro
+            modes: headless,acp
+          - harness: omp
+            modes: headless,acp,sdk
           - harness: pi
             modes: headless,sdk
           - harness: qwen
