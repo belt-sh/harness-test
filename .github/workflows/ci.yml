@@ -91,6 +91,24 @@ jobs:
         run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode acp
         timeout-minutes: 5
 
+  sdk:
+    runs-on: ubuntu-latest
+    needs: [unit, docker]
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [claude]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Test ${{ matrix.harness }} (SDK)
+        run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode sdk
+        timeout-minutes: 5
+
   docker:
     runs-on: ubuntu-latest
     needs: [unit]

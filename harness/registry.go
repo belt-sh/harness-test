@@ -95,7 +95,9 @@ var All = map[string]Harness{
 			{Pattern: "theme"}, {Pattern: "Theme"}, {Pattern: "style"},
 			{Pattern: "trust"}, {Pattern: "Trust"}, {Pattern: "onboarding"},
 		},
-		// claude's stream-json mode is its own protocol, not ACP v1 JSON-RPC
+		SDKCmd:        []string{"claude", "-p", "--output-format", "stream-json"},
+		SDKArgs:       []string{"--model", "{{.Model}}", "--dangerously-skip-permissions", "--verbose"},
+		HooksInSDK:    true,
 	},
 	"codex": {
 		Name: "codex", Binary: "codex",

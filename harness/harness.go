@@ -90,6 +90,11 @@ type Harness struct {
 	ACPArgs         []string // extra args for ACP mode
 	HooksInACP      bool
 
+	// SDK mode — agent-specific programmatic protocol over stdio (e.g. claude stream-json)
+	SDKCmd          []string // command to start agent in SDK mode
+	SDKArgs         []string // extra args for SDK mode
+	HooksInSDK      bool
+
 	// Setup
 	PreserveHome bool // don't override HOME (harness needs installed plugins)
 }

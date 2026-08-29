@@ -33,6 +33,7 @@ const (
 	ModeHeadless
 	ModeInteractive
 	ModeACP
+	ModeSDK
 )
 
 type HookSource int
@@ -85,6 +86,8 @@ func (r *Runner) SetMode(m string) {
 		r.mode = ModeInteractive
 	case "acp":
 		r.mode = ModeACP
+	case "sdk":
+		r.mode = ModeSDK
 	default:
 		r.mode = ModeBoth
 	}
@@ -147,6 +150,13 @@ func (r *Runner) Run() Result {
 		r.prepareToolCall()
 		r.runACP()
 		r.runChecks("acp")
+	}
+	if r.mode == ModeSDK {
+		os.Remove("/tmp/belt-hook-events.log")
+		r.server.ClearLog()
+		r.prepareToolCall()
+		r.runSDK()
+		r.runChecks("sdk")
 	}
 
 	return r.finish()
@@ -770,6 +780,53 @@ func (r *Runner) runACP() {
 	}
 
 	r.pass("ACP session completed")
+}
+
+func (r *Runner) runSDK() {
+	if len(r.harness.SDKCmd) == 0 || !r.harness.HooksInSDK {
+		r.skip(r.harness.Name + " does not support SDK mode")
+		return
+	}
+
+	fmt.Println("[phase 8] SDK (stream-json over stdio)")
+
+	dir := r.workDir()
+	prompt := "What is the project codename? Reply ONLY the codename."
+
+	var args []string
+	args = append(args, r.harness.SDKCmd[1:]...)
+	args = append(args, prompt)
+	for _, a := range r.harness.SDKArgs {
+		args = append(args, r.expand(a))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, r.harness.SDKCmd[0], args...)
+	cmd.Env = os.Environ()
+	cmd.Dir = dir
+
+	out, err := cmd.CombinedOutput()
+	r.lastOutput = string(out)
+
+	if os.Getenv("HARNESS_DEBUG") != "" {
+		fmt.Printf("    [debug] SDK output (%d bytes):\n%s\n", len(out), r.lastOutput)
+	}
+
+	if err != nil && len(out) > 0 {
+		r.pass(fmt.Sprintf("SDK produced output (%d bytes, exit: %v)", len(out), err))
+	} else if err != nil {
+		r.fail("SDK: " + err.Error())
+	} else if len(out) > 0 {
+		r.pass(fmt.Sprintf("SDK produced output (%d bytes)", len(out)))
+	} else {
+		r.fail("SDK produced no output")
+	}
+
+	if r.harness.Events.Stop != "" {
+		time.Sleep(3 * time.Second)
+	}
 }
 
 func (r *Runner) checkHookEvents(phase string) {
