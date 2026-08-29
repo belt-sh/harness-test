@@ -738,24 +738,15 @@ func (r *Runner) runInteractive() {
 }
 
 func (r *Runner) writeACPConfig() {
-	switch r.harness.Name {
-	case "opencode", "kilo":
-		// opencode/kilo ACP defaults to built-in provider. Set "model" key to
-		// select our custom openai provider instead. Both use PreserveHome,
-		// so we create a temp HOME for clean provider config.
+	if r.harness.ACPNeedsTempHome {
 		tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
 		os.Setenv("HOME", tmpHome)
 		r.home = tmpHome
-		cfgDir := filepath.Join(r.home, ".config", r.harness.Name)
-		os.MkdirAll(cfgDir, 0755)
-		model := strings.TrimPrefix(r.harness.DefaultModel, "openai/")
-		cfg := fmt.Sprintf(`{"model":"openai/%s","provider":{"openai":{"apiKey":"mock-key","baseURL":"%s/v1","models":{"%s":{}}}}}`,
-			model, r.baseURL, model)
-		os.WriteFile(filepath.Join(cfgDir, r.harness.Name+".json"), []byte(cfg), 0644)
-
-		authDir := filepath.Join(r.home, ".local", "share", r.harness.Name)
-		os.MkdirAll(authDir, 0755)
-		os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(`{"openai":{"apiKey":"mock-key"}}`), 0644)
+	}
+	for _, cf := range r.harness.ACPConfigFiles {
+		path := filepath.Join(r.home, r.expand(cf.Path))
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, []byte(r.expand(cf.Content)), 0644)
 	}
 }
 

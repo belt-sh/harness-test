@@ -8,18 +8,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: ["headless","acp"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: |
-          echo '#!/bin/sh' > tests/belt
-          chmod +x tests/belt
-          docker build -f tests/Dockerfile -t harness-test .
-      - name: Test ${{ matrix.mode }}
-        run: docker run --rm harness-test --harness gemini --mode ${{ matrix.mode }}
-        timeout-minutes: 5
+    uses: ./.github/workflows/test-harness.yml
+    with:
+      harness: gemini
+      modes: '["headless","acp"]'

@@ -1,0 +1,29 @@
+name: Test Harness (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      harness:
+        required: true
+        type: string
+      modes:
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJson(inputs.modes) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt
+          chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Test ${{ matrix.mode }}
+        run: docker run --rm harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }}
+        timeout-minutes: 5

@@ -45,6 +45,7 @@ type Harness struct {
 	EnvVars map[string]string // env vars to set (supports {{.BaseURL}} and literal values)
 	APIKeyEnvVar   string            // env var for API key
 	DefaultModel   string
+	AcceptedModels []string // additional model names the agent may use instead of DefaultModel
 
 	// Hooks
 	HookFormat    HookFormat
@@ -86,9 +87,11 @@ type Harness struct {
 	OnboardingDismiss       []DismissAction
 
 	// ACP (Agent Client Protocol) mode — JSON-RPC over stdio
-	ACPCmd          []string // command to start agent in ACP mode (e.g. ["claude", "acp"])
-	ACPArgs         []string // extra args for ACP mode
+	ACPCmd          []string     // command to start agent in ACP mode (e.g. ["claude", "acp"])
+	ACPArgs         []string     // extra args for ACP mode
 	HooksInACP      bool
+	ACPConfigFiles  []ConfigFile // extra config files for ACP mode (provider overrides)
+	ACPNeedsTempHome bool        // create temp HOME for ACP (isolate provider config)
 
 	// SDK mode — agent-specific programmatic protocol over stdio (e.g. claude stream-json)
 	SDKCmd          []string // command to start agent in SDK mode

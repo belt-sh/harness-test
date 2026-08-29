@@ -16,6 +16,18 @@ func withACP(h Harness, cmd []string, args []string) Harness {
 	return h
 }
 
+func withACPProvider(h Harness, cmd []string, args []string) Harness {
+	h = withACP(h, cmd, args)
+	h.ACPNeedsTempHome = true
+	h.ACPConfigFiles = []ConfigFile{
+		{Path: ".config/" + h.Name + "/" + h.Name + ".json",
+			Content: `{"model":"openai/{{.Model}}","provider":{"openai":{"apiKey":"mock-key","baseURL":"{{.BaseURL}}/v1","models":{"{{.Model}}":{}}}}}`},
+		{Path: ".local/share/" + h.Name + "/auth.json",
+			Content: `{"openai":{"apiKey":"mock-key"}}`},
+	}
+	return h
+}
+
 func tsPluginHarness(name, binary, installPkg, hookDir string) Harness {
 	return Harness{
 		Name: name, Binary: binary,
@@ -188,7 +200,8 @@ var All = map[string]Harness{
 			"GROK_CONVERSATIONS_BASE_URL":   "{{.BaseURL}}",
 		},
 		APIKeyEnvVar: "XAI_API_KEY",
-		DefaultModel: "grok-3-mini",
+		DefaultModel:   "grok-3-mini",
+		AcceptedModels: []string{"grok-4"},
 		HookFormat:    JSONNested,
 		HookConfigDir: ".grok/hooks",
 		Events: Events{
@@ -311,7 +324,7 @@ var All = map[string]Harness{
 		ACPCmd:               []string{"hermes", "acp"},
 		HooksInACP:          true,
 	},
-	"kilo": withACP(tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+	"kilo": withACPProvider(tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
 		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"kimi": {
 		Name: "kimi", Binary: "kimi",
@@ -394,7 +407,8 @@ var All = map[string]Harness{
 			"GEMINI_API_KEY":             "mock-key",
 		},
 		APIKeyEnvVar: "",
-		DefaultModel: "gemini-2.5-flash",
+		DefaultModel:   "gemini-2.5-flash",
+		AcceptedModels: []string{"gemini-3", "gemini-2"},
 		ToolCallName: "write_file",
 		ToolCallArgs: `{"file_path":"{{.RepoDir}}/test-output.txt","content":"test"}`,
 		HookFormat:    JSONNested,
@@ -454,7 +468,7 @@ var All = map[string]Harness{
 		ACPArgs:                []string{"--auth-type", "openai", "--yolo"},
 		HooksInACP:             true,
 	},
-	"opencode": withACP(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
+	"opencode": withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
 		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"droid": {
 		Name: "droid", Binary: "droid",
@@ -467,6 +481,7 @@ var All = map[string]Harness{
 		},
 		APIKeyEnvVar:    "",
 		DefaultModel:    "mock-model",
+		AcceptedModels:  []string{"claude-"},
 		ToolCallName:    "Read",
 		ToolCallArgs:    `{"file_path":"{{.RepoDir}}/README.md"}`,
 		HookFormat:      JSONNested,
