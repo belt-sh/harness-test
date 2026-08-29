@@ -1,4 +1,4 @@
-name: ACP
+name: pi
 
 on:
   push:
@@ -7,12 +7,12 @@ on:
     branches: [main]
 
 jobs:
-  acp:
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        harness: [copilot, droid, gemini, goose, grok, hermes, kilo, kimi, opencode, qwen]
+        mode: ["headless","sdk"]
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
@@ -20,6 +20,6 @@ jobs:
           echo '#!/bin/sh' > tests/belt
           chmod +x tests/belt
           docker build -f tests/Dockerfile -t harness-test .
-      - name: Test ${{ matrix.harness }}
-        run: docker run --rm harness-test --harness ${{ matrix.harness }} --mode acp
+      - name: Test ${{ matrix.mode }}
+        run: docker run --rm harness-test --harness pi --mode ${{ matrix.mode }}
         timeout-minutes: 5
