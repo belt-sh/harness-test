@@ -139,6 +139,9 @@ var All = map[string]Harness{
 		OnboardingDismiss: []DismissAction{
 			{Pattern: "Yes, continue"},
 		},
+		SDKCmd:  []string{"codex", "exec", "--experimental-json"},
+		SDKArgs: append([]string{"--dangerously-bypass-hook-trust", "--approve-for-me"}, codexProviderArgs...),
+		HooksInSDK: true,
 	},
 	"copilot": {
 		Name: "copilot", Binary: "copilot",
@@ -224,6 +227,9 @@ var All = map[string]Harness{
 		InteractiveCmd:      []string{"pi"},
 		ExitCommand:         "/exit",
 		HooksInInteractive:  true,
+		SDKCmd:              []string{"pi", "--mode", "json"},
+		SDKArgs:             []string{"--provider", "openrouter", "--model", "{{.Model}}", "--no-session"},
+		HooksInSDK:         true,
 	},
 	"hermes": {
 		Name: "hermes", Binary: "hermes",

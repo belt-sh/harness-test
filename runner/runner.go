@@ -835,7 +835,9 @@ func (r *Runner) runSDK() {
 
 	var args []string
 	args = append(args, r.harness.SDKCmd[1:]...)
-	args = append(args, prompt)
+	if !r.harness.PromptViaStdin {
+		args = append(args, prompt)
+	}
 	for _, a := range r.harness.SDKArgs {
 		args = append(args, r.expand(a))
 	}
@@ -846,6 +848,9 @@ func (r *Runner) runSDK() {
 	cmd := exec.CommandContext(ctx, r.harness.SDKCmd[0], args...)
 	cmd.Env = os.Environ()
 	cmd.Dir = dir
+	if r.harness.PromptViaStdin {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 
 	out, err := cmd.CombinedOutput()
 	r.lastOutput = string(out)

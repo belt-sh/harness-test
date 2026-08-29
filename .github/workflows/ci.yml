@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        harness: [claude]
+        harness: [claude, codex, pi]
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
