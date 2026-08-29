@@ -71,7 +71,13 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gemini classifier requests JSON via responseMimeType — return valid JSON
+	// so the classifier doesn't exhaust retries.
 	text := s.getResponse()
+	if mime, _ := req.GenerationConfig["responseMimeType"].(string); mime == "application/json" {
+		text = `{"choice":0,"confidence":1.0}`
+	}
+
 	if strings.Contains(r.URL.RawQuery, "alt=sse") {
 		s.geminiStream(w, model, text)
 		return

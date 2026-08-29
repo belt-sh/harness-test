@@ -13,23 +13,25 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 <!-- Updated 2026-08-29. Versions from latest CI run in Docker. -->
 
-| Agent | Version | Headless | Interactive | ACP | SDK | Hook Format | API |
-|-------|---------|:--------:|:-----------:|:---:|:---:|-------------|-----|
-| [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅ | JSONNested | Anthropic |
-| [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | — | JSONNested | Responses |
-| [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | OpenAI |
-| [Droid](https://docs.factory.ai/cli) | 0.208.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | Gemini |
-| [Goose](https://github.com/block/goose) | 1.48.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
-| [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | — | JSONNested | Responses |
-| [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | OpenAI |
-| [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
-| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
-| [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
-| [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | — | TSExtension | OpenAI |
-| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
+| Agent | Version | Headless | Interactive | ACP | Hook Format | API |
+|-------|---------|:--------:|:-----------:|:---:|-------------|-----|
+| [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | ¹ | JSONNested | Anthropic |
+| [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | JSONNested | Responses |
+| [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | JSONCopilot | OpenAI |
+| [Droid](https://docs.factory.ai/cli) | 0.208.x | ✅ | ✅ | ✅ | JSONNested | OpenAI |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | JSONNested | Gemini |
+| [Goose](https://github.com/block/goose) | 1.48.x | ✅ | ✅ | ✅ | JSONNested | OpenAI |
+| [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | JSONNested | Responses |
+| [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | YAML | OpenAI |
+| [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | TSPlugin | Responses |
+| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | TOML | OpenAI |
+| [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | TSPlugin | Responses |
+| [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | TSExtension | OpenAI |
+| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | JSONNested | OpenAI |
 
-**13/13** headless · **10/13** ACP · **1/13** SDK · **24 mode-tests in CI**
+**13/13** headless · **10/13** ACP · **24 mode-tests in CI**
+
+¹ Claude Code has no native ACP. Tested via its own `--output-format stream-json` protocol instead.
 
 ### Control modes
 
