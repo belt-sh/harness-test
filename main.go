@@ -16,7 +16,7 @@ import (
 func main() {
 	var (
 		harnessName  = flag.String("harness", "", "harness to test (or 'all')")
-		mode         = flag.String("mode", "both", "test mode: headless, interactive, both, or acp")
+		mode         = flag.String("mode", "both", "test mode: headless, interactive, both, acp, or sdk")
 		hooks        = flag.String("hooks", "mock", "hook source: mock (test scripts) or belt (real belt hooks)")
 		listFlag     = flag.Bool("list", false, "list available harnesses")
 		detectFlag   = flag.Bool("detect", false, "detect installed harnesses on this system")
@@ -92,7 +92,7 @@ func main() {
 
 	if *listFlag {
 		fmt.Println("Available harnesses:")
-		fmt.Printf("  %-12s %-10s %-8s %-10s %-5s\n", "NAME", "BINARY", "API", "HOOKS", "ACP")
+		fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-5s\n", "NAME", "BINARY", "API", "HOOKS", "ACP", "SDK")
 		names := make([]string, 0, len(harness.All))
 		for name := range harness.All {
 			names = append(names, name)
@@ -104,8 +104,12 @@ func main() {
 			if len(h.ACPCmd) > 0 {
 				acp = "✓"
 			}
-			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s\n",
-				name, h.Binary, apiName(h.APIFormat), hookName(h.HookFormat), acp)
+			sdk := "—"
+			if len(h.SDKCmd) > 0 {
+				sdk = "✓"
+			}
+			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-5s\n",
+				name, h.Binary, apiName(h.APIFormat), hookName(h.HookFormat), acp, sdk)
 		}
 		return
 	}
@@ -183,12 +187,19 @@ func main() {
 
 	var totalDuration time.Duration
 	fmt.Println("=== Summary ===")
-	fmt.Printf("%-12s %6s %6s %6s %8s\n", "HARNESS", "PASS", "FAIL", "SKIP", "TIME")
+	fmt.Printf("%-12s %-30s %6s %6s %6s %8s\n", "HARNESS", "VERSION", "PASS", "FAIL", "SKIP", "TIME")
 	for _, r := range results {
 		totalDuration += r.Duration
-		fmt.Printf("%-12s %6d %6d %6d %8s\n", r.Harness, r.Passed, r.Failed, r.Skipped, r.Duration.Round(time.Second))
+		ver := r.Version
+		if ver == "" {
+			ver = "—"
+		}
+		if len(ver) > 30 {
+			ver = ver[:30]
+		}
+		fmt.Printf("%-12s %-30s %6d %6d %6d %8s\n", r.Harness, ver, r.Passed, r.Failed, r.Skipped, r.Duration.Round(time.Second))
 	}
-	fmt.Printf("%-12s %6d %6d %6d %8s\n", "TOTAL", totalPassed, totalFailed, totalSkipped, totalDuration.Round(time.Second))
+	fmt.Printf("%-12s %-30s %6d %6d %6d %8s\n", "TOTAL", "", totalPassed, totalFailed, totalSkipped, totalDuration.Round(time.Second))
 	if len(failed) > 0 {
 		fmt.Printf("failures: %s\n", strings.Join(failed, ", "))
 		os.Exit(1)

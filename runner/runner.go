@@ -20,6 +20,7 @@ import (
 
 type Result struct {
 	Harness  string
+	Version  string
 	Passed   int
 	Failed   int
 	Skipped  int
@@ -222,6 +223,7 @@ func (r *Runner) checkBinary() {
 			return
 		}
 		r.pass(r.harness.Binary + " installed")
+		r.detectVersion()
 		for _, postCmd := range r.harness.PostInstall {
 			cmd := exec.Command(postCmd[0], postCmd[1:]...)
 			cmd.Env = os.Environ()
@@ -230,6 +232,32 @@ func (r *Runner) checkBinary() {
 		return
 	}
 	r.pass(r.harness.Binary + " found")
+	r.detectVersion()
+}
+
+func (r *Runner) detectVersion() {
+	for _, flag := range []string{"--version", "-v", "version"} {
+		cmd := exec.Command(r.harness.Binary, flag)
+		cmd.Env = os.Environ()
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		ver := strings.TrimSpace(string(out))
+		// Extract version from common formats: "name v1.2.3", "1.2.3", "name 1.2.3"
+		for _, line := range strings.Split(ver, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// Take first line, strip common prefixes
+			ver = line
+			break
+		}
+		r.result.Version = ver
+		fmt.Printf("  → version: %s\n", ver)
+		return
+	}
 }
 
 func (r *Runner) setupEndpoint() {
