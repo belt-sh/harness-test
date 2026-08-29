@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        harness: [copilot, gemini, goose, grok, kimi, opencode]
+        harness: [copilot, gemini, goose, grok, hermes, kimi, opencode]
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image

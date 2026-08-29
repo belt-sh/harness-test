@@ -225,7 +225,7 @@ var All = map[string]Harness{
 	},
 	"hermes": {
 		Name: "hermes", Binary: "hermes",
-		InstallCmd:     []string{"pip", "install", "--break-system-packages", "hermes-agent"},
+		InstallCmd:     []string{"pip", "install", "--break-system-packages", "hermes-agent[acp]"},
 		InstallBinDirs: []string{".local/bin"},
 		APIFormat:    OpenAI,
 		ToolCallName: "read_file",
@@ -253,6 +253,8 @@ var All = map[string]Harness{
 		InteractiveCmd:       []string{"hermes"},
 		ExitCommand:          "/exit",
 		HooksInInteractive:   true,
+		ACPCmd:               []string{"hermes", "acp"},
+		HooksInACP:          true,
 	},
 	"kilo": tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
 	"kimi": {
