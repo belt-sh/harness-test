@@ -15,7 +15,7 @@ jobs:
           - harness: claude
             modes: headless,sdk
           - harness: codex
-            modes: headless
+            modes: headless,sdk
           - harness: copilot
             modes: headless,acp
           - harness: droid
@@ -35,7 +35,7 @@ jobs:
           - harness: opencode
             modes: headless,acp
           - harness: pi
-            modes: headless
+            modes: headless,sdk
           - harness: qwen
             modes: headless,acp
     steps:
