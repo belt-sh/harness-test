@@ -745,27 +745,25 @@ func (r *Runner) runInteractive() {
 
 func (r *Runner) writeACPConfig(dir string) {
 	switch r.harness.Name {
-	case "opencode":
-		// opencode ACP defaults to its built-in provider. Override HOME and write
-		// config that points the openai provider at our mock server.
+	case "opencode", "kilo":
+		// opencode/kilo ACP defaults to built-in provider. Set "model" key to
+		// select our custom openai provider instead.
 		if r.harness.PreserveHome {
-			tmpHome, _ := os.MkdirTemp("", "acp-opencode-")
+			tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
 			os.Setenv("HOME", tmpHome)
 			r.home = tmpHome
 		}
-		cfgDir := filepath.Join(r.home, ".config", "opencode")
+		cfgDir := filepath.Join(r.home, ".config", r.harness.Name)
 		os.MkdirAll(cfgDir, 0755)
 		model := strings.TrimPrefix(r.harness.DefaultModel, "openai/")
-		cfg := fmt.Sprintf(`{"provider":{"openai":{"apiKey":"mock-key","baseURL":"%s/v1","models":{"%s":{}}}}}`, r.baseURL, model)
-		os.WriteFile(filepath.Join(cfgDir, "opencode.json"), []byte(cfg), 0644)
+		cfg := fmt.Sprintf(`{"model":"openai/%s","provider":{"openai":{"apiKey":"mock-key","baseURL":"%s/v1","models":{"%s":{}}}}}`,
+			model, r.baseURL, model)
+		os.WriteFile(filepath.Join(cfgDir, r.harness.Name+".json"), []byte(cfg), 0644)
 
-		authDir := filepath.Join(r.home, ".local", "share", "opencode")
+		authDir := filepath.Join(r.home, ".local", "share", r.harness.Name)
 		os.MkdirAll(authDir, 0755)
 		os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(`{"openai":{"apiKey":"mock-key"}}`), 0644)
 	}
-	// kilo, qwen: ACP mode uses agent's own cloud provider. LLM calls don't
-	// reach our mock server. Hooks still fire (they're local). The test skips
-	// API/streaming/model checks — this is correct, not a gap.
 }
 
 func (r *Runner) runACP() {

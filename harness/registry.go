@@ -398,6 +398,7 @@ var All = map[string]Harness{
 		CompactCommand:          "/compress",
 		HooksInInteractive:      true,
 		ACPCmd:                  []string{"qwen", "--acp"},
+		ACPArgs:                []string{"--auth-type", "openai", "--yolo"},
 		HooksInACP:             true,
 	},
 	"opencode": withACP(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
