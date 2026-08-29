@@ -258,7 +258,8 @@ var All = map[string]Harness{
 		ACPCmd:               []string{"hermes", "acp"},
 		HooksInACP:          true,
 	},
-	"kilo": tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+	"kilo": withACP(tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"kimi": {
 		Name: "kimi", Binary: "kimi",
 		InstallCmd: []string{"npm", "install", "-g", "@moonshot-ai/kimi-code"},
@@ -396,6 +397,8 @@ var All = map[string]Harness{
 		ExitCommand:             "/exit",
 		CompactCommand:          "/compress",
 		HooksInInteractive:      true,
+		ACPCmd:                  []string{"qwen", "--acp"},
+		HooksInACP:             true,
 	},
 	"opencode": withACP(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
 		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
@@ -432,6 +435,9 @@ var All = map[string]Harness{
 		ExitCommand:      "/exit",
 		CompactCommand:   "/compact",
 		HooksInInteractive:    true,
+		ACPCmd:                []string{"droid", "exec", "--output-format", "acp"},
+		ACPArgs:               []string{"--auto", "high", "-m", "{{.Model}}"},
+		HooksInACP:           true,
 	},
 }
 
