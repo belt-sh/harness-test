@@ -108,7 +108,16 @@ func hookFileName(h Harness) string {
 	if h.HookFileName != "" {
 		return h.HookFileName
 	}
-	return "belt.json"
+	switch h.HookFormat {
+	case TSExtension, TSPlugin:
+		return "belt.ts"
+	case TOML:
+		return "config.toml"
+	case YAML:
+		return "config.yaml"
+	default:
+		return "belt.json"
+	}
 }
 
 func needsMerge(h Harness) bool {
