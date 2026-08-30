@@ -78,7 +78,8 @@ var codexProviderArgs = []string{
 var All = map[string]Harness{
 	"claude": {
 		Name: "claude", Binary: "claude",
-		InstallCmd: []string{"npm", "install", "-g", "@anthropic-ai/claude-code"},
+		InstallCmd:    []string{"npm", "install", "-g", "@anthropic-ai/claude-code"},
+		DetectEnvVars: []string{"CLAUDECODE", "CLAUDE_CODE"},
 		APIFormat: Anthropic,
 		EnvVars: map[string]string{
 			"ANTHROPIC_BASE_URL":       "{{.BaseURL}}",
@@ -118,7 +119,8 @@ var All = map[string]Harness{
 	},
 	"codex": {
 		Name: "codex", Binary: "codex",
-		InstallCmd: []string{"npm", "install", "-g", "@openai/codex"},
+		InstallCmd:    []string{"npm", "install", "-g", "@openai/codex"},
+		DetectEnvVars: []string{"CODEX_SANDBOX", "CODEX_THREAD_ID"},
 		PostInstall: [][]string{
 			{"sh", "-c", "codex plugin marketplace add https://github.com/belt-sh/skills.git 2>/dev/null || true"},
 			{"sh", "-c", "codex plugin add belt@belt-sh-skills 2>/dev/null || true"},
@@ -162,7 +164,8 @@ var All = map[string]Harness{
 	},
 	"copilot": {
 		Name: "copilot", Binary: "copilot",
-		InstallCmd: []string{"npm", "install", "-g", "@github/copilot"},
+		InstallCmd:    []string{"npm", "install", "-g", "@github/copilot"},
+		DetectEnvVars: []string{"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN"},
 		APIFormat: OpenAI,
 		EnvVars: map[string]string{
 			"COPILOT_PROVIDER_BASE_URL": "{{.BaseURL}}",
@@ -231,7 +234,8 @@ var All = map[string]Harness{
 	},
 	"pi": {
 		Name: "pi", Binary: "pi",
-		InstallCmd: []string{"npm", "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"},
+		InstallCmd:    []string{"npm", "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"},
+		DetectEnvVars: []string{"PI_CODING_AGENT"},
 		APIFormat:    OpenAI,
 		EnvVars: map[string]string{
 			"OPENAI_BASE_URL": "{{.BaseURL}}/api/v1",
@@ -374,6 +378,7 @@ var All = map[string]Harness{
 		Name: "goose", Binary: "goose",
 		InstallCmd:     []string{"sh", "-c", "mkdir -p $HOME/.local/bin && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/goose-x86_64-unknown-linux-gnu.tar.bz2 | tar -xj --strip-components=0 -C $HOME/.local/bin"},
 		InstallBinDirs: []string{".local/bin"},
+		PluginManifest: ".agents/plugins/belt/plugin.json",
 		APIFormat:    OpenAI,
 		EnvVars: map[string]string{
 			"GOOSE_PROVIDER":               "mock",
@@ -410,7 +415,8 @@ var All = map[string]Harness{
 	},
 	"gemini": {
 		Name: "gemini", Binary: "gemini",
-		InstallCmd: []string{"npm", "install", "-g", "@google/gemini-cli"},
+		InstallCmd:    []string{"npm", "install", "-g", "@google/gemini-cli"},
+		DetectEnvVars: []string{"GEMINI_CLI"},
 		APIFormat: Gemini,
 		EnvVars: map[string]string{
 			"GOOGLE_GEMINI_BASE_URL":     "{{.BaseURL}}",
@@ -518,6 +524,26 @@ var All = map[string]Harness{
 		ACPCmd:                []string{"droid", "exec", "--output-format", "acp"},
 		ACPArgs:               []string{"--auto", "high", "-m", "{{.Model}}"},
 		HooksInACP:           true,
+	},
+
+	// IDE-only agents: detection and hook install only, no test support.
+	"cursor": {
+		Name: "cursor", Binary: "cursor",
+		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT"},
+		DetectConfigDirs: []string{".cursor"},
+		HookFormat:       JSONNested,
+		HookConfigDir:    ".cursor",
+		HookFileName:     "hooks.json",
+		Events:           standardEvents,
+	},
+	"windsurf": {
+		Name: "windsurf", Binary: "windsurf",
+		DetectEnvVars:    []string{"WINDSURF_EXTENSION_HOST_ROLE"},
+		DetectConfigDirs: []string{".windsurf", ".codeium/windsurf"},
+		HookFormat:       JSONNested,
+		HookConfigDir:    ".codeium/windsurf",
+		HookFileName:     "hooks.json",
+		Events:           standardEvents,
 	},
 }
 

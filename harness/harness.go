@@ -142,6 +142,11 @@ type Harness struct {
 	// TS plugin
 	TSPluginExport string // appended to TS plugin file (e.g. kilo's default export wrapper)
 
+	// Detection (used by belt CLI to find installed agents)
+	DetectEnvVars    []string // env vars the agent sets at runtime (e.g. CLAUDECODE)
+	DetectConfigDirs []string // config dirs to check (defaults to HookConfigDir root if empty)
+	PluginManifest   string   // write plugin.json here on install (goose)
+
 	// Setup
 	PreserveHome bool // don't override HOME (harness needs installed plugins)
 }

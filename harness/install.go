@@ -97,6 +97,98 @@ func needsMerge(h Harness) bool {
 	return h.HookWrapper != ""
 }
 
+// HookConfig returns the generated hook configuration for an agent.
+func HookConfig(name string) (string, error) {
+	h, ok := All[name]
+	if !ok {
+		return "", fmt.Errorf("unknown harness: %s", name)
+	}
+	return generateHookConfig(name, h)
+}
+
+// Uninstall removes belt hooks for a harness at the given scope.
+func Uninstall(name string, scope InstallScope) InstallResult {
+	h, ok := All[name]
+	if !ok {
+		return InstallResult{Harness: name, Error: fmt.Errorf("unknown harness: %s", name)}
+	}
+
+	home, _ := os.UserHomeDir()
+	var hooksPath string
+	switch scope {
+	case ScopeUser:
+		target := hooksTarget(name)
+		if target == "" {
+			return InstallResult{Harness: name, Error: fmt.Errorf("no user hook path for %s", name)}
+		}
+		hooksPath = filepath.Join(home, target)
+	case ScopeProject:
+		cwd, _ := os.Getwd()
+		hooksPath = filepath.Join(cwd, h.HookConfigDir, hookFileName(h))
+	}
+
+	result := InstallResult{Harness: name, Scope: scope, HooksPath: hooksPath}
+	if needsMerge(h) {
+		result.Merged = true
+		result.Error = removeMergedHooks(hooksPath, h.HookFormat)
+	} else {
+		result.Error = os.Remove(hooksPath)
+		if os.IsNotExist(result.Error) {
+			result.Error = nil
+		}
+	}
+	if h.PluginManifest != "" {
+		os.Remove(filepath.Join(home, h.PluginManifest))
+	}
+	return result
+}
+
+func removeMergedHooks(path string, format HookFormat) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	switch format {
+	case JSONNested:
+		var obj map[string]any
+		if json.Unmarshal(data, &obj) != nil {
+			return nil
+		}
+		delete(obj, "hooks")
+		if len(obj) == 0 {
+			return os.Remove(path)
+		}
+		out, _ := json.MarshalIndent(obj, "", "  ")
+		return os.WriteFile(path, out, 0644)
+	default:
+		return os.Remove(path)
+	}
+}
+
+// HooksInstalled checks if belt hooks exist for an agent at the given scope.
+func HooksInstalled(name string, scope InstallScope) bool {
+	h, ok := All[name]
+	if !ok {
+		return false
+	}
+	var root string
+	switch scope {
+	case ScopeProject:
+		root, _ = os.Getwd()
+	default:
+		root, _ = os.UserHomeDir()
+	}
+	if root == "" {
+		return false
+	}
+	path := filepath.Join(root, h.HookConfigDir, hookFileName(h))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "belt plugin hook")
+}
+
 func generateHookConfig(name string, h Harness) (string, error) {
 	switch h.HookFormat {
 	case JSONNested:

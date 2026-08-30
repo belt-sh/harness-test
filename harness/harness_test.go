@@ -28,7 +28,12 @@ func TestAllHarnessesHaveRequiredFields(t *testing.T) {
 }
 
 func TestAllHarnessesHaveAtLeastOneMode(t *testing.T) {
+	// IDE-only agents (cursor, windsurf) have detection + install but no CLI test modes
+	ideOnly := map[string]bool{"cursor": true, "windsurf": true}
 	for name, h := range All {
+		if ideOnly[name] {
+			continue
+		}
 		hasHeadless := len(h.HeadlessCmd) > 0
 		hasInteractive := len(h.InteractiveCmd) > 0
 		hasACP := len(h.ACPCmd) > 0

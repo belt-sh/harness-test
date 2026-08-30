@@ -73,17 +73,23 @@ var strategies = []strategy{
 	{"env-var", probeEnvVar},
 }
 
-// configDir returns the config directory for detection (derived from HookConfigDir).
-func configDir(name string) string {
+// detectConfigDirs returns config directories to probe for detection.
+func detectConfigDirs(name string) []string {
 	h, ok := All[name]
 	if !ok {
-		return ""
+		return nil
+	}
+	if len(h.DetectConfigDirs) > 0 {
+		return h.DetectConfigDirs
 	}
 	d := h.HookConfigDir
-	if i := strings.IndexByte(d, '/'); i > 0 {
-		return d[:i]
+	if d == "" {
+		return nil
 	}
-	return d
+	if i := strings.IndexByte(d, '/'); i > 0 {
+		d = d[:i]
+	}
+	return []string{d}
 }
 
 // hooksTarget returns the hook file path relative to HOME (derived from registry).
@@ -102,16 +108,17 @@ var wellKnownBinDirs = []string{
 	".cargo/bin",
 }
 
-var envVars = map[string][]string{
-	"claude":   {"CLAUDECODE", "CLAUDE_CODE"},
-	"codex":    {"CODEX_SANDBOX", "CODEX_THREAD_ID"},
-	"copilot":  {"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN"},
-	"gemini":   {"GEMINI_CLI"},
-	"opencode": {"OPENCODE_CLIENT"},
-	"pi":       {"PI_CODING_AGENT"},
-}
 
 // --- Public API ---
+
+// KnownNames returns the names of all agents in the registry.
+func KnownNames() []string {
+	names := make([]string, 0, len(All))
+	for name := range All {
+		names = append(names, name)
+	}
+	return names
+}
 
 func DetectAll() []DetectResult {
 	home, _ := os.UserHomeDir()
@@ -120,6 +127,17 @@ func DetectAll() []DetectResult {
 		results = append(results, runDetection(name, h.Binary, home))
 	}
 	return results
+}
+
+// DetectInstalled returns results only for agents that are installed or configured.
+func DetectInstalled() []DetectResult {
+	var found []DetectResult
+	for _, r := range DetectAll() {
+		if r.Installed() || r.Configured() {
+			found = append(found, r)
+		}
+	}
+	return found
 }
 
 func DetectOne(name string) DetectResult {
@@ -154,14 +172,17 @@ func runDetection(name, binary, home string) DetectResult {
 // Most reliable signal — if ~/.claude/ exists, claude has been run on this machine.
 // No exec, no PATH dependency, cross-platform.
 func probeConfigDir(name, _, home string, r *DetectResult) {
-	d := configDir(name)
-	if d == "" || home == "" {
+	dirs := detectConfigDirs(name)
+	if len(dirs) == 0 || home == "" {
 		return
 	}
-	full := filepath.Join(home, d)
-	if info, err := os.Stat(full); err == nil && info.IsDir() {
-		r.ConfigDir = full
-		r.Probes = append(r.Probes, ProbeConfigDir)
+	for _, d := range dirs {
+		full := filepath.Join(home, d)
+		if info, err := os.Stat(full); err == nil && info.IsDir() {
+			r.ConfigDir = full
+			r.Probes = append(r.Probes, ProbeConfigDir)
+			return
+		}
 	}
 }
 
@@ -214,11 +235,11 @@ func probePackageReg(name, _, _ string, r *DetectResult) {
 // Only matches when belt is running INSIDE an agent (e.g. from a hook script).
 // Not useful for interactive detection, but confirms the calling agent.
 func probeEnvVar(name, _, _ string, r *DetectResult) {
-	vars, ok := envVars[name]
+	h, ok := All[name]
 	if !ok {
 		return
 	}
-	for _, v := range vars {
+	for _, v := range h.DetectEnvVars {
 		if os.Getenv(v) != "" {
 			r.Probes = append(r.Probes, ProbeEnvVar)
 			return
