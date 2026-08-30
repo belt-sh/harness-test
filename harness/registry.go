@@ -485,7 +485,7 @@ var All = map[string]Harness{
 		ACPArgs:                []string{"--auth-type", "openai", "--yolo"},
 		HooksInACP:             true,
 	},
-	"opencode": withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".opencode/plugins"),
+	"opencode": withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".config/opencode/plugins"),
 		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"droid": {
 		Name: "droid", Binary: "droid",
