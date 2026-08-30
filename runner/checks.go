@@ -44,8 +44,9 @@ func (r *Runner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
 			return
 		}
-		// Bedrock/Q: converse-stream or invoke-with-response-stream
-		if strings.Contains(e.Path, "converse-stream") || strings.Contains(e.Path, "invoke-with-response-stream") {
+		// Bedrock/Q: converse-stream, invoke-with-response-stream, or GenerateAssistantResponse
+		if strings.Contains(e.Path, "converse-stream") || strings.Contains(e.Path, "invoke-with-response-stream") ||
+			strings.Contains(string(e.Headers["x-amz-target"]), "GenerateAssistantResponse") {
 			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
 			return
 		}

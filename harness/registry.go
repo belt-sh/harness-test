@@ -237,10 +237,9 @@ var All = map[string]Harness{
 		InstallCmd:    []string{"npm", "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"},
 		DetectEnvVars: []string{"PI_CODING_AGENT"},
 		APIFormat:    OpenAI,
-		EnvVars: map[string]string{
-			"OPENAI_BASE_URL": "{{.BaseURL}}/api/v1",
-		},
+		EnvVars: map[string]string{},
 		APIKeyEnvVar: "OPENROUTER_API_KEY",
+		NeedsIntercept: true,
 		DefaultModel: "openai/gpt-4o-mini",
 		HookFormat:    TSExtension,
 		HookConfigDir: ".pi/agent/extensions",

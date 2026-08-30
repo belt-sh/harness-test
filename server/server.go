@@ -52,6 +52,9 @@ var LLMHosts = []string{
 	"app.kiro.dev",
 	"prod.us-east-1.auth.desktop.kiro.dev",
 	"management.us-east-1.kiro.dev",
+	"cognito-identity.us-east-1.amazonaws.com",
+	"client-telemetry.us-east-1.amazonaws.com",
+	"prod.us-east-1.telemetry-v2.kiro.dev",
 }
 
 type MockServer struct {
@@ -141,7 +144,7 @@ func New() *MockServer {
 		"used": 0, "limit": 1000000,
 	}))
 
-	// Kiro auth stubs
+	// Kiro auth + Cognito stubs
 	mux.HandleFunc("POST /auth/", func(w http.ResponseWriter, r *http.Request) {
 		s.record(r, nil, "")
 		writeJSON(w, map[string]any{"accessToken": "mock-token", "expiresIn": 86400})
@@ -153,9 +156,49 @@ func New() *MockServer {
 	mux.HandleFunc("DELETE /log", s.handleClearLog)
 	mux.HandleFunc("POST /response", s.handleSetResponse)
 
-	// Catch-all: return 200 for any unhandled path
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(200)
+	// Catch-all: handle AWS service APIs (Cognito, CodeWhisperer, telemetry)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		target := r.Header.Get("X-Amz-Target")
+		switch target {
+		// Cognito Identity
+		case "AWSCognitoIdentityService.GetId":
+			writeJSON(w, map[string]any{"IdentityId": "us-east-1:mock-identity-id"})
+		case "AWSCognitoIdentityService.GetCredentialsForIdentity":
+			writeJSON(w, map[string]any{
+				"IdentityId": "us-east-1:mock-identity-id",
+				"Credentials": map[string]any{
+					"AccessKeyId": "ASIAMOCKKEY", "SecretKey": "mocksecretkey",
+					"SessionToken": "mocksessiontoken", "Expiration": 4102444800,
+				},
+			})
+		case "AWSCognitoIdentityService.GetOpenIdToken":
+			writeJSON(w, map[string]any{"IdentityId": "us-east-1:mock-identity-id", "Token": "mock-openid-token"})
+		// CodeWhisperer management
+		case "AmazonCodeWhispererService.GetProfile":
+			writeJSON(w, map[string]any{"profileArn": "arn:aws:codewhisperer:us-east-1:mock:profile/mock", "profileName": "mock"})
+		case "AmazonCodeWhispererService.GetUsageLimits":
+			writeJSON(w, map[string]any{"usageLimits": []any{}})
+		case "AmazonCodeWhispererService.ListAvailableModels":
+			writeJSON(w, map[string]any{"models": []map[string]any{
+				{"modelId": "kiro-default", "modelName": "Kiro Default", "provider": "kiro"},
+			}})
+		case "AmazonCodeWhispererService.SendTelemetryEvent":
+			writeJSON(w, map[string]any{})
+		// CodeWhisperer streaming (LLM call)
+		case "AmazonCodeWhispererStreamingService.GenerateAssistantResponse":
+			body, _ := io.ReadAll(r.Body)
+			s.record(r, body, "kiro-default")
+			text := s.getResponse()
+			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+			w.WriteHeader(200)
+			writeBedrockEvent(w, "assistantResponseEvent", map[string]any{"content": text})
+			writeBedrockEvent(w, "messageMetadataEvent", map[string]any{
+				"conversationId": "mock-conv-1",
+				"usage":          map[string]any{"inputTokens": 10, "outputTokens": 5},
+			})
+		default:
+			w.WriteHeader(200)
+		}
 	})
 
 	s.srv = &http.Server{Handler: mux}

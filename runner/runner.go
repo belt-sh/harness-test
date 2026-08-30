@@ -61,6 +61,7 @@ type Runner struct {
 	failed       bool
 	result       Result
 	lastOutput   string
+	proxyURL     string // HTTPS_PROXY value, set only during agent execution
 }
 
 const hookLogPath = "/tmp/belt-hook-events.log"
@@ -214,22 +215,16 @@ func (r *Runner) setupIntercept() {
 		fmt.Printf("  → intercept: %d LLM domains → 127.0.0.1\n", len(server.LLMHosts))
 	}
 
-	// HTTPS proxy: agents that support HTTPS_PROXY get MITM'd through our proxy
+	// HTTPS proxy: stored on runner, applied only when launching the agent
+	// (not globally — npm/pip install would break if routed through the proxy)
 	if proxyAddr := r.server.ProxyAddr(); proxyAddr != "" {
-		os.Setenv("HTTPS_PROXY", proxyAddr)
-		os.Setenv("HTTP_PROXY", proxyAddr)
-		os.Setenv("https_proxy", proxyAddr)
-		os.Setenv("http_proxy", proxyAddr)
-		fmt.Printf("  → intercept: HTTPS_PROXY=%s\n", proxyAddr)
+		r.proxyURL = proxyAddr
+		fmt.Printf("  → intercept: proxy=%s (applied at agent launch)\n", proxyAddr)
 	} else {
-		// No proxy available; start one now
 		proxyAddr, proxyErr := r.server.StartProxy()
 		if proxyErr == nil {
-			os.Setenv("HTTPS_PROXY", proxyAddr)
-			os.Setenv("HTTP_PROXY", proxyAddr)
-			os.Setenv("https_proxy", proxyAddr)
-			os.Setenv("http_proxy", proxyAddr)
-			fmt.Printf("  → intercept: HTTPS_PROXY=%s\n", proxyAddr)
+			r.proxyURL = proxyAddr
+			fmt.Printf("  → intercept: proxy=%s (applied at agent launch)\n", proxyAddr)
 		}
 	}
 
@@ -616,7 +611,7 @@ func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdSlice[0], args...)
-	cmd.Env = os.Environ()
+	cmd.Env = r.agentEnv()
 	cmd.Dir = dir
 	if r.harness.PromptViaStdin {
 		cmd.Stdin = strings.NewReader(prompt)
@@ -685,7 +680,7 @@ func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, r.harness.HeadlessCmd[0], args...)
-	cmd.Env = os.Environ()
+	cmd.Env = r.agentEnv()
 	cmd.Dir = dir
 	out, _ := cmd.CombinedOutput()
 	if os.Getenv("HARNESS_DEBUG") != "" {
@@ -717,7 +712,7 @@ func (r *Runner) runInteractive() {
 		iargs = append(iargs, r.expand(a))
 	}
 
-	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, os.Environ())
+	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.agentEnv())
 	if err != nil {
 		r.fail("PTY start: " + err.Error())
 		return
@@ -826,7 +821,7 @@ func (r *Runner) runACP() {
 	// Write ACP-specific config files (some agents need config in the project dir)
 	r.writeACPConfig()
 
-	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, os.Environ())
+	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, r.agentEnv())
 	if err := driver.Start(); err != nil {
 		r.fail("ACP start: " + err.Error())
 		return
@@ -1055,6 +1050,20 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func stripANSI(s string) string {
 	return ansiRe.ReplaceAllString(s, "")
+}
+
+// agentEnv returns os.Environ() with proxy vars injected for intercepted agents.
+func (r *Runner) agentEnv() []string {
+	env := os.Environ()
+	if r.proxyURL == "" {
+		return env
+	}
+	return append(env,
+		"HTTPS_PROXY="+r.proxyURL,
+		"HTTP_PROXY="+r.proxyURL,
+		"https_proxy="+r.proxyURL,
+		"http_proxy="+r.proxyURL,
+	)
 }
 
 func run(dir string, name string, args ...string) error {
