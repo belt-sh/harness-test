@@ -38,8 +38,8 @@ func Install(name string, scope InstallScope) InstallResult {
 
 	switch scope {
 	case ScopeUser:
-		target, ok := hooksTargets[name]
-		if !ok {
+		target := hooksTarget(name)
+		if target == "" {
 			return InstallResult{Harness: name, Error: fmt.Errorf("no user hook path for %s", name)}
 		}
 		hooksPath = filepath.Join(home, target)
@@ -59,7 +59,7 @@ func Install(name string, scope InstallScope) InstallResult {
 	// we need to read-modify-write. For standalone files, just write.
 	switch h.HookFormat {
 	case JSONNested:
-		if needsMerge(name) {
+		if needsMerge(h) {
 			result.Merged = true
 			err = mergeJSONHooks(hooksPath, content)
 		} else {
@@ -93,8 +93,8 @@ func hookFileName(h Harness) string {
 	return "belt.json"
 }
 
-func needsMerge(name string) bool {
-	return name == "claude" || name == "gemini" || name == "qwen"
+func needsMerge(h Harness) bool {
+	return h.HookWrapper != ""
 }
 
 func generateHookConfig(name string, h Harness) (string, error) {
@@ -275,8 +275,8 @@ func generateTSPlugin(name string, h Harness) string {
 	body := fmt.Sprintf("export const BeltPlugin = async (_ctx: any) => {\n  return {\n%s,\n  };\n};\n",
 		strings.Join(hooks, ",\n"))
 
-	if name == "kilo" {
-		return body + "\nexport default { id: \"belt\", server: BeltPlugin };\n"
+	if h.TSPluginExport != "" {
+		return body + "\n" + h.TSPluginExport + "\n"
 	}
 	return body
 }

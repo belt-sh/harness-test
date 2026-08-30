@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -96,10 +95,7 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 func streamDataOnly(w http.ResponseWriter, events []any) {
 	f := beginSSE(w)
 	for _, data := range events {
-		fmt.Fprintf(w, "data: %s\n\n", mustJSON(data))
-		if f != nil {
-			f.Flush()
-		}
+		streamData(w, f, data)
 	}
 }
 
@@ -118,10 +114,8 @@ func (s *MockServer) geminiStream(w http.ResponseWriter, model, text string) {
 }
 
 func (s *MockServer) geminiToolCall(w http.ResponseWriter, model string) {
-	name, argsJSON := s.getToolCall()
-	var args map[string]any
-	json.Unmarshal([]byte(argsJSON), &args)
-
+	name, parsed := s.getToolCallParsed()
+	args, _ := parsed.(map[string]any)
 	fc := geminiPart{FunctionCall: &geminiFuncCall{Name: name, Args: args}}
 	streamDataOnly(w, []any{
 		geminiResponse{

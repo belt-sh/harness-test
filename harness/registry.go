@@ -16,6 +16,11 @@ func withACP(h Harness, cmd []string, args []string) Harness {
 	return h
 }
 
+func withTSPluginExport(h Harness, export string) Harness {
+	h.TSPluginExport = export
+	return h
+}
+
 func withACPProvider(h Harness, cmd []string, args []string) Harness {
 	h = withACP(h, cmd, args)
 	h.ACPNeedsTempHome = true
@@ -228,7 +233,9 @@ var All = map[string]Harness{
 		Name: "pi", Binary: "pi",
 		InstallCmd: []string{"npm", "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"},
 		APIFormat:    OpenAI,
-		EnvVars: map[string]string{},
+		EnvVars: map[string]string{
+			"OPENAI_BASE_URL": "{{.BaseURL}}/api/v1",
+		},
 		APIKeyEnvVar: "OPENROUTER_API_KEY",
 		DefaultModel: "openai/gpt-4o-mini",
 		HookFormat:    TSExtension,
@@ -260,6 +267,7 @@ var All = map[string]Harness{
 			PostToolUse:  "PostToolUse",
 			Stop:         "Stop",
 		},
+		NeedsIntercept:  true,
 		HeadlessCmd:     []string{"kiro-cli", "chat", "--no-interactive"},
 		HooksInHeadless: true,
 		ACPCmd:          []string{"kiro-cli", "acp"},
@@ -324,7 +332,9 @@ var All = map[string]Harness{
 		ACPCmd:               []string{"hermes", "acp"},
 		HooksInACP:          true,
 	},
-	"kilo": withACPProvider(tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+	"kilo": withACPProvider(withTSPluginExport(
+		tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+		`export default { id: "belt", server: BeltPlugin };`),
 		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 	"kimi": {
 		Name: "kimi", Binary: "kimi",
@@ -345,6 +355,7 @@ var All = map[string]Harness{
 			PostToolUse:  "PostToolUse",
 			Stop:         "Stop",
 		},
+		TokenHashInput: `{"oauthHost":"https://auth.kimi.com","baseUrl":"{{.BaseURL}}/coding/v1"}`,
 		ConfigFiles: []ConfigFile{
 			{Path: ".kimi-code/config.toml", Content: "default_model = \"mock\"\n\n[providers.mock]\ntype = \"openai\"\napi_key = \"mock-key\"\nbase_url = \"{{.BaseURL}}/v1\"\n\n[models.mock]\nprovider = \"mock\"\nmodel = \"{{.Model}}\"\nmax_context_size = 128000\nmax_output_size = 4096\n"},
 			{Path: ".kimi-code/credentials/kimi-code-env-{{.TokenHash16}}.json", Content: `{"access_token":"mock-kimi-token","refresh_token":"mock-refresh","expires_at":99999999999,"scope":"","token_type":"Bearer","expires_in":86400}`},
@@ -518,12 +529,12 @@ var All = map[string]Harness{
 //   Has TypeScript plugins via amp.on() with 5 events (tool.call, tool.result,
 //   agent.start, agent.end, session.start). Headless: amp -x "prompt".
 //
-// Kiro (kirodotdev/Kiro) — Amazon-backed, 10 hook events (UserPromptSubmit,
-//   PreToolUse, PostToolUse, SessionStart, Stop, PreTaskExec, PostTaskExec,
-//   PostFileSave, PostFileCreate, PostFileDelete). JSON v1 format in
-//   .kiro/hooks/<id>.json. No BYOK — uses Bedrock internally, no custom
-//   endpoint support. Open feature request: github.com/kirodotdev/Kiro/issues/695.
-//   Headless: kiro-cli chat --no-interactive "prompt". Auth: KIRO_API_KEY.
+// Kiro — now added above with NeedsIntercept. Uses Amazon Q backend
+//   (q.us-east-1.amazonaws.com, runtime.*.kiro.dev), NOT direct Bedrock.
+//   Rust binary (reqwest + rustls). Supports HTTPS_PROXY since v1.8.0.
+//   No BYOK: github.com/kirodotdev/Kiro/issues/695. MITM proxy approach
+//   intercepts via HTTPS_PROXY. TLS verification may fail if kiro uses
+//   webpki-roots (compiled-in CAs) instead of rustls-native-certs (system store).
 //
 // Aider (aider-chat on PyPI) — No hook/plugin system. Has --lint-cmd and
 //   --test-cmd post-edit hooks only. BYOK via OPENAI_API_BASE + OPENAI_API_KEY.

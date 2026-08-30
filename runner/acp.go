@@ -30,12 +30,21 @@ type ACPDriver struct {
 	responses map[int]chan json.RawMessage
 	respMu    sync.Mutex
 
-	updates  chan sessionUpdate
-	handlers map[string]notificationHandler
-	done     chan struct{}
+	updates    chan sessionUpdate
+	handlers   map[string]notificationHandler
+	done       chan struct{}
+	turnDone   chan struct{} // signaled when the agent finishes a turn
+	lastUpdate time.Time    // timestamp of last session/update
 }
 
 type notificationHandler func(msg rpcMessage)
+
+var acpTurnDoneSignals = map[string]bool{
+	"turn_complete": true,
+	"end_turn":      true,
+	"completed":     true,
+	"idle":          true,
+}
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
 	cmd := exec.Command(binary, args...)
@@ -49,6 +58,7 @@ func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDr
 		responses: make(map[int]chan json.RawMessage),
 		updates:   make(chan sessionUpdate, 64),
 		done:      make(chan struct{}),
+		turnDone:  make(chan struct{}, 1),
 	}
 	d.handlers = map[string]notificationHandler{
 		"session/update":             d.handleUpdate,
@@ -116,21 +126,63 @@ func (d *ACPDriver) SendPrompt(prompt string) error {
 
 func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (string, error) {
 	deadline := time.After(timeout)
+	matched := false
 	for {
 		select {
 		case upd := <-d.updates:
 			if text := d.extractText(upd); text != "" {
 				d.appendOutput(text)
 			}
-			for _, p := range patterns {
-				if strings.Contains(d.Output(), p) {
-					return d.Output(), nil
+			if !matched {
+				for _, p := range patterns {
+					if strings.Contains(d.Output(), p) {
+						matched = true
+						break
+					}
 				}
 			}
+		case <-d.turnDone:
+			if matched {
+				return d.Output(), nil
+			}
 		case <-deadline:
+			if matched {
+				return d.Output(), nil
+			}
 			return d.Output(), fmt.Errorf("timeout waiting for response")
 		case <-d.done:
 			return d.Output(), nil
+		}
+	}
+}
+
+// WaitIdle waits until no session/update has arrived for the given duration,
+// indicating the agent has settled (tool hooks finished, etc.).
+func (d *ACPDriver) WaitIdle(quiet time.Duration) {
+	d.mu.Lock()
+	last := d.lastUpdate
+	d.mu.Unlock()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			d.mu.Lock()
+			cur := d.lastUpdate
+			d.mu.Unlock()
+			if !cur.Equal(last) {
+				last = cur
+				continue
+			}
+			if time.Since(cur) >= quiet {
+				return
+			}
+		case <-deadline:
+			return
+		case <-d.done:
+			return
 		}
 	}
 }
@@ -148,6 +200,11 @@ func (d *ACPDriver) Output() string {
 func (d *ACPDriver) Close() error {
 	if d.sessionID != "" {
 		d.send("session/close", map[string]any{"sessionId": d.sessionID})
+		// Give the agent time to process close and fire Stop hooks
+		select {
+		case <-d.done:
+		case <-time.After(5 * time.Second):
+		}
 	}
 	d.stdin.Close()
 	return d.cmd.Wait()
@@ -250,7 +307,18 @@ func (d *ACPDriver) routeResponse(msg rpcMessage) {
 func (d *ACPDriver) handleUpdate(msg rpcMessage) {
 	var notif sessionUpdateNotification
 	if json.Unmarshal(msg.Params, &notif) == nil {
+		d.mu.Lock()
+		d.lastUpdate = time.Now()
+		d.mu.Unlock()
+
 		d.updates <- notif.Update
+
+		if acpTurnDoneSignals[notif.Update.Kind] || acpTurnDoneSignals[notif.Update.Status] {
+			select {
+			case d.turnDone <- struct{}{}:
+			default:
+			}
+		}
 	}
 }
 
@@ -315,16 +383,31 @@ func (d *ACPDriver) respondError(id int, code int, message string) {
 	d.stdin.Write(data)
 }
 
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 func (d *ACPDriver) extractText(upd sessionUpdate) string {
 	if len(upd.Content) == 0 {
 		return ""
 	}
-	var block struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(upd.Content, &block) == nil && block.Text != "" {
-		return block.Text
+	if upd.Content[0] == '[' {
+		var blocks []contentBlock
+		if json.Unmarshal(upd.Content, &blocks) == nil {
+			var parts []string
+			for _, b := range blocks {
+				if b.Text != "" {
+					parts = append(parts, b.Text)
+				}
+			}
+			return strings.Join(parts, "")
+		}
+	} else {
+		var block contentBlock
+		if json.Unmarshal(upd.Content, &block) == nil && block.Text != "" {
+			return block.Text
+		}
 	}
 	return ""
 }

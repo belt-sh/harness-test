@@ -63,6 +63,17 @@ type Runner struct {
 	lastOutput   string
 }
 
+const hookLogPath = "/tmp/belt-hook-events.log"
+
+const (
+	TagSessionStart = "SESSION_START"
+	TagPrompt       = "PROMPT"
+	TagPreTool      = "PRE_TOOL"
+	TagPostTool     = "POST_TOOL"
+	TagStop         = "STOP"
+	TagPreCompact   = "PRE_COMPACT"
+)
+
 var originalHome = os.Getenv("HOME")
 
 func New(h harness.Harness, srv *server.MockServer, baseURL string) *Runner {
@@ -120,7 +131,8 @@ func (r *Runner) Run() Result {
 	r.savedEnv = os.Environ()
 	fmt.Printf("=== %s ===\n", r.harness.Name)
 
-	if r.intercept {
+	if r.intercept || r.harness.NeedsIntercept {
+		r.intercept = true
 		r.setupIntercept()
 	}
 	r.setupHome()
@@ -147,28 +159,28 @@ func (r *Runner) Run() Result {
 		}
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
-		os.Remove("/tmp/belt-hook-events.log")
-		r.server.ClearLog()
-		r.prepareToolCall()
+		r.resetPhase()
 		r.runInteractive()
 		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
-		os.Remove("/tmp/belt-hook-events.log")
-		r.server.ClearLog()
-		r.prepareToolCall()
+		r.resetPhase()
 		r.runACP()
 		r.runChecks("acp")
 	}
 	if r.mode == ModeSDK {
-		os.Remove("/tmp/belt-hook-events.log")
-		r.server.ClearLog()
-		r.prepareToolCall()
+		r.resetPhase()
 		r.runSDK()
 		r.runChecks("sdk")
 	}
 
 	return r.finish()
+}
+
+func (r *Runner) resetPhase() {
+	os.Remove(hookLogPath)
+	r.server.ClearLog()
+	r.prepareToolCall()
 }
 
 func (r *Runner) prepareToolCall() {
@@ -191,19 +203,64 @@ func (r *Runner) finish() Result {
 }
 
 func (r *Runner) setupIntercept() {
+	// DNS interception: map LLM domains to 127.0.0.1
 	entries := server.HostsEntries()
 	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Printf("  ⚠ intercept: can't write /etc/hosts (%v) — run as root or in Docker\n", err)
+		fmt.Printf("  ⚠ intercept: can't write /etc/hosts (%v)\n", err)
+	} else {
+		f.WriteString("\n# harness-test intercept\n" + entries + "\n")
+		f.Close()
+		fmt.Printf("  → intercept: %d LLM domains → 127.0.0.1\n", len(server.LLMHosts))
+	}
+
+	// HTTPS proxy: agents that support HTTPS_PROXY get MITM'd through our proxy
+	if proxyAddr := r.server.ProxyAddr(); proxyAddr != "" {
+		os.Setenv("HTTPS_PROXY", proxyAddr)
+		os.Setenv("HTTP_PROXY", proxyAddr)
+		os.Setenv("https_proxy", proxyAddr)
+		os.Setenv("http_proxy", proxyAddr)
+		fmt.Printf("  → intercept: HTTPS_PROXY=%s\n", proxyAddr)
+	} else {
+		// No proxy available; start one now
+		proxyAddr, proxyErr := r.server.StartProxy()
+		if proxyErr == nil {
+			os.Setenv("HTTPS_PROXY", proxyAddr)
+			os.Setenv("HTTP_PROXY", proxyAddr)
+			os.Setenv("https_proxy", proxyAddr)
+			os.Setenv("http_proxy", proxyAddr)
+			fmt.Printf("  → intercept: HTTPS_PROXY=%s\n", proxyAddr)
+		}
+	}
+
+	// Install CA cert so runtimes that check system CAs trust our MITM
+	caPEM := r.server.CAPem()
+	if len(caPEM) == 0 {
+		os.Setenv("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+		fmt.Println("  ⚠ intercept: no CA cert, falling back to TLS bypass")
 		return
 	}
-	f.WriteString("\n# harness-test intercept\n" + entries + "\n")
-	f.Close()
 
+	caFile := filepath.Join(os.TempDir(), "harness-test-ca.crt")
+	os.WriteFile(caFile, caPEM, 0644)
+
+	// Node / Bun
+	os.Setenv("NODE_EXTRA_CA_CERTS", caFile)
+	// Python
+	os.Setenv("REQUESTS_CA_BUNDLE", caFile)
+	// Rust (native-tls / rustls-native-certs) + OpenSSL
+	combinedFile := filepath.Join(os.TempDir(), "harness-test-combined-ca.crt")
+	systemBundle, _ := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
+	combined := append(systemBundle, '\n')
+	combined = append(combined, caPEM...)
+	os.WriteFile(combinedFile, combined, 0644)
+	os.Setenv("SSL_CERT_FILE", combinedFile)
+
+	// Fallback: disable TLS verification for Node/Python
 	os.Setenv("NODE_TLS_REJECT_UNAUTHORIZED", "0")
 	os.Setenv("PYTHONHTTPSVERIFY", "0")
-	os.Setenv("SSL_CERT_DIR", "/dev/null")
-	fmt.Printf("  → intercept: %d LLM domains → 127.0.0.1 (TLS bypass enabled)\n", len(server.LLMHosts))
+
+	fmt.Printf("  → intercept: CA installed (%s)\n", caFile)
 }
 
 func (r *Runner) setupHome() {
@@ -322,7 +379,7 @@ func (r *Runner) writeHooks() {
 	hookDir := filepath.Join(r.home, r.harness.HookConfigDir)
 	os.MkdirAll(hookDir, 0755)
 
-	logPath := "/tmp/belt-hook-events.log"
+	logPath := hookLogPath
 	os.Remove(logPath)
 	r.injectCode = fmt.Sprintf("%s-%d", strings.ToUpper(r.harness.Name), time.Now().UnixMilli())
 
@@ -359,7 +416,7 @@ func (r *Runner) writeHooks() {
 		for _, e := range r.eventEntries() {
 			script := filepath.Join(scriptDir, e.Tag+".sh")
 			body := fmt.Sprintf("#!/bin/sh\ncat - >/dev/null\necho %s >> %s\n", e.Tag, logPath)
-			if e.Tag == "PROMPT" {
+			if e.Tag == TagPrompt {
 				body += fmt.Sprintf("printf '{\"context\": \"The project codename is %s.\"}\\n'\n", r.injectCode)
 			}
 			os.WriteFile(script, []byte(body), 0755)
@@ -375,7 +432,7 @@ func (r *Runner) writeHooks() {
 		filename = "belt-test.ts"
 		tsHooks := ""
 		for _, e := range r.eventEntries() {
-			if e.Tag == "PROMPT" {
+			if e.Tag == TagPrompt {
 				tsHooks += fmt.Sprintf(`  pi.on("%s", async (event: any) => {
     require("fs").appendFileSync("%s", "PROMPT\n");
     return { systemPrompt: (event.systemPrompt || '') + '\nThe project codename is %s.' };
@@ -397,10 +454,10 @@ func (r *Runner) writeHooks() {
 		tomlHooks := ""
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
-			if e.Tag == "PROMPT" {
+			if e.Tag == TagPrompt {
 				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
 			}
-			if e.Tag == "PRE_TOOL" || e.Tag == "POST_TOOL" {
+			if e.Tag == TagPreTool || e.Tag == TagPostTool {
 				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\nmatcher = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, r.toolMatcher(), cmd)
 			} else {
 				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, cmd)
@@ -414,14 +471,14 @@ func (r *Runner) writeHooks() {
 		startLine := ""
 		for _, e := range r.eventEntries() {
 			switch e.Tag {
-			case "SESSION_START":
-				startLine = fmt.Sprintf("  require(\"fs\").appendFileSync(\"%s\", \"SESSION_START\\n\");\n", logPath)
-			case "PROMPT":
+			case TagSessionStart:
+				startLine = fmt.Sprintf("  require(\"fs\").appendFileSync(\"%s\", \"%s\\n\");\n", logPath, TagSessionStart)
+			case TagPrompt:
 				hookParts = append(hookParts, fmt.Sprintf(`    "%s": async (_input: any, output: any) => {
       require("fs").appendFileSync("%s", "PROMPT\n");
       output.system.push("The project codename is %s.");
     }`, e.Event, logPath, r.injectCode))
-			case "STOP":
+			case TagStop:
 				hookParts = append(hookParts, fmt.Sprintf(`    "event": async ({ event }: any) => {
       if (event.type === "%s") {
         require("fs").appendFileSync("%s", "STOP\n");
@@ -458,9 +515,9 @@ func (r *Runner) writeBeltHooks() {
 	fmt.Println("[phase 3] hooks (belt)")
 
 	os.Setenv("BELT_HOOK_DEBUG", "1")
-	os.Setenv("BELT_HOOK_DEBUG_LOG", "/tmp/belt-hook-events.log")
+	os.Setenv("BELT_HOOK_DEBUG_LOG", hookLogPath)
 	os.Setenv("BELT_NO_HOOKS", "0")
-	os.Remove("/tmp/belt-hook-events.log")
+	os.Remove(hookLogPath)
 	os.MkdirAll(filepath.Join(r.home, ".belt"), 0755)
 
 	// Harnesses with HookWrapper need the non-hook config (permissions, base URL, auth)
@@ -793,9 +850,12 @@ func (r *Runner) runACP() {
 		r.pass("ACP prompt answered")
 	}
 
+	// Let tool execution and post-tool hooks settle
+	driver.WaitIdle(2 * time.Second)
+
 	if r.harness.CompactCommand != "" {
 		driver.SendCommand(r.harness.CompactCommand)
-		time.Sleep(3 * time.Second)
+		driver.WaitIdle(3 * time.Second)
 	}
 
 	r.lastOutput = driver.Output()
@@ -825,7 +885,7 @@ func (r *Runner) checkHookEvents(phase string) {
 	}
 
 	logContent := ""
-	if data, err := os.ReadFile("/tmp/belt-hook-events.log"); err == nil {
+	if data, err := os.ReadFile(hookLogPath); err == nil {
 		logContent = string(data)
 	}
 
@@ -849,12 +909,12 @@ func (r *Runner) checkHookEvents(phase string) {
 
 // beltEventNames maps our internal tag names to belt plugin hook event names.
 var beltEventNames = map[string]string{
-	"SESSION_START": "session-start",
-	"PROMPT":        "user-prompt-submit",
-	"PRE_TOOL":      "pre-tool-use",
-	"POST_TOOL":     "post-tool-use",
-	"STOP":          "stop",
-	"PRE_COMPACT":   "pre-compact",
+	TagSessionStart: "session-start",
+	TagPrompt:       "user-prompt-submit",
+	TagPreTool:      "pre-tool-use",
+	TagPostTool:     "post-tool-use",
+	TagStop:         "stop",
+	TagPreCompact:   "pre-compact",
 }
 
 func (r *Runner) checkBeltHookEvents(phase string) {
@@ -862,7 +922,7 @@ func (r *Runner) checkBeltHookEvents(phase string) {
 	if data, err := os.ReadFile(filepath.Join(r.home, ".belt", "hooks.log")); err == nil {
 		beltLog = string(data)
 	}
-	if data, err := os.ReadFile("/tmp/belt-hook-events.log"); err == nil {
+	if data, err := os.ReadFile(hookLogPath); err == nil {
 		beltLog += string(data)
 	}
 
@@ -900,12 +960,12 @@ type eventEntry struct {
 func (r *Runner) eventEntries() []eventEntry {
 	evts := r.harness.Events
 	all := []eventEntry{
-		{evts.SessionStart, "SESSION_START"},
-		{evts.PromptSubmit, "PROMPT"},
-		{evts.PreToolUse, "PRE_TOOL"},
-		{evts.PostToolUse, "POST_TOOL"},
-		{evts.Stop, "STOP"},
-		{evts.PreCompact, "PRE_COMPACT"},
+		{evts.SessionStart, TagSessionStart},
+		{evts.PromptSubmit, TagPrompt},
+		{evts.PreToolUse, TagPreTool},
+		{evts.PostToolUse, TagPostTool},
+		{evts.Stop, TagStop},
+		{evts.PreCompact, TagPreCompact},
 	}
 	var result []eventEntry
 	for _, e := range all {
@@ -931,11 +991,11 @@ func (r *Runner) buildNestedHooksJSON(logPath string) string {
 	parts := []string{}
 	for _, e := range entries {
 		cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
-		if e.Tag == "PROMPT" {
+		if e.Tag == TagPrompt {
 			cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
 		}
 		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":5}`, cmd)
-		if e.Tag == "PRE_TOOL" || e.Tag == "POST_TOOL" {
+		if e.Tag == TagPreTool || e.Tag == TagPostTool {
 			parts = append(parts, fmt.Sprintf(`"%s":[{"matcher":"%s","hooks":[%s]}]`, e.Event, r.toolMatcher(), hook))
 		} else {
 			parts = append(parts, fmt.Sprintf(`"%s":[{"hooks":[%s]}]`, e.Event, hook))
@@ -954,9 +1014,9 @@ func (r *Runner) expand(tmpl string) string {
 	} else {
 		s = strings.ReplaceAll(s, "{{.RepoDir}}", filepath.Join(r.home, "test-repo"))
 	}
-	if strings.Contains(s, "{{.TokenHash16}}") {
+	if strings.Contains(s, "{{.TokenHash16}}") && r.harness.TokenHashInput != "" {
 		if r.tokenHash16 == "" {
-			input := fmt.Sprintf(`{"oauthHost":"https://auth.kimi.com","baseUrl":"%s/coding/v1"}`, r.baseURL)
+			input := r.expand(r.harness.TokenHashInput)
 			hash := sha256.Sum256([]byte(input))
 			r.tokenHash16 = hex.EncodeToString(hash[:])[:16]
 		}

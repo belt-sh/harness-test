@@ -8,6 +8,17 @@ import (
 	"strings"
 )
 
+func npmPackageName(name string) string {
+	h, ok := All[name]
+	if !ok {
+		return ""
+	}
+	if len(h.InstallCmd) >= 4 && h.InstallCmd[0] == "npm" && h.InstallCmd[1] == "install" {
+		return h.InstallCmd[len(h.InstallCmd)-1]
+	}
+	return ""
+}
+
 // Probe identifies which detection strategy found evidence of a harness.
 type Probe string
 
@@ -62,38 +73,26 @@ var strategies = []strategy{
 	{"env-var", probeEnvVar},
 }
 
-// --- Per-harness data ---
-
-var configDirs = map[string][]string{
-	"claude":   {".claude"},
-	"codex":    {".codex"},
-	"copilot":  {".copilot"},
-	"droid":    {".factory"},
-	"gemini":   {".gemini"},
-	"goose":    {".config/goose"},
-	"grok":     {".grok"},
-	"hermes":   {".hermes"},
-	"kilo":     {".config/kilo"},
-	"kimi":     {".kimi-code"},
-	"opencode": {".config/opencode"},
-	"pi":       {".pi"},
-	"qwen":     {".qwen"},
+// configDir returns the config directory for detection (derived from HookConfigDir).
+func configDir(name string) string {
+	h, ok := All[name]
+	if !ok {
+		return ""
+	}
+	d := h.HookConfigDir
+	if i := strings.IndexByte(d, '/'); i > 0 {
+		return d[:i]
+	}
+	return d
 }
 
-var hooksTargets = map[string]string{
-	"claude":   ".claude/settings.json",
-	"codex":    ".codex/hooks.json",
-	"copilot":  ".copilot/hooks/belt.json",
-	"droid":    ".factory/hooks.json",
-	"gemini":   ".gemini/settings.json",
-	"goose":    ".agents/plugins/belt/hooks/hooks.json",
-	"grok":     ".grok/hooks/belt.json",
-	"hermes":   ".hermes/config.yaml",
-	"kilo":     ".config/kilo/plugin/belt.ts",
-	"kimi":     ".kimi-code/config.toml",
-	"opencode": ".config/opencode/plugins/belt.ts",
-	"pi":       ".pi/agent/extensions/belt.ts",
-	"qwen":     ".qwen/settings.json",
+// hooksTarget returns the hook file path relative to HOME (derived from registry).
+func hooksTarget(name string) string {
+	h, ok := All[name]
+	if !ok {
+		return ""
+	}
+	return filepath.Join(h.HookConfigDir, hookFileName(h))
 }
 
 var wellKnownBinDirs = []string{
@@ -101,19 +100,6 @@ var wellKnownBinDirs = []string{
 	".npm-global/bin",
 	".grok/bin",
 	".cargo/bin",
-}
-
-var npmPackages = map[string]string{
-	"claude":   "@anthropic-ai/claude-code",
-	"codex":    "@openai/codex",
-	"copilot":  "@github/copilot",
-	"droid":    "droid",
-	"gemini":   "@google/gemini-cli",
-	"kilo":     "@kilocode/cli",
-	"kimi":     "@moonshot-ai/kimi-code",
-	"opencode": "opencode-ai",
-	"pi":       "@earendil-works/pi-coding-agent",
-	"qwen":     "@qwen-code/qwen-code",
 }
 
 var envVars = map[string][]string{
@@ -155,7 +141,7 @@ func runDetection(name, binary, home string) DetectResult {
 	if r.Binary != "" {
 		r.Version = getVersion(r.Binary)
 	}
-	if target, ok := hooksTargets[name]; ok && home != "" {
+	if target := hooksTarget(name); target != "" && home != "" {
 		r.HooksPath = filepath.Join(home, target)
 	}
 
@@ -168,17 +154,14 @@ func runDetection(name, binary, home string) DetectResult {
 // Most reliable signal — if ~/.claude/ exists, claude has been run on this machine.
 // No exec, no PATH dependency, cross-platform.
 func probeConfigDir(name, _, home string, r *DetectResult) {
-	dirs, ok := configDirs[name]
-	if !ok || home == "" {
+	d := configDir(name)
+	if d == "" || home == "" {
 		return
 	}
-	for _, d := range dirs {
-		full := filepath.Join(home, d)
-		if info, err := os.Stat(full); err == nil && info.IsDir() {
-			r.ConfigDir = full
-			r.Probes = append(r.Probes, ProbeConfigDir)
-			return
-		}
+	full := filepath.Join(home, d)
+	if info, err := os.Stat(full); err == nil && info.IsDir() {
+		r.ConfigDir = full
+		r.Probes = append(r.Probes, ProbeConfigDir)
 	}
 }
 
@@ -218,8 +201,8 @@ func probePackageReg(name, _, _ string, r *DetectResult) {
 	if r.Binary != "" {
 		return
 	}
-	pkg, ok := npmPackages[name]
-	if !ok {
+	pkg := npmPackageName(name)
+	if pkg == "" {
 		return
 	}
 	if npmHasGlobal(pkg) {

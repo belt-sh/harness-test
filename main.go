@@ -110,7 +110,7 @@ func main() {
 				sdk = "✓"
 			}
 			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-5s\n",
-				name, h.Binary, apiName(h.APIFormat), hookName(h.HookFormat), acp, sdk)
+				name, h.Binary, h.APIFormat, h.HookFormat, acp, sdk)
 		}
 		return
 	}
@@ -139,10 +139,39 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check if any target harness needs intercept
+	needsIntercept := *intercept
+	if !needsIntercept {
+		var checkNames []string
+		if *harnessName == "all" {
+			for name := range harness.All {
+				checkNames = append(checkNames, name)
+			}
+		} else {
+			for _, name := range strings.Split(*harnessName, ",") {
+				checkNames = append(checkNames, strings.TrimSpace(name))
+			}
+		}
+		for _, name := range checkNames {
+			if h, ok := harness.All[name]; ok && h.NeedsIntercept {
+				needsIntercept = true
+				break
+			}
+		}
+	}
+
 	var baseURL string
 	var err error
-	if *intercept {
+	if needsIntercept {
 		baseURL, err = srv.StartIntercept()
+		if err == nil {
+			proxyAddr, proxyErr := srv.StartProxy()
+			if proxyErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: proxy start failed: %v\n", proxyErr)
+			} else {
+				fmt.Printf("MITM proxy at %s\n", proxyAddr)
+			}
+		}
 	} else {
 		baseURL, err = srv.Start()
 	}
@@ -151,7 +180,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer srv.Close()
-	if *intercept {
+	if needsIntercept {
 		fmt.Printf("Mock server at %s (intercept: HTTPS on :443)\n\n", baseURL)
 	} else {
 		fmt.Printf("Mock server at %s\n\n", baseURL)
@@ -220,38 +249,3 @@ func main() {
 	}
 }
 
-func apiName(f harness.APIFormat) string {
-	switch f {
-	case harness.OpenAI:
-		return "OpenAI"
-	case harness.Responses:
-		return "Resp"
-	case harness.Anthropic:
-		return "Anthro"
-	case harness.Gemini:
-		return "Gemini"
-	default:
-		return "?"
-	}
-}
-
-func hookName(f harness.HookFormat) string {
-	switch f {
-	case harness.JSONNested:
-		return "JSON"
-	case harness.JSONFlat:
-		return "JSON-flat"
-	case harness.JSONCopilot:
-		return "Copilot"
-	case harness.TOML:
-		return "TOML"
-	case harness.YAML:
-		return "YAML"
-	case harness.TSExtension:
-		return "TS-ext"
-	case harness.TSPlugin:
-		return "TS-plug"
-	default:
-		return "?"
-	}
-}

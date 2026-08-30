@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
@@ -43,12 +44,23 @@ var LLMHosts = []string{
 	"api.factory.ai",
 	"kilo.codes",
 	"opencode.ai",
+	// Kiro (Amazon Q backend + kiro runtime)
+	"q.us-east-1.amazonaws.com",
+	"q.eu-central-1.amazonaws.com",
+	"runtime.us-east-1.kiro.dev",
+	"runtime.eu-central-1.kiro.dev",
+	"app.kiro.dev",
+	"prod.us-east-1.auth.desktop.kiro.dev",
+	"management.us-east-1.kiro.dev",
 }
 
 type MockServer struct {
 	srv         *http.Server
 	listener    net.Listener
 	tlsListener net.Listener
+	proxyListener net.Listener
+	caPEM       []byte            // PEM-encoded CA cert (set after StartIntercept)
+	tlsCerts    []tls.Certificate // server certs signed by our CA
 
 	mu           sync.Mutex
 	log          []LogEntry
@@ -65,8 +77,8 @@ func New() *MockServer {
 	}
 	mux := http.NewServeMux()
 
-	// LLM APIs — each registered with and without /v1/ prefix
-	for _, prefix := range []string{"/v1", ""} {
+	// LLM APIs — registered with /v1, /api/v1 (OpenRouter), and bare prefix
+	for _, prefix := range []string{"/v1", "/api/v1", ""} {
 		mux.HandleFunc("POST "+prefix+"/chat/completions", s.handleChatCompletions)
 		mux.HandleFunc("POST "+prefix+"/responses", s.handleResponses)
 		mux.HandleFunc("POST "+prefix+"/messages", s.handleMessages)
@@ -77,16 +89,25 @@ func New() *MockServer {
 	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
 	mux.HandleFunc("POST /v1alpha/models/", s.handleGemini)
 
+	// AWS Bedrock / Amazon Q (kiro uses q.*.amazonaws.com)
+	mux.HandleFunc("POST /model/{modelId}/converse", s.handleBedrockConverse)
+	mux.HandleFunc("POST /model/{modelId}/converse-stream", s.handleBedrockConverseStream)
+	mux.HandleFunc("POST /model/{modelId}/invoke", s.handleBedrockConverse)
+	mux.HandleFunc("POST /model/{modelId}/invoke-with-response-stream", s.handleBedrockConverseStream)
+
+	// Kiro runtime API — catch-all for /runtime/ paths
+	mux.HandleFunc("/runtime/", s.handleKiroRuntime)
+
 	// Factory proxy paths (Droid TUI routes LLM calls through /api/llm/{provider}/...)
 	mux.HandleFunc("POST /api/llm/a/v1/messages", s.handleMessages)
 	mux.HandleFunc("POST /api/llm/o/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("POST /api/llm/o/v1/responses", s.handleResponses)
 
 	// Harness management endpoints (Grok auth, settings, sessions)
-	stub := s.handleGrokJSON(map[string]any{})
-	settings := s.handleGrokJSON(map[string]any{"models": map[string]any{"default": "mock-model"}})
-	user := s.handleGrokJSON(map[string]any{"userId": "mock-user", "email": "mock@test.invalid"})
-	privacy := s.handleGrokJSON(map[string]any{"opted_out": false})
+	stub := s.stubJSON(map[string]any{})
+	settings := s.stubJSON(map[string]any{"models": map[string]any{"default": "mock-model"}})
+	user := s.stubJSON(map[string]any{"userId": "mock-user", "email": "mock@test.invalid"})
+	privacy := s.stubJSON(map[string]any{"opted_out": false})
 	for _, prefix := range []string{"/v1", ""} {
 		mux.HandleFunc("GET "+prefix+"/user", user)
 		mux.HandleFunc("GET "+prefix+"/settings", settings)
@@ -100,25 +121,31 @@ func New() *MockServer {
 	mux.HandleFunc("PUT /sessions/{id}", s.handleGrokRecord)
 
 	// Droid (Factory) auth stubs
-	mux.HandleFunc("GET /api/cli/whoami", s.handleGrokJSON(map[string]any{
+	mux.HandleFunc("GET /api/cli/whoami", s.stubJSON(map[string]any{
 		"userId": "mock-user-001", "orgId": "mock-org-001", "region": "global",
 	}))
-	mux.HandleFunc("GET /api/cli/org", s.handleGrokJSON(map[string]any{
+	mux.HandleFunc("GET /api/cli/org", s.stubJSON(map[string]any{
 		"id": "mock-org-001", "name": "Mock Org",
 	}))
 
 	// Kimi managed API stubs
-	mux.HandleFunc("GET /coding/v1/me", s.handleGrokJSON(map[string]any{
+	mux.HandleFunc("GET /coding/v1/me", s.stubJSON(map[string]any{
 		"id": "mock-user", "email": "mock@test.invalid",
 	}))
-	mux.HandleFunc("GET /coding/v1/models", s.handleGrokJSON(map[string]any{
+	mux.HandleFunc("GET /coding/v1/models", s.stubJSON(map[string]any{
 		"models": []map[string]any{
 			{"id": "mock-model", "name": "Mock Model", "max_context_size": 128000},
 		},
 	}))
-	mux.HandleFunc("GET /coding/v1/usages", s.handleGrokJSON(map[string]any{
+	mux.HandleFunc("GET /coding/v1/usages", s.stubJSON(map[string]any{
 		"used": 0, "limit": 1000000,
 	}))
+
+	// Kiro auth stubs
+	mux.HandleFunc("POST /auth/", func(w http.ResponseWriter, r *http.Request) {
+		s.record(r, nil, "")
+		writeJSON(w, map[string]any{"accessToken": "mock-token", "expiresIn": 86400})
+	})
 
 	// Test utilities
 	mux.HandleFunc("GET /log", s.handleGetLog)
@@ -183,24 +210,37 @@ func (s *MockServer) Start() (string, error) {
 }
 
 // StartIntercept starts both HTTP (random port) and HTTPS (port 443) listeners.
-// The TLS listener uses a self-signed cert covering all LLM API domains.
-// Pair with WriteHostsFile to redirect all agent LLM traffic to the mock.
+// Uses a CA cert to sign server certs for all LLM API domains. The CA PEM is
+// available via CAPem() for injection into runtimes (NODE_EXTRA_CA_CERTS etc.).
 func (s *MockServer) StartIntercept() (string, error) {
 	baseURL, err := s.Start()
 	if err != nil {
 		return "", err
 	}
 
-	cert, err := selfSignedCert(LLMHosts)
+	caKey, caDER, err := generateCA()
 	if err != nil {
-		return baseURL, fmt.Errorf("generate cert: %w", err)
+		return baseURL, fmt.Errorf("generate CA: %w", err)
 	}
 
+	bundle, err := generateMITMCert(caKey, caDER, LLMHosts)
+	if err != nil {
+		return baseURL, fmt.Errorf("generate server cert: %w", err)
+	}
+	s.caPEM = bundle.caPEM
+	s.tlsCerts = []tls.Certificate{bundle.cert}
+
 	tlsLn, err := tls.Listen("tcp", "127.0.0.1:443", &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates: s.tlsCerts,
 	})
 	if err != nil {
-		return baseURL, fmt.Errorf("tls listen :443: %w", err)
+		// Port 443 requires root; fall back to random port (proxy still works)
+		tlsLn, err = tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+			Certificates: s.tlsCerts,
+		})
+		if err != nil {
+			return baseURL, fmt.Errorf("tls listen: %w", err)
+		}
 	}
 	s.tlsListener = tlsLn
 
@@ -208,6 +248,21 @@ func (s *MockServer) StartIntercept() (string, error) {
 	go tlsSrv.Serve(tlsLn)
 
 	return baseURL, nil
+}
+
+// CAPem returns the PEM-encoded CA certificate used by the MITM listener.
+// Returns nil if StartIntercept hasn't been called.
+func (s *MockServer) CAPem() []byte {
+	return s.caPEM
+}
+
+// ProxyAddr returns the MITM proxy address (e.g. "http://127.0.0.1:34567")
+// for use as HTTPS_PROXY. Returns empty if StartProxy hasn't been called.
+func (s *MockServer) ProxyAddr() string {
+	if s.proxyListener == nil {
+		return ""
+	}
+	return fmt.Sprintf("http://%s", s.proxyListener.Addr())
 }
 
 // HostsEntries returns /etc/hosts lines mapping LLM API domains to 127.0.0.1.
@@ -219,10 +274,46 @@ func HostsEntries() string {
 	return strings.Join(lines, "\n")
 }
 
-func selfSignedCert(hosts []string) (tls.Certificate, error) {
+type caBundle struct {
+	cert    tls.Certificate
+	caCert  []byte // DER-encoded CA certificate
+	caPEM   []byte // PEM-encoded CA certificate (for NODE_EXTRA_CA_CERTS etc.)
+}
+
+func generateCA() (*ecdsa.PrivateKey, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
+	}
+
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{Organization: []string{"harness-test CA"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            0,
+	}
+
+	caDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, caDER, nil
+}
+
+func generateMITMCert(caKey *ecdsa.PrivateKey, caDER []byte, hosts []string) (caBundle, error) {
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		return caBundle{}, err
+	}
+
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return caBundle{}, err
 	}
 
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -239,14 +330,20 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 		tmpl.DNSNames = append(tmpl.DNSNames, h)
 	}
 
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	serverDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &serverKey.PublicKey, caKey)
 	if err != nil {
-		return tls.Certificate{}, err
+		return caBundle{}, err
 	}
 
-	return tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  key,
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+
+	return caBundle{
+		cert: tls.Certificate{
+			Certificate: [][]byte{serverDER, caDER},
+			PrivateKey:  serverKey,
+		},
+		caCert: caDER,
+		caPEM:  caPEM,
 	}, nil
 }
 
@@ -257,6 +354,25 @@ func (s *MockServer) Close() {
 	if s.tlsListener != nil {
 		s.tlsListener.Close()
 	}
+	if s.proxyListener != nil {
+		s.proxyListener.Close()
+	}
+}
+
+func (s *MockServer) handleKiroRuntime(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.record(r, body, "")
+
+	text := s.getResponse()
+	writeJSON(w, map[string]any{
+		"output": map[string]any{
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": []map[string]any{{"text": text}},
+			},
+		},
+		"stopReason": "end_turn",
+	})
 }
 
 // --- Internal helpers ---
@@ -274,6 +390,13 @@ func (s *MockServer) getToolCall() (string, string) {
 		return s.toolName, s.toolArgs
 	}
 	return DefaultToolName, DefaultToolArgs
+}
+
+func (s *MockServer) getToolCallParsed() (string, any) {
+	name, argsJSON := s.getToolCall()
+	var parsed any
+	json.Unmarshal([]byte(argsJSON), &parsed)
+	return name, parsed
 }
 
 func (s *MockServer) shouldToolCall(hasTools bool, requestPath string) bool {
@@ -355,7 +478,7 @@ func (s *MockServer) handleSetResponse(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func (s *MockServer) handleGrokJSON(data any) http.HandlerFunc {
+func (s *MockServer) stubJSON(data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.record(r, nil, "")
 		writeJSON(w, data)

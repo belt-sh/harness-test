@@ -13,6 +13,7 @@ FROM node:22-slim
 
 RUN apt-get update && apt-get install -y \
     curl git jq python3 python3-pip python3-venv bubblewrap unzip \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /harness-test /usr/local/bin/harness-test

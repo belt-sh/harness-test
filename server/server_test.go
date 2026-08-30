@@ -1,9 +1,11 @@
 package server
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -107,6 +109,92 @@ func TestResponsesAPI(t *testing.T) {
 	data, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(data), "responses api text") {
 		t.Fatalf("response doesn't contain expected text: %s", data)
+	}
+}
+
+func TestMITMProxy(t *testing.T) {
+	s := New()
+	s.SetResponse("mitm response")
+
+	_, err := s.StartIntercept()
+	if err != nil {
+		t.Skip("can't start intercept (port 443 in use?): " + err.Error())
+	}
+	t.Cleanup(s.Close)
+
+	proxyAddr, err := s.StartProxy()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proxyURL, _ := url.Parse(proxyAddr)
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:           http.ProxyURL(proxyURL),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Post("https://api.openai.com/v1/chat/completions", "application/json",
+		strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal("proxy request failed:", err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(data), "mitm response") {
+		t.Fatalf("expected 'mitm response', got: %s", data)
+	}
+
+	if s.LogCount() != 1 {
+		t.Fatalf("expected 1 logged request, got %d", s.LogCount())
+	}
+}
+
+func TestProxyCACert(t *testing.T) {
+	s := New()
+
+	_, err := s.StartIntercept()
+	if err != nil {
+		t.Skip("can't start intercept: " + err.Error())
+	}
+	t.Cleanup(s.Close)
+
+	ca := s.CAPem()
+	if len(ca) == 0 {
+		t.Fatal("no CA PEM after StartIntercept")
+	}
+	if !strings.Contains(string(ca), "BEGIN CERTIFICATE") {
+		t.Fatal("CA PEM doesn't look like a certificate")
+	}
+
+	addr := s.ProxyAddr()
+	if addr == "" {
+		_, err := s.StartProxy()
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr = s.ProxyAddr()
+	}
+	if !strings.HasPrefix(addr, "http://127.0.0.1:") {
+		t.Fatalf("unexpected proxy addr: %s", addr)
+	}
+}
+
+func TestOpenRouterPath(t *testing.T) {
+	url := startTestServer(t, "openrouter response")
+
+	resp, err := http.Post(url+"/api/v1/chat/completions", "application/json",
+		strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(data), "openrouter response") {
+		t.Fatalf("unexpected: %s", data)
 	}
 }
 

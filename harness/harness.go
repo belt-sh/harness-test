@@ -23,6 +23,43 @@ const (
 	Gemini                     // /v1beta/models/:model:streamGenerateContent (Gemini CLI)
 )
 
+func (f APIFormat) String() string {
+	switch f {
+	case OpenAI:
+		return "OpenAI"
+	case Responses:
+		return "Resp"
+	case Anthropic:
+		return "Anthro"
+	case Gemini:
+		return "Gemini"
+	default:
+		return "?"
+	}
+}
+
+func (f HookFormat) String() string {
+	switch f {
+	case JSONNested:
+		return "JSON"
+	case JSONFlat:
+		return "JSON-flat"
+	case JSONCopilot:
+		return "Copilot"
+	case TOML:
+		return "TOML"
+	case YAML:
+		return "YAML"
+	case TSExtension:
+		return "TS-ext"
+	case TSPlugin:
+		return "TS-plug"
+	default:
+		return "?"
+	}
+}
+
+
 // ConfigFile is a file to write relative to $HOME before running the harness.
 // Content supports {{.BaseURL}}, {{.Model}}, {{.RepoDir}}, {{.APIKey}} placeholders.
 type ConfigFile struct {
@@ -63,7 +100,8 @@ type Harness struct {
 	HookToolMatcher  string // hook matcher name if different from ToolCallName (e.g. codex: "Bash" matches exec_command)
 
 	// Pre-flight config files (auth, trust, provider config, permissions)
-	ConfigFiles []ConfigFile
+	ConfigFiles    []ConfigFile
+	TokenHashInput string // if set, {{.TokenHash16}} = sha256(this)[:16] (kimi auth)
 
 	// Skills
 	SkillsDir string
@@ -97,6 +135,12 @@ type Harness struct {
 	SDKCmd          []string // command to start agent in SDK mode
 	SDKArgs         []string // extra args for SDK mode
 	HooksInSDK      bool
+
+	// Intercept
+	NeedsIntercept bool // agent can't point to mock via env vars; requires MITM interception
+
+	// TS plugin
+	TSPluginExport string // appended to TS plugin file (e.g. kilo's default export wrapper)
 
 	// Setup
 	PreserveHome bool // don't override HOME (harness needs installed plugins)
