@@ -11,6 +11,9 @@ import (
 // InstallScope determines where hooks are written.
 type InstallScope int
 
+// Scope is an alias for InstallScope (CLI compatibility).
+type Scope = InstallScope
+
 const (
 	ScopeUser    InstallScope = iota // ~/.config/<harness>/ or ~/.<harness>/
 	ScopeProject                     // ./<harness-config-dir>/
@@ -24,6 +27,21 @@ type InstallResult struct {
 	Created   bool
 	Merged    bool
 	Error     error
+}
+
+// KnownAgentNames is an alias for KnownNames (CLI compatibility).
+func KnownAgentNames() []string { return KnownNames() }
+
+// InstallHooks is an alias for Install (CLI compatibility).
+func InstallHooks(name string, scope InstallScope) InstallResult { return Install(name, scope) }
+
+// UninstallHooks removes belt hooks for a harness at the given scope.
+func UninstallHooks(name string, scope InstallScope) InstallResult { return Uninstall(name, scope) }
+
+// HookTemplate returns the generated hook configuration for an agent (CLI compatibility).
+func HookTemplate(name string) string {
+	s, _ := HookConfig(name)
+	return s
 }
 
 // Install writes belt hook configs for a harness at the given scope.

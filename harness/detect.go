@@ -40,12 +40,19 @@ type DetectResult struct {
 	Probes    []Probe // which strategies matched, in order of detection
 }
 
-func (r DetectResult) Installed() bool {
-	return r.Binary != "" || r.HasProbe(ProbePackageReg)
-}
+func (r DetectResult) Found() bool      { return len(r.Probes) > 0 }
+func (r DetectResult) Installed() bool   { return r.Binary != "" || r.HasProbe(ProbePackageReg) }
+func (r DetectResult) IsInstalled() bool { return r.Installed() }
+func (r DetectResult) Configured() bool  { return r.HasProbe(ProbeConfigDir) }
+func (r DetectResult) IsConfigured() bool { return r.Configured() }
 
-func (r DetectResult) Configured() bool {
-	return r.HasProbe(ProbeConfigDir)
+func (r DetectResult) IsEnvironment() bool {
+	for _, p := range r.Probes {
+		if p == ProbeEnvVar {
+			return true
+		}
+	}
+	return false
 }
 
 func (r DetectResult) HasProbe(p Probe) bool {
@@ -139,6 +146,9 @@ func DetectInstalled() []DetectResult {
 	}
 	return found
 }
+
+// Detect is an alias for DetectOne.
+func Detect(name string) DetectResult { return DetectOne(name) }
 
 func DetectOne(name string) DetectResult {
 	h, ok := All[name]
