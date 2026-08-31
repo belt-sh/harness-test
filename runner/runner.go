@@ -404,6 +404,20 @@ func (r *Runner) writeHooks() {
 		}
 		content = `{"hooks":{` + strings.Join(parts, ",") + `}}`
 
+	case harness.JSONKiro:
+		filename = "belt.json"
+		var hooks []string
+		for _, e := range r.eventEntries() {
+			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
+			if e.Tag == TagPrompt {
+				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+			}
+			hook := fmt.Sprintf(`{"name":"belt-%s","trigger":"%s","action":{"type":"command","command":"%s"},"timeout":5}`,
+				strings.ToLower(e.Tag), e.Event, cmd)
+			hooks = append(hooks, hook)
+		}
+		content = fmt.Sprintf(`{"version":"v1","hooks":[%s]}`, strings.Join(hooks, ","))
+
 	case harness.JSONCopilot:
 		filename = "belt.json"
 		scriptDir := filepath.Join(r.home, ".copilot", "test-hooks")

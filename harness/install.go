@@ -84,7 +84,7 @@ func Install(name string, scope InstallScope) InstallResult {
 			err = writeFile(hooksPath, content)
 			result.Created = true
 		}
-	case JSONFlat, JSONCopilot:
+	case JSONFlat, JSONCopilot, JSONKiro:
 		err = writeFile(hooksPath, content)
 		result.Created = true
 	case TOML:
@@ -222,6 +222,8 @@ func generateHookConfig(name string, h Harness) (string, error) {
 		return generateJSONNested(name, h), nil
 	case JSONFlat:
 		return generateJSONFlat(h), nil
+	case JSONKiro:
+		return generateJSONKiro(h), nil
 	case JSONCopilot:
 		return generateJSONCopilot(h), nil
 	case TOML:
@@ -268,6 +270,29 @@ func generateJSONFlat(h Harness) string {
 	add(evts.PreCompact, "pre-compact")
 
 	return `{"hooks":{` + strings.Join(parts, ",") + `}}`
+}
+
+func generateJSONKiro(h Harness) string {
+	evts := h.Events
+	var hooks []string
+	timeout := hookTimeout(h)
+
+	add := func(event, beltEvent string) {
+		if event == "" {
+			return
+		}
+		hooks = append(hooks, fmt.Sprintf(`{"name":"belt-%s","trigger":"%s","action":{"type":"command","command":"%s"},"timeout":%d}`,
+			beltEvent, event, beltCmd(beltEvent), timeout))
+	}
+
+	add(evts.SessionStart, "session-start")
+	add(evts.PromptSubmit, "user-prompt-submit")
+	add(evts.PreToolUse, "pre-tool-use")
+	add(evts.PostToolUse, "post-tool-use")
+	add(evts.Stop, "stop")
+	add(evts.PreCompact, "pre-compact")
+
+	return fmt.Sprintf(`{"version":"v1","hooks":[%s]}`, strings.Join(hooks, ","))
 }
 
 func generateJSONNested(name string, h Harness) string {

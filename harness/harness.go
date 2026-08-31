@@ -7,6 +7,7 @@ const (
 	JSONNested  HookFormat = iota // Claude, Codex, Grok, Droid, Goose, Gemini, Qwen
 	JSONFlat                      // Cursor, Windsurf (IDE-only, no CLI)
 	JSONCopilot                   // Copilot v1 format (version field, bash field)
+	JSONKiro                      // Kiro v1 format (version + hooks array with trigger/action)
 	TOML                          // Kimi
 	YAML                          // Hermes
 	TSExtension                   // Pi
@@ -46,6 +47,8 @@ func (f HookFormat) String() string {
 		return "JSON-flat"
 	case JSONCopilot:
 		return "Copilot"
+	case JSONKiro:
+		return "Kiro"
 	case TOML:
 		return "TOML"
 	case YAML:

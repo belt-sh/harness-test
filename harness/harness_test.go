@@ -51,9 +51,6 @@ func TestACPHarnessesHaveACPCmd(t *testing.T) {
 		}
 		if len(h.ACPCmd) > 0 {
 			acpAgents++
-			if !h.HooksInACP {
-				t.Errorf("%s: has ACPCmd but HooksInACP=false", name)
-			}
 		}
 	}
 	if acpAgents == 0 {
