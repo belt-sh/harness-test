@@ -262,7 +262,8 @@ var All = map[string]Harness{
 		EnvVars:      map[string]string{},
 		APIKeyEnvVar: "KIRO_API_KEY",
 		DefaultModel: "kiro-default",
-		HookFormat:    JSONNested,
+		NeedsGitRepo: true,
+		HookFormat:    JSONFlat,
 		HookConfigDir: ".kiro/hooks",
 		Events: Events{
 			PromptSubmit: "UserPromptSubmit",
@@ -281,9 +282,8 @@ var All = map[string]Harness{
 		Name: "omp", Binary: "omp",
 		InstallCmd: []string{"npm", "install", "-g", "@oh-my-pi/pi-coding-agent"},
 		APIFormat:    OpenAI,
-		EnvVars: map[string]string{
-			"OPENAI_BASE_URL": "{{.BaseURL}}/v1",
-		},
+		EnvVars: map[string]string{},
+		NeedsIntercept: true,
 		APIKeyEnvVar: "OPENAI_API_KEY",
 		DefaultModel: "gpt-4o-mini",
 		HookFormat:    TSExtension,

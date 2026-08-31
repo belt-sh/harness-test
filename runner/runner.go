@@ -392,6 +392,18 @@ func (r *Runner) writeHooks() {
 			content = fmt.Sprintf(`{"hooks":%s}`, hooksJSON)
 		}
 
+	case harness.JSONFlat:
+		filename = "belt.json"
+		parts := []string{}
+		for _, e := range r.eventEntries() {
+			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
+			if e.Tag == TagPrompt {
+				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+			}
+			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, cmd))
+		}
+		content = `{"hooks":{` + strings.Join(parts, ",") + `}}`
+
 	case harness.JSONCopilot:
 		filename = "belt.json"
 		scriptDir := filepath.Join(r.home, ".copilot", "test-hooks")

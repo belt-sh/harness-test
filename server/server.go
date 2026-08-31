@@ -191,11 +191,16 @@ func New() *MockServer {
 			text := s.getResponse()
 			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 			w.WriteHeader(200)
-			writeBedrockEvent(w, "assistantResponseEvent", map[string]any{"content": text})
-			writeBedrockEvent(w, "messageMetadataEvent", map[string]any{
-				"conversationId": "mock-conv-1",
-				"usage":          map[string]any{"inputTokens": 10, "outputTokens": 5},
-			})
+			writeEventStreamMessage(w, "assistantResponseEvent",
+				[]byte(mustJSON(map[string]any{"content": text})))
+			writeEventStreamMessage(w, "messageMetadataEvent",
+				[]byte(mustJSON(map[string]any{
+					"conversationId": "mock-conv-1",
+					"usage":          map[string]any{"inputTokens": 10, "outputTokens": 5},
+				})))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
 		default:
 			w.WriteHeader(200)
 		}

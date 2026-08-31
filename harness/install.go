@@ -84,7 +84,7 @@ func Install(name string, scope InstallScope) InstallResult {
 			err = writeFile(hooksPath, content)
 			result.Created = true
 		}
-	case JSONCopilot:
+	case JSONFlat, JSONCopilot:
 		err = writeFile(hooksPath, content)
 		result.Created = true
 	case TOML:
@@ -220,6 +220,8 @@ func generateHookConfig(name string, h Harness) (string, error) {
 	switch h.HookFormat {
 	case JSONNested:
 		return generateJSONNested(name, h), nil
+	case JSONFlat:
+		return generateJSONFlat(h), nil
 	case JSONCopilot:
 		return generateJSONCopilot(h), nil
 	case TOML:
@@ -244,6 +246,28 @@ func hookTimeout(h Harness) int {
 		return 10000
 	}
 	return 10
+}
+
+func generateJSONFlat(h Harness) string {
+	evts := h.Events
+	parts := []string{}
+	timeout := hookTimeout(h)
+
+	add := func(event, beltEvent string) {
+		if event == "" {
+			return
+		}
+		parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":%d}]`, event, beltCmd(beltEvent), timeout))
+	}
+
+	add(evts.SessionStart, "session-start")
+	add(evts.PromptSubmit, "user-prompt-submit")
+	add(evts.PreToolUse, "pre-tool-use")
+	add(evts.PostToolUse, "post-tool-use")
+	add(evts.Stop, "stop")
+	add(evts.PreCompact, "pre-compact")
+
+	return `{"hooks":{` + strings.Join(parts, ",") + `}}`
 }
 
 func generateJSONNested(name string, h Harness) string {
