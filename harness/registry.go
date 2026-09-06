@@ -535,23 +535,47 @@ var All = map[string]Harness{
 	},
 
 	// IDE-only agents: detection and hook install only, no test support.
+	// Cursor: ~/.cursor/hooks.json, {"version":1,"hooks":{event:[{command,timeout}]}}
+	// with camelCase events (docs 2026-09). beforeSubmitPrompt cannot inject
+	// context; only sessionStart returns additional_context. The `agent` CLI
+	// reads the same file, but speaks Connect-protobuf to aiserver.v1.* so the
+	// mock cannot drive it yet — see "Investigated" below. Unverified by the runner.
 	"cursor": {
-		Name: "cursor", Binary: "cursor",
+		Name: "cursor", Binary: "agent",
+		InstallCmd:       []string{"sh", "-c", "curl -fsSL https://cursor.com/install | bash"},
+		InstallBinDirs:   []string{".local/bin"},
 		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT"},
 		DetectConfigDirs: []string{".cursor"},
-		HookFormat:       JSONNested,
+		HookFormat:       JSONFlat,
 		HookConfigDir:    ".cursor",
 		HookFileName:     "hooks.json",
-		Events:           standardEvents,
+		HookWrapper:      `{"version":1,"hooks":%s}`,
+		Events: Events{
+			SessionStart: "sessionStart",
+			PromptSubmit: "beforeSubmitPrompt",
+			PreToolUse:   "preToolUse",
+			PostToolUse:  "postToolUse",
+			Stop:         "stop",
+			PreCompact:   "preCompact",
+		},
 	},
+	// Windsurf: ~/.codeium/windsurf/hooks.json, {"hooks":{event:[{command}]}} with
+	// snake_case events (docs 2026-09). Exit code is the only feedback channel;
+	// no context injection at all. No CLI, so unverified by the runner.
 	"windsurf": {
 		Name: "windsurf", Binary: "windsurf",
 		DetectEnvVars:    []string{"WINDSURF_EXTENSION_HOST_ROLE"},
 		DetectConfigDirs: []string{".windsurf", ".codeium/windsurf"},
-		HookFormat:       JSONNested,
+		HookFormat:       JSONFlat,
+		HookFlatBare:     true,
 		HookConfigDir:    ".codeium/windsurf",
 		HookFileName:     "hooks.json",
-		Events:           standardEvents,
+		Events: Events{
+			PromptSubmit: "pre_user_prompt",
+			PreToolUse:   "pre_run_command",
+			PostToolUse:  "post_run_command",
+			Stop:         "post_cascade_response",
+		},
 	},
 }
 
@@ -672,8 +696,17 @@ func init() {
 //   --test-cmd post-edit hooks only. BYOK via OPENAI_API_BASE + OPENAI_API_KEY.
 //   Headless: aider --message "prompt" --yes-always.
 //
-// Cursor / Windsurf / Cline / Roo — IDE extensions only, no standalone CLI.
-//   Cursor has JSONFlat hook format but runs inside VS Code.
+// Cursor `agent` CLI (curl cursor.com/install; binary `agent`, alias
+//   cursor-agent) — has -p, --output-format stream-json, --endpoint /
+//   CURSOR_API_ENDPOINT and CURSOR_API_KEY, so it can be pointed at a mock.
+//   Probed 2026-09: after POST /auth/exchange_user_api_key it speaks
+//   Connect-protobuf (application/proto) to aiserver.v1.DashboardService
+//   (GetMe, GetUserPrivacyMode, ListMarketplaces, ...), ServerConfigService/
+//   GetServerConfig and then the chat stream. Driving it needs a protobuf
+//   mock of that API, comparable to the kiro EventStream work. Headless -p
+//   reportedly fires only sessionStart/sessionEnd (forum #148316); the TUI
+//   fires the rest. Not added as a test mode yet.
+// Windsurf / Cline / Roo — IDE extensions only, no standalone CLI.
 //
 // Remaining skip investigations (3 skips across 2 harnesses, 249/3):
 //

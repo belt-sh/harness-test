@@ -56,7 +56,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 ### Instruction files
 
-Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified 2026-09 for all 15 CLI agents (kiro in interactive mode with `--intercept`); cursor and windsurf are IDE-only and cannot be driven by the runner.
+Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified 2026-09 for all 15 CLI agents (kiro in interactive mode with `--intercept`); cursor and windsurf are IDE-only and cannot be driven by the runner. Their hook configs (`~/.cursor/hooks.json` v1 camelCase events; `~/.codeium/windsurf/hooks.json` snake_case events) follow the vendors' docs and are unverified. The Cursor `agent` CLI could be driven once the mock speaks its Connect-protobuf API.
 
 | Agent | User scope (`~/`) | Project scope |
 |-------|-------------------|---------------|

@@ -5,7 +5,7 @@ type HookFormat int
 
 const (
 	JSONNested  HookFormat = iota // Claude, Codex, Grok, Droid, Goose, Gemini, Qwen
-	JSONFlat                      // Cursor, Windsurf (IDE-only, no CLI)
+	JSONFlat                      // Cursor, Windsurf: {"hooks":{event:[{command}]}} with optional wrapper
 	JSONCopilot                   // Copilot v1 format (version field, bash field)
 	JSONKiro                      // Kiro v1 format (version + hooks array with trigger/action)
 	TOML                          // Kimi
@@ -94,6 +94,7 @@ type Harness struct {
 	HookWrapper    string // JSON to wrap hooks in (e.g. Claude's permissions + hooks)
 	HookTimeoutMs  bool   // true = timeout field is milliseconds (gemini), false = seconds
 	HookNoEnvelope bool   // true = hooks file is raw hooks object, no {"hooks":...} wrapper (droid)
+	HookFlatBare   bool   // JSONFlat entries carry only "command" (windsurf rejects nothing but documents nothing else)
 	Events         Events
 
 	// Mock tool call configuration

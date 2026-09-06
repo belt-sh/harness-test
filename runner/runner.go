@@ -409,7 +409,12 @@ func (r *Runner) writeHooks() {
 			}
 			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, cmd))
 		}
-		content = `{"hooks":{` + strings.Join(parts, ",") + `}}`
+		hooks := "{" + strings.Join(parts, ",") + "}"
+		if r.harness.HookWrapper != "" {
+			content = fmt.Sprintf(r.harness.HookWrapper, hooks)
+		} else {
+			content = `{"hooks":` + hooks + `}`
+		}
 
 	case harness.JSONKiro:
 		filename = "belt.json"

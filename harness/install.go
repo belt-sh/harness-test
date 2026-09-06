@@ -259,6 +259,10 @@ func generateJSONFlat(h Harness) string {
 		if event == "" {
 			return
 		}
+		if h.HookFlatBare {
+			parts = append(parts, fmt.Sprintf(`"%s":[{"command":"%s"}]`, event, beltCmd(beltEvent)))
+			return
+		}
 		parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":%d}]`, event, beltCmd(beltEvent), timeout))
 	}
 
@@ -269,7 +273,11 @@ func generateJSONFlat(h Harness) string {
 	add(evts.Stop, "stop")
 	add(evts.PreCompact, "pre-compact")
 
-	return `{"hooks":{` + strings.Join(parts, ",") + `}}`
+	hooks := "{" + strings.Join(parts, ",") + "}"
+	if h.HookWrapper != "" {
+		return fmt.Sprintf(h.HookWrapper, hooks)
+	}
+	return `{"hooks":` + hooks + `}`
 }
 
 func generateJSONKiro(h Harness) string {
