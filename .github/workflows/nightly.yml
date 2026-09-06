@@ -56,7 +56,9 @@ jobs:
           results=""
           for mode in $(echo "${{ matrix.modes }}" | tr ',' ' '); do
             echo "=== ${{ matrix.harness }} ($mode) ==="
-            if docker run --rm harness-test --harness ${{ matrix.harness }} --mode $mode 2>&1 | tee /tmp/out.log; then
+            extra=""; user=""
+            if [ "${{ matrix.harness }}" = "kiro" ]; then extra="--intercept"; user="--user root"; fi
+            if docker run --rm $user harness-test --harness ${{ matrix.harness }} --mode $mode $extra 2>&1 | tee /tmp/out.log; then
               results="${results}${mode}:pass,"
             else
               results="${results}${mode}:fail,"
