@@ -15,6 +15,28 @@ func (r *Runner) runChecks(phase string) {
 	r.checkAPIRequests(phase, entries)
 	r.checkStreamingFormat(phase, entries)
 	r.checkModelSelection(phase, entries)
+	r.checkInstructions(phase, entries)
+}
+
+// checkInstructions verifies the codename from the instruction file made it
+// into a request to the model, i.e. the agent loaded that file into its
+// system prompt at this scope.
+func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
+	if r.instructionCode == "" {
+		return
+	}
+	fmt.Printf("[check] instruction file (%s)\n", phase)
+	for _, e := range entries {
+		if strings.Contains(string(e.Body), r.instructionCode) {
+			r.pass(fmt.Sprintf("%s: instruction file loaded into context (%s)", phase, r.harness.InstructionFile))
+			return
+		}
+	}
+	if len(entries) == 0 {
+		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction file", phase))
+		return
+	}
+	r.fail(fmt.Sprintf("%s: instruction file %s not found in any request", phase, r.harness.InstructionFile))
 }
 
 func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {

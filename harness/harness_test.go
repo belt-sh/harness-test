@@ -73,3 +73,21 @@ func TestEventNames(t *testing.T) {
 		}
 	}
 }
+
+func TestInstructionFiles(t *testing.T) {
+	noUserFile := map[string]bool{"cursor": true, "hermes": true}
+	for name, h := range All {
+		if h.ProjectInstructionFile == "" {
+			t.Errorf("%s: ProjectInstructionFile is empty", name)
+		}
+		if h.InstructionFile == "" && !noUserFile[name] {
+			t.Errorf("%s: InstructionFile is empty", name)
+		}
+		if h.InstructionFile != "" && noUserFile[name] {
+			t.Errorf("%s: unexpected user-scope InstructionFile %q", name, h.InstructionFile)
+		}
+		if _, ok := instructionFiles[name]; !ok {
+			t.Errorf("%s: missing from instructionFiles", name)
+		}
+	}
+}

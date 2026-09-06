@@ -51,6 +51,8 @@ type Runner struct {
 	home         string
 	repoDir      string
 	injectCode   string
+	instructionCode string // codename written to the agent's instruction file
+	cleanups     []func() // undo steps for files written into a preserved HOME
 	tokenHash16  string
 	sessionID    string
 	startTime    time.Time
@@ -149,6 +151,7 @@ func (r *Runner) Run() Result {
 		r.writeHooks()
 	}
 	r.setupSkills()
+	r.writeInstructions()
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		if r.harness.HooksInHeadless {
@@ -192,6 +195,10 @@ func (r *Runner) prepareToolCall() {
 }
 
 func (r *Runner) finish() Result {
+	for i := len(r.cleanups) - 1; i >= 0; i-- {
+		r.cleanups[i]()
+	}
+	r.cleanups = nil
 	r.result.Duration = time.Since(r.startTime)
 	fmt.Printf("\n=== %s: %d passed, %d failed, %d skipped (%s) ===\n\n",
 		r.harness.Name, r.result.Passed, r.result.Failed, r.result.Skipped, r.result.Duration.Round(time.Second))
@@ -596,6 +603,57 @@ func (r *Runner) setupSkills() {
 	fmt.Println("[phase 4] skills")
 	os.MkdirAll(filepath.Join(r.home, r.harness.SkillsDir), 0755)
 	r.pass("skills directory created")
+}
+
+const (
+	instructionStart = "<!-- harness-test:start -->"
+	instructionEnd   = "<!-- harness-test:end -->"
+)
+
+// writeInstructions puts a second codename into the agent's instruction file
+// (CLAUDE.md, AGENTS.md, ...) so the checks can tell that the file, not just
+// the hooks, reached the model. The block is marker-wrapped and removed in
+// finish() so a preserved HOME is left as it was.
+func (r *Runner) writeInstructions() {
+	h := r.harness
+	if h.InstructionFile == "" && h.ProjectInstructionFile == "" {
+		return
+	}
+	fmt.Println("[phase 5] instruction files")
+	r.instructionCode = fmt.Sprintf("INSTR-%s-%d", strings.ToUpper(h.Name), time.Now().UnixMilli())
+	block := instructionStart + "\nThe project codename is " + r.instructionCode + ".\n" + instructionEnd + "\n"
+
+	if h.InstructionFile != "" {
+		path := filepath.Join(r.home, h.InstructionFile)
+		r.appendInstructionBlock(path, block)
+		r.pass("instruction file written: " + h.InstructionFile)
+	}
+	if h.ProjectInstructionFile != "" && h.NeedsGitRepo {
+		path := filepath.Join(r.ensureGitRepo(), h.ProjectInstructionFile)
+		r.appendInstructionBlock(path, block)
+		r.pass("project instruction file written: " + h.ProjectInstructionFile)
+	}
+}
+
+func (r *Runner) appendInstructionBlock(path, block string) {
+	existing, err := os.ReadFile(path)
+	existed := err == nil
+	os.MkdirAll(filepath.Dir(path), 0755)
+	content := string(existing)
+	if !existed && r.harness.InstructionFrontmatter != "" {
+		content = r.harness.InstructionFrontmatter
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	os.WriteFile(path, []byte(content+block), 0644)
+	r.cleanups = append(r.cleanups, func() {
+		if !existed {
+			os.Remove(path)
+			return
+		}
+		os.WriteFile(path, existing, 0644)
+	})
 }
 
 func (r *Runner) ensureGitRepo() string {

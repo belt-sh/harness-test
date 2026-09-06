@@ -54,6 +54,32 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 ³ `pi --mode json` — structured JSONL output (provider URL not overridable).
 ⁴ `omp --mode json` — Oh My Pi is a Pi fork (bun runtime) with native ACP, plugins, and multi-model roles.
 
+### Instruction files
+
+Each agent loads one file into its system prompt. The runner writes a second codename there (`INSTR-<AGENT>-<ts>`, marker-wrapped, removed afterwards) and checks that it reaches the mock model, so a wrong path fails the run.
+
+| Agent | User scope (`~/`) | Project scope |
+|-------|-------------------|---------------|
+| claude | `.claude/CLAUDE.md` | `CLAUDE.md` |
+| codex | `.codex/AGENTS.md` | `AGENTS.md` |
+| copilot | `.copilot/instructions/belt.instructions.md` | `.github/instructions/belt.instructions.md` |
+| cursor | — (settings UI) | `.cursor/rules/belt.mdc` |
+| droid | `.factory/AGENTS.md` | `AGENTS.md` |
+| gemini | `.gemini/GEMINI.md` | `GEMINI.md` |
+| goose | `.config/goose/.goosehints` | `.goosehints` |
+| grok | `.grok/AGENTS.md` | `AGENTS.md` |
+| hermes | — (SOUL.md is identity only) | `AGENTS.md` |
+| kilo | `.kilocode/rules/belt.md` | `AGENTS.md` |
+| kimi | `.kimi-code/AGENTS.md` | `AGENTS.md` |
+| kiro | `.kiro/steering/belt.md` | `.kiro/steering/belt.md` |
+| omp | `.omp/agent/AGENTS.md` | `AGENTS.md` |
+| opencode | `.config/opencode/AGENTS.md` | `AGENTS.md` |
+| pi | `.pi/agent/AGENTS.md` | `AGENTS.md` |
+| qwen | `.qwen/QWEN.md` | `QWEN.md` |
+| windsurf | `.codeium/windsurf/memories/global_rules.md` | `.windsurf/rules/belt.md` |
+
+Registry: `instructionFiles` in `harness/registry.go`. The belt CLI keeps the same table (with env overrides such as `CLAUDE_CONFIG_DIR`) in `internal/instructions`.
+
 ### Control modes
 
 | Mode | Transport | What it tests |

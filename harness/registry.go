@@ -554,6 +554,55 @@ var All = map[string]Harness{
 	},
 }
 
+// InstructionFiles lists, per harness, the file the agent loads into its
+// system prompt at user scope (relative to $HOME) and at project scope
+// (relative to the repo root). belt writes its rules block there. Sources:
+// each agent's docs, 2026-09. cursor and hermes have no user-scope file:
+// Cursor keeps global rules in its settings UI, Hermes loads only SOUL.md
+// (identity, not instructions) globally.
+type InstructionFiles struct {
+	User, Project, Frontmatter string
+}
+
+const (
+	fmCursor  = "---\ndescription: belt\nalwaysApply: true\n---\n"
+	fmCopilot = "---\napplyTo: \"**\"\n---\n"
+	fmKiro    = "---\ninclusion: always\n---\n"
+)
+
+var instructionFiles = map[string]InstructionFiles{
+	"claude":   {User: ".claude/CLAUDE.md", Project: "CLAUDE.md"},
+	"codex":    {User: ".codex/AGENTS.md", Project: "AGENTS.md"},
+	"copilot":  {User: ".copilot/instructions/belt.instructions.md", Project: ".github/instructions/belt.instructions.md", Frontmatter: fmCopilot},
+	"cursor":   {Project: ".cursor/rules/belt.mdc", Frontmatter: fmCursor},
+	"droid":    {User: ".factory/AGENTS.md", Project: "AGENTS.md"},
+	"gemini":   {User: ".gemini/GEMINI.md", Project: "GEMINI.md"},
+	"goose":    {User: ".config/goose/.goosehints", Project: ".goosehints"},
+	"grok":     {User: ".grok/AGENTS.md", Project: "AGENTS.md"},
+	"hermes":   {Project: "AGENTS.md"},
+	"kilo":     {User: ".kilocode/rules/belt.md", Project: "AGENTS.md"},
+	"kimi":     {User: ".kimi-code/AGENTS.md", Project: "AGENTS.md"},
+	"kiro":     {User: ".kiro/steering/belt.md", Project: ".kiro/steering/belt.md", Frontmatter: fmKiro},
+	"omp":      {User: ".omp/agent/AGENTS.md", Project: "AGENTS.md"},
+	"opencode": {User: ".config/opencode/AGENTS.md", Project: "AGENTS.md"},
+	"pi":       {User: ".pi/agent/AGENTS.md", Project: "AGENTS.md"},
+	"qwen":     {User: ".qwen/QWEN.md", Project: "QWEN.md"},
+	"windsurf": {User: ".codeium/windsurf/memories/global_rules.md", Project: ".windsurf/rules/belt.md"},
+}
+
+func init() {
+	for name, f := range instructionFiles {
+		h, ok := All[name]
+		if !ok {
+			panic("instructionFiles: unknown harness " + name)
+		}
+		h.InstructionFile = f.User
+		h.ProjectInstructionFile = f.Project
+		h.InstructionFrontmatter = f.Frontmatter
+		All[name] = h
+	}
+}
+
 // Investigated but not added:
 //
 // Amp (@ampcode/cli) — Uses Rivet WebSocket protocol (/actors endpoint).

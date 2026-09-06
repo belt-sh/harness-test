@@ -109,6 +109,13 @@ type Harness struct {
 	// Skills
 	SkillsDir string
 
+	// Instruction files — what the agent loads into its system prompt
+	// (CLAUDE.md, AGENTS.md, GEMINI.md, steering, rules). Filled from
+	// instructionFiles in registry.go.
+	InstructionFile        string // user scope, relative to $HOME; "" when the agent has no global file
+	ProjectInstructionFile string // project scope, relative to the repo root
+	InstructionFrontmatter string // written above the content when the file format requires it
+
 	// Headless (-p) mode
 	HeadlessCmd          []string // command prefix
 	HeadlessModelArgs    []string // model selection flags, supports {{.Model}}
