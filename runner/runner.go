@@ -51,7 +51,8 @@ type Runner struct {
 	home         string
 	repoDir      string
 	injectCode   string
-	instructionCode string // codename written to the agent's instruction file
+	instructionCode  string // codename written to the agent's instruction file
+	instructionFiles string // which files carry it, for messages
 	cleanups     []func() // undo steps for files written into a preserved HOME
 	tokenHash16  string
 	sessionID    string
@@ -619,20 +620,32 @@ func (r *Runner) writeInstructions() {
 	if h.InstructionFile == "" && h.ProjectInstructionFile == "" {
 		return
 	}
-	fmt.Println("[phase 5] instruction files")
-	r.instructionCode = fmt.Sprintf("INSTR-%s-%d", strings.ToUpper(h.Name), time.Now().UnixMilli())
-	block := instructionStart + "\nThe project codename is " + r.instructionCode + ".\n" + instructionEnd + "\n"
+	fmt.Println("[phase 4] instruction files")
+	code := fmt.Sprintf("INSTR-%s-%d", strings.ToUpper(h.Name), time.Now().UnixMilli())
+	block := instructionStart + "\nThe project codename is " + code + ".\n" + instructionEnd + "\n"
 
+	var written []string
+	userPath := ""
 	if h.InstructionFile != "" {
-		path := filepath.Join(r.home, h.InstructionFile)
-		r.appendInstructionBlock(path, block)
-		r.pass("instruction file written: " + h.InstructionFile)
+		userPath = filepath.Join(r.home, h.InstructionFile)
+		r.appendInstructionBlock(userPath, block)
+		written = append(written, "~/"+h.InstructionFile)
 	}
-	if h.ProjectInstructionFile != "" && h.NeedsGitRepo {
-		path := filepath.Join(r.ensureGitRepo(), h.ProjectInstructionFile)
-		r.appendInstructionBlock(path, block)
-		r.pass("project instruction file written: " + h.ProjectInstructionFile)
+	// Project file goes where the agent runs: the test repo when the agent
+	// needs one, otherwise HOME itself.
+	if h.ProjectInstructionFile != "" {
+		path := filepath.Join(r.workDir(), h.ProjectInstructionFile)
+		if path != userPath {
+			r.appendInstructionBlock(path, block)
+			written = append(written, "./"+h.ProjectInstructionFile)
+		}
 	}
+	if len(written) == 0 {
+		return
+	}
+	r.instructionCode = code
+	r.instructionFiles = strings.Join(written, ", ")
+	r.pass("instruction files written: " + r.instructionFiles)
 }
 
 func (r *Runner) appendInstructionBlock(path, block string) {

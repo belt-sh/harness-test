@@ -28,7 +28,7 @@ func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] instruction file (%s)\n", phase)
 	for _, e := range entries {
 		if strings.Contains(string(e.Body), r.instructionCode) {
-			r.pass(fmt.Sprintf("%s: instruction file loaded into context (%s)", phase, r.harness.InstructionFile))
+			r.pass(fmt.Sprintf("%s: instruction file loaded into context (%s)", phase, r.instructionFiles))
 			return
 		}
 	}
@@ -36,7 +36,7 @@ func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
 		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction file", phase))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: instruction file %s not found in any request", phase, r.harness.InstructionFile))
+	r.fail(fmt.Sprintf("%s: instruction file (%s) not found in any request", phase, r.instructionFiles))
 }
 
 func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {

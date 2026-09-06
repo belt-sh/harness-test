@@ -140,7 +140,7 @@ var All = map[string]Harness{
 		HeadlessCmd:         []string{"codex", "exec"},
 		HeadlessModelArgs: append([]string{
 			"--dangerously-bypass-hook-trust",
-			"--approve-for-me",
+			"--dangerously-bypass-approvals-and-sandbox",
 		}, codexProviderArgs...),
 		PromptViaStdin:      true,
 		NeedsGitRepo:        true,
@@ -159,7 +159,7 @@ var All = map[string]Harness{
 			{Pattern: "Yes, continue"},
 		},
 		SDKCmd:  []string{"codex", "exec", "--experimental-json"},
-		SDKArgs: append([]string{"--dangerously-bypass-hook-trust", "--approve-for-me"}, codexProviderArgs...),
+		SDKArgs: append([]string{"--dangerously-bypass-hook-trust", "--dangerously-bypass-approvals-and-sandbox"}, codexProviderArgs...),
 		HooksInSDK: true,
 	},
 	"copilot": {
