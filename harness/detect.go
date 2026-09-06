@@ -99,6 +99,9 @@ func detectConfigDirs(name string) []string {
 	return []string{d}
 }
 
+// HooksTarget returns the hook file path relative to HOME (derived from registry).
+func HooksTarget(name string) string { return hooksTarget(name) }
+
 // hooksTarget returns the hook file path relative to HOME (derived from registry).
 func hooksTarget(name string) string {
 	h, ok := All[name]

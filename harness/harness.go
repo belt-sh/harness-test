@@ -115,6 +115,13 @@ type Harness struct {
 	InstructionFile        string // user scope, relative to $HOME; "" when the agent has no global file
 	ProjectInstructionFile string // project scope, relative to the repo root
 	InstructionFrontmatter string // written above the content when the file format requires it
+	InstructionMaxBytes    int    // size limit the agent enforces on the user-scope file, 0 for none
+	InstructionNote        string // why there is no user-scope file, or a caveat about it
+
+	// ConfigDirEnv names an env var that relocates the agent's config dir
+	// (the first segment of HookConfigDir), e.g. CLAUDE_CONFIG_DIR. XDG_CONFIG_HOME
+	// relocates ".config" for agents that live under it.
+	ConfigDirEnv string
 
 	// Headless (-p) mode
 	HeadlessCmd          []string // command prefix

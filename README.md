@@ -78,7 +78,7 @@ Each agent loads one file into its system prompt. The runner writes a second cod
 | qwen | `.qwen/QWEN.md` | `QWEN.md` |
 | windsurf | `.codeium/windsurf/memories/global_rules.md` | `.windsurf/rules/belt.md` |
 
-Registry: `instructionFiles` in `harness/registry.go`. The belt CLI keeps the same table (with env overrides such as `CLAUDE_CONFIG_DIR`) in `internal/instructions`.
+Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/registry.go`. The belt CLI imports this package and derives its install targets (skills dir, hooks path, instruction file) from it; there is no second copy.
 
 ### Control modes
 

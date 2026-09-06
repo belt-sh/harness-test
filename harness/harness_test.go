@@ -89,5 +89,8 @@ func TestInstructionFiles(t *testing.T) {
 		if _, ok := instructionFiles[name]; !ok {
 			t.Errorf("%s: missing from instructionFiles", name)
 		}
+		if h.SkillsDir == "" {
+			t.Errorf("%s: SkillsDir is empty", name)
+		}
 	}
 }

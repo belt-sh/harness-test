@@ -517,7 +517,7 @@ var All = map[string]Harness{
 		ConfigFiles: []ConfigFile{
 			{Path: ".factory/settings.json", Content: `{"customModels":[{"model":"mock-model","displayName":"Mock","baseUrl":"{{.BaseURL}}/v1","apiKey":"mock-key","provider":"openai","maxOutputTokens":4096}]}`},
 		},
-		SkillsDir:       ".factory-plugin/skills",
+		SkillsDir:       ".factory/skills",
 		NeedsGitRepo:    true,
 		HeadlessCmd:     []string{"droid", "exec"},
 		HeadlessModelArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
@@ -562,6 +562,8 @@ var All = map[string]Harness{
 // (identity, not instructions) globally.
 type InstructionFiles struct {
 	User, Project, Frontmatter string
+	MaxBytes                   int
+	Note                       string
 }
 
 const (
@@ -574,23 +576,68 @@ var instructionFiles = map[string]InstructionFiles{
 	"claude":   {User: ".claude/CLAUDE.md", Project: "CLAUDE.md"},
 	"codex":    {User: ".codex/AGENTS.md", Project: "AGENTS.md"},
 	"copilot":  {User: ".copilot/instructions/belt.instructions.md", Project: ".github/instructions/belt.instructions.md", Frontmatter: fmCopilot},
-	"cursor":   {Project: ".cursor/rules/belt.mdc", Frontmatter: fmCursor},
+	"cursor":   {Project: ".cursor/rules/belt.mdc", Frontmatter: fmCursor, Note: "Cursor has no global rules file on disk; global rules live in Cursor Settings → Rules"},
 	"droid":    {User: ".factory/AGENTS.md", Project: "AGENTS.md"},
 	"gemini":   {User: ".gemini/GEMINI.md", Project: "GEMINI.md"},
 	"goose":    {User: ".config/goose/.goosehints", Project: ".goosehints"},
 	"grok":     {User: ".grok/AGENTS.md", Project: "AGENTS.md"},
-	"hermes":   {Project: "AGENTS.md"},
-	"kilo":     {User: ".kilocode/rules/belt.md", Project: "AGENTS.md"},
+	"hermes":   {Project: "AGENTS.md", Note: "Hermes loads only SOUL.md globally, which is the agent identity rather than instructions"},
+	"kilo":     {User: ".kilocode/rules/belt.md", Project: "AGENTS.md", Note: "legacy rules dir; newer Kilo prefers the instructions key in ~/.config/kilo/kilo.jsonc"},
 	"kimi":     {User: ".kimi-code/AGENTS.md", Project: "AGENTS.md"},
 	"kiro":     {User: ".kiro/steering/belt.md", Project: ".kiro/steering/belt.md", Frontmatter: fmKiro},
 	"omp":      {User: ".omp/agent/AGENTS.md", Project: "AGENTS.md"},
 	"opencode": {User: ".config/opencode/AGENTS.md", Project: "AGENTS.md"},
 	"pi":       {User: ".pi/agent/AGENTS.md", Project: "AGENTS.md"},
 	"qwen":     {User: ".qwen/QWEN.md", Project: "QWEN.md"},
-	"windsurf": {User: ".codeium/windsurf/memories/global_rules.md", Project: ".windsurf/rules/belt.md"},
+	"windsurf": {User: ".codeium/windsurf/memories/global_rules.md", Project: ".windsurf/rules/belt.md", MaxBytes: 6000, Note: "Windsurf caps global_rules.md at 6000 characters"},
+}
+
+// skillsDirs is the user-scope Agent Skills directory per harness (relative
+// to $HOME), from each agent's docs, 2026-09. Entries built by helper
+// functions (kilo, opencode) and IDE-only agents get theirs here; the rest
+// set SkillsDir inline above.
+var skillsDirs = map[string]string{
+	"cursor":   ".cursor/skills",
+	"gemini":   ".gemini/skills",
+	"goose":    ".config/goose/skills",
+	"hermes":   ".hermes/skills",
+	"kilo":     ".kilocode/skills",
+	"kimi":     ".kimi-code/skills",
+	"kiro":     ".kiro/skills",
+	"omp":      ".omp/agent/skills",
+	"opencode": ".config/opencode/skills",
+	"pi":       ".pi/agent/skills",
+	"qwen":     ".qwen/skills",
+	"windsurf": ".codeium/windsurf/skills",
+}
+
+// configDirEnvs names the env var that relocates an agent's config dir.
+var configDirEnvs = map[string]string{
+	"claude":   "CLAUDE_CONFIG_DIR",
+	"codex":    "CODEX_HOME",
+	"copilot":  "COPILOT_HOME",
+	"hermes":   "HERMES_HOME",
+	"kimi":     "KIMI_CODE_HOME",
+	"goose":    "XDG_CONFIG_HOME",
+	"opencode": "XDG_CONFIG_HOME",
 }
 
 func init() {
+	for name, dir := range skillsDirs {
+		h, ok := All[name]
+		if !ok {
+			panic("skillsDirs: unknown harness " + name)
+		}
+		if h.SkillsDir == "" {
+			h.SkillsDir = dir
+		}
+		All[name] = h
+	}
+	for name, env := range configDirEnvs {
+		h := All[name]
+		h.ConfigDirEnv = env
+		All[name] = h
+	}
 	for name, f := range instructionFiles {
 		h, ok := All[name]
 		if !ok {
@@ -599,6 +646,8 @@ func init() {
 		h.InstructionFile = f.User
 		h.ProjectInstructionFile = f.Project
 		h.InstructionFrontmatter = f.Frontmatter
+		h.InstructionMaxBytes = f.MaxBytes
+		h.InstructionNote = f.Note
 		All[name] = h
 	}
 }
