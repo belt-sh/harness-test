@@ -11,4 +11,4 @@ jobs:
     uses: ./.github/workflows/test-harness.yml
     with:
       harness: kiro
-      modes: '["headless","acp"]'
+      modes: '["interactive"]'

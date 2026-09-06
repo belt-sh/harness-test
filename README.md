@@ -56,7 +56,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 ### Instruction files
 
-Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified locally 2026-09 for claude, codex, copilot, droid, gemini, hermes, kilo, kimi, omp, opencode, pi, qwen; goose, grok, kiro run in CI.
+Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified 2026-09 for all 15 CLI agents (kiro in interactive mode with `--intercept`); cursor and windsurf are IDE-only and cannot be driven by the runner.
 
 | Agent | User scope (`~/`) | Project scope |
 |-------|-------------------|---------------|
