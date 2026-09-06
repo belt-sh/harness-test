@@ -3,6 +3,8 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/belt-sh/harness-test/server"
@@ -18,25 +20,45 @@ func (r *Runner) runChecks(phase string) {
 	r.checkInstructions(phase, entries)
 }
 
-// checkInstructions verifies the codename from the instruction file made it
-// into a request to the model, i.e. the agent loaded that file into its
-// system prompt at this scope.
+// checkInstructions verifies that the codename from each instruction file
+// made it into a request to the model, i.e. the agent loaded that file into
+// its system prompt at that scope. One check per file.
 func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
-	if r.instructionCode == "" {
+	if len(r.instructionCodes) == 0 {
 		return
 	}
-	fmt.Printf("[check] instruction file (%s)\n", phase)
-	for _, e := range entries {
-		if strings.Contains(string(e.Body), r.instructionCode) {
-			r.pass(fmt.Sprintf("%s: instruction file loaded into context (%s)", phase, r.instructionFiles))
-			return
+	fmt.Printf("[check] instruction files (%s)\n", phase)
+	if len(entries) == 0 {
+		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction files", phase))
+		return
+	}
+	names := make([]string, 0, len(r.instructionCodes))
+	for name := range r.instructionCodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		code := r.instructionCodes[name]
+		found := false
+		for _, e := range entries {
+			if strings.Contains(string(e.Body), code) {
+				found = true
+				break
+			}
+		}
+		if found {
+			r.pass(fmt.Sprintf("%s: %s loaded into context", phase, name))
+		} else {
+			r.fail(fmt.Sprintf("%s: %s not found in any request", phase, name))
+			if os.Getenv("HARNESS_DEBUG") != "" {
+				dump := fmt.Sprintf("/tmp/harness-%s-%s-requests.json", r.harness.Name, phase)
+				if data, err := json.MarshalIndent(entries, "", "  "); err == nil {
+					os.WriteFile(dump, data, 0644)
+					fmt.Printf("    [debug] request bodies written to %s\n", dump)
+				}
+			}
 		}
 	}
-	if len(entries) == 0 {
-		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction file", phase))
-		return
-	}
-	r.fail(fmt.Sprintf("%s: instruction file (%s) not found in any request", phase, r.instructionFiles))
 }
 
 func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {

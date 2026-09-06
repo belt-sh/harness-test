@@ -297,6 +297,7 @@ var All = map[string]Harness{
 		HookFormat:    TSExtension,
 		HookConfigDir: ".omp/agent/extensions",
 		Events:        Events{PromptSubmit: "before_agent_start", Stop: "agent_end"},
+		NeedsGitRepo:        true, // project AGENTS.md is only read inside a git project
 		HeadlessCmd:         []string{"omp", "-p"},
 		HeadlessModelArgs:   []string{"--model", "{{.Model}}", "--approval-mode", "yolo"},
 		HooksInHeadless:     true,

@@ -51,8 +51,7 @@ type Runner struct {
 	home         string
 	repoDir      string
 	injectCode   string
-	instructionCode  string // codename written to the agent's instruction file
-	instructionFiles string // which files carry it, for messages
+	instructionCodes map[string]string // instruction file → codename written into it
 	cleanups     []func() // undo steps for files written into a preserved HOME
 	tokenHash16  string
 	sessionID    string
@@ -621,31 +620,33 @@ func (r *Runner) writeInstructions() {
 		return
 	}
 	fmt.Println("[phase 4] instruction files")
-	code := fmt.Sprintf("INSTR-%s-%d", strings.ToUpper(h.Name), time.Now().UnixMilli())
-	block := instructionStart + "\nThe project codename is " + code + ".\n" + instructionEnd + "\n"
+	stamp := time.Now().UnixMilli()
+	block := func(code string) string {
+		return instructionStart + "\nThe project codename is " + code + ".\n" + instructionEnd + "\n"
+	}
 
-	var written []string
+	r.instructionCodes = map[string]string{}
 	userPath := ""
 	if h.InstructionFile != "" {
 		userPath = filepath.Join(r.home, h.InstructionFile)
-		r.appendInstructionBlock(userPath, block)
-		written = append(written, "~/"+h.InstructionFile)
+		code := fmt.Sprintf("INSTR-USER-%s-%d", strings.ToUpper(h.Name), stamp)
+		r.appendInstructionBlock(userPath, block(code))
+		r.instructionCodes["~/"+h.InstructionFile] = code
 	}
 	// Project file goes where the agent runs: the test repo when the agent
-	// needs one, otherwise HOME itself.
+	// needs one, otherwise HOME itself. Each file carries its own code so the
+	// check can tell which one the agent loaded.
 	if h.ProjectInstructionFile != "" {
 		path := filepath.Join(r.workDir(), h.ProjectInstructionFile)
 		if path != userPath {
-			r.appendInstructionBlock(path, block)
-			written = append(written, "./"+h.ProjectInstructionFile)
+			code := fmt.Sprintf("INSTR-PROJ-%s-%d", strings.ToUpper(h.Name), stamp)
+			r.appendInstructionBlock(path, block(code))
+			r.instructionCodes["./"+h.ProjectInstructionFile] = code
 		}
 	}
-	if len(written) == 0 {
-		return
+	for name := range r.instructionCodes {
+		r.pass("instruction file written: " + name)
 	}
-	r.instructionCode = code
-	r.instructionFiles = strings.Join(written, ", ")
-	r.pass("instruction files written: " + r.instructionFiles)
 }
 
 func (r *Runner) appendInstructionBlock(path, block string) {
@@ -708,7 +709,7 @@ func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdSlice[0], args...)
-	cmd.Env = r.agentEnv()
+	cmd.Env = r.envIn(dir)
 	cmd.Dir = dir
 	if r.harness.PromptViaStdin {
 		cmd.Stdin = strings.NewReader(prompt)
@@ -777,7 +778,7 @@ func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, r.harness.HeadlessCmd[0], args...)
-	cmd.Env = r.agentEnv()
+	cmd.Env = r.envIn(dir)
 	cmd.Dir = dir
 	out, _ := cmd.CombinedOutput()
 	if os.Getenv("HARNESS_DEBUG") != "" {
@@ -809,7 +810,7 @@ func (r *Runner) runInteractive() {
 		iargs = append(iargs, r.expand(a))
 	}
 
-	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.agentEnv())
+	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.envIn(dir))
 	if err != nil {
 		r.fail("PTY start: " + err.Error())
 		return
@@ -918,7 +919,7 @@ func (r *Runner) runACP() {
 	// Write ACP-specific config files (some agents need config in the project dir)
 	r.writeACPConfig()
 
-	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, r.agentEnv())
+	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, r.envIn(dir))
 	if err := driver.Start(); err != nil {
 		r.fail("ACP start: " + err.Error())
 		return
@@ -1150,6 +1151,21 @@ func stripANSI(s string) string {
 }
 
 // agentEnv returns os.Environ() with proxy vars injected for intercepted agents.
+// envIn returns the agent env with PWD pointing at dir. exec.Cmd.Dir does
+// not touch PWD, and Bun-based agents (opencode, kilo, omp) take their
+// working directory from it, so without this they resolve the project root
+// to wherever harness-test itself was started.
+func (r *Runner) envIn(dir string) []string {
+	env := r.agentEnv()
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PWD=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "PWD="+dir)
+}
+
 func (r *Runner) agentEnv() []string {
 	env := os.Environ()
 	if r.proxyURL == "" {
