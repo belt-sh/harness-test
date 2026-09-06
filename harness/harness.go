@@ -22,10 +22,13 @@ const (
 	Responses                  // /v1/responses (Codex, Grok, OpenCode, Kilo)
 	Anthropic                  // /v1/messages (Claude)
 	Gemini                     // /v1beta/models/:model:streamGenerateContent (Gemini CLI)
+	Cursor                     // Connect-protobuf agent.v1.AgentService (Cursor agent CLI)
 )
 
 func (f APIFormat) String() string {
 	switch f {
+	case Cursor:
+		return "Cursor"
 	case OpenAI:
 		return "OpenAI"
 	case Responses:

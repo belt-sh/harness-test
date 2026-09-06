@@ -72,6 +72,7 @@ type MockServer struct {
 	toolName     string
 	toolArgs     string
 	toolCallPath  string
+	cursor map[string]*cursorSession // Cursor agent run streams by request id
 }
 
 func New() *MockServer {
@@ -144,11 +145,19 @@ func New() *MockServer {
 		"used": 0, "limit": 1000000,
 	}))
 
-	// Kiro auth + Cognito stubs
+	// Kiro auth + Cognito stubs; Cursor's /auth/exchange_user_api_key wants both tokens
 	mux.HandleFunc("POST /auth/", func(w http.ResponseWriter, r *http.Request) {
 		s.record(r, nil, "")
-		writeJSON(w, map[string]any{"accessToken": "mock-token", "expiresIn": 86400})
+		writeJSON(w, map[string]any{"accessToken": "mock-token", "refreshToken": "mock-refresh", "expiresIn": 86400})
 	})
+
+	// Cursor agent CLI (Connect-protobuf), see cursor.go
+	mux.HandleFunc("POST /agent.v1.AgentService/RunSSE", s.handleCursorRunSSE)
+	mux.HandleFunc("POST /aiserver.v1.BidiService/BidiAppend", s.handleCursorBidiAppend)
+	for _, svc := range []string{"AiService", "DashboardService", "ServerConfigService", "AnalyticsService", "MetricsService", "RepositoryService", "AutomationsService", "BackgroundComposerService"} {
+		mux.HandleFunc("POST /aiserver.v1."+svc+"/", s.cursorUnary)
+	}
+	mux.HandleFunc("POST /agent.v1.AgentService/", s.cursorUnary)
 
 	// Test utilities
 	mux.HandleFunc("GET /log", s.handleGetLog)

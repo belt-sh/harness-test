@@ -18,6 +18,8 @@ jobs:
             modes: headless,sdk
           - harness: copilot
             modes: headless,acp
+          - harness: cursor
+            modes: headless,interactive
           - harness: droid
             modes: headless,acp
           - harness: gemini

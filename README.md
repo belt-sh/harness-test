@@ -1,6 +1,6 @@
 # harness-test
 
-Conformance test suite for coding agent CLIs. Tests 15 agents across 4 control modes, 4 API formats, and 7 hook formats.
+Conformance test suite for coding agent CLIs. Tests 16 agents across 4 control modes, 4 API formats, and 7 hook formats.
 
 Verifies: prompt/response, tool calls, hook lifecycle, streaming, model selection, context injection.
 
@@ -12,6 +12,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 [![claude](https://github.com/belt-sh/harness-test/actions/workflows/claude.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/claude.yml)
 [![codex](https://github.com/belt-sh/harness-test/actions/workflows/codex.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/codex.yml)
 [![copilot](https://github.com/belt-sh/harness-test/actions/workflows/copilot.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/copilot.yml)
+[![cursor](https://github.com/belt-sh/harness-test/actions/workflows/cursor.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/cursor.yml)
 [![droid](https://github.com/belt-sh/harness-test/actions/workflows/droid.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/droid.yml)
 [![gemini](https://github.com/belt-sh/harness-test/actions/workflows/gemini.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/gemini.yml)
 [![goose](https://github.com/belt-sh/harness-test/actions/workflows/goose.yml/badge.svg)](https://github.com/belt-sh/harness-test/actions/workflows/goose.yml)
@@ -34,6 +35,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅¹ | JSONNested | Anthropic |
 | [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | ✅² | JSONNested | Responses |
 | [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | OpenAI |
+| [Cursor](https://cursor.com/docs/cli) | 2026.09 | ✅ | ✅ | — | — | JSONFlat | Cursor⁵ |
 | [Droid](https://docs.factory.ai/cli) | 0.208.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | Gemini |
 | [Goose](https://github.com/block/goose) | 1.48.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
@@ -47,23 +49,24 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
 | [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
 
-**15/15** headless · **12/15** ACP · **4/15** SDK · **31 mode-tests in CI**
+**16/16** headless · **12/16** ACP · **4/16** SDK · **33 mode-tests in CI**
 
 ¹ `claude -p --output-format stream-json` — claude's own streaming protocol, not ACP.
 ² `codex exec --experimental-json` — JSONL event stream over stdout.
 ³ `pi --mode json` — structured JSONL output (provider URL not overridable).
 ⁴ `omp --mode json` — Oh My Pi is a Pi fork (bun runtime) with native ACP, plugins, and multi-model roles.
+⁵ Cursor's `agent` CLI has no BYOK endpoint: the mock speaks its Connect-protobuf `agent.v1.AgentService` (RunSSE + BidiAppend, schemas read out of the CLI bundle). Server config pins the stream to HTTP/1.1. Headless fires sessionStart and the tool hooks; the TUI also fires beforeSubmitPrompt and stop.
 
 ### Instruction files
 
-Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified 2026-09 for all 15 CLI agents (kiro in interactive mode with `--intercept`); cursor and windsurf are IDE-only and cannot be driven by the runner. Their hook configs (`~/.cursor/hooks.json` v1 camelCase events; `~/.codeium/windsurf/hooks.json` snake_case events) follow the vendors' docs and are unverified. The Cursor `agent` CLI could be driven once the mock speaks its Connect-protobuf API.
+Each agent loads instruction files into its system prompt at user scope and at project scope. The runner writes a distinct codename into each (`INSTR-USER-<AGENT>-<ts>`, `INSTR-PROJ-<AGENT>-<ts>`, marker-wrapped, restored afterwards) and checks per file that it reaches the mock model, so a wrong path fails the run. Verified 2026-09 for all 15 CLI agents (kiro in interactive mode with `--intercept`); cursor is verified through its `agent` CLI (project scope; the CLI reads `.cursor/rules` and `AGENTS.md`, and has no global rules file). windsurf is IDE-only and cannot be driven by the runner; its hook config (`~/.codeium/windsurf/hooks.json`, snake_case events) follows the vendor docs and is unverified.
 
 | Agent | User scope (`~/`) | Project scope |
 |-------|-------------------|---------------|
 | claude | `.claude/CLAUDE.md` | `CLAUDE.md` |
 | codex | `.codex/AGENTS.md` | `AGENTS.md` |
 | copilot | `.copilot/instructions/belt.instructions.md` | `.github/instructions/belt.instructions.md` |
-| cursor | — (settings UI) | `.cursor/rules/belt.mdc` |
+| cursor | — (settings UI) | `.cursor/rules/belt.mdc` ✅ |
 | droid | `.factory/AGENTS.md` | `AGENTS.md` |
 | gemini | `.gemini/GEMINI.md` | `GEMINI.md` |
 | goose | `.config/goose/.goosehints` | `.goosehints` |

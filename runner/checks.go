@@ -83,6 +83,11 @@ func (r *Runner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 				return
 			}
 		}
+		// Cursor: connect server-stream
+		if strings.HasSuffix(e.Path, "/RunSSE") {
+			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
+			return
+		}
 		// Gemini: ?alt=sse in URL path
 		if strings.Contains(e.Path, "alt=sse") || strings.Contains(e.Path, "streamGenerateContent") {
 			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))

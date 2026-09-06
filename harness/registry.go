@@ -535,21 +535,30 @@ var All = map[string]Harness{
 	},
 
 	// IDE-only agents: detection and hook install only, no test support.
-	// Cursor: ~/.cursor/hooks.json, {"version":1,"hooks":{event:[{command,timeout}]}}
-	// with camelCase events (docs 2026-09). beforeSubmitPrompt cannot inject
-	// context; only sessionStart returns additional_context. The `agent` CLI
-	// reads the same file, but speaks Connect-protobuf to aiserver.v1.* so the
-	// mock cannot drive it yet — see "Investigated" below. Unverified by the runner.
+	// Cursor agent CLI (`agent`, alias cursor-agent). Same ~/.cursor tree as the
+	// editor: hooks.json (v1, camelCase events), rules, AGENTS.md. Talks
+	// Connect-protobuf to CURSOR_API_ENDPOINT; the mock speaks enough of
+	// agent.v1.AgentService (RunSSE + BidiAppend) to run a turn — see
+	// server/cursor.go. beforeSubmitPrompt cannot inject context; sessionStart
+	// can (additional_context).
 	"cursor": {
 		Name: "cursor", Binary: "agent",
 		InstallCmd:       []string{"sh", "-c", "curl -fsSL https://cursor.com/install | bash"},
 		InstallBinDirs:   []string{".local/bin"},
 		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT"},
 		DetectConfigDirs: []string{".cursor"},
-		HookFormat:       JSONFlat,
-		HookConfigDir:    ".cursor",
-		HookFileName:     "hooks.json",
-		HookWrapper:      `{"version":1,"hooks":%s}`,
+		APIFormat:        Cursor,
+		EnvVars: map[string]string{
+			"CURSOR_API_ENDPOINT": "{{.BaseURL}}",
+		},
+		APIKeyEnvVar: "CURSOR_API_KEY",
+		DefaultModel: "gpt-4o-mini",
+		ToolCallName: "read",
+		ToolCallArgs: `{"path":"README.md"}`,
+		HookFormat:    JSONFlat,
+		HookConfigDir: ".cursor",
+		HookFileName:  "hooks.json",
+		HookWrapper:   `{"version":1,"hooks":%s}`,
 		Events: Events{
 			SessionStart: "sessionStart",
 			PromptSubmit: "beforeSubmitPrompt",
@@ -558,6 +567,15 @@ var All = map[string]Harness{
 			Stop:         "stop",
 			PreCompact:   "preCompact",
 		},
+		NeedsGitRepo:      true,
+		HeadlessCmd:       []string{"agent", "-p", "--trust", "--force", "--output-format", "text"},
+		HeadlessModelArgs: []string{"--model", "{{.Model}}"},
+		HooksInHeadless:   true,
+		InteractiveCmd:          []string{"agent"},
+		InteractiveArgs:         []string{"--trust", "--force", "--model", "{{.Model}}", "What is the project codename? Reply ONLY the codename."},
+		InteractivePromptInArgs: true,
+		ExitCommand:             "/exit",
+		HooksInInteractive:      true,
 	},
 	// Windsurf: ~/.codeium/windsurf/hooks.json, {"hooks":{event:[{command}]}} with
 	// snake_case events (docs 2026-09). Exit code is the only feedback channel;
@@ -696,16 +714,18 @@ func init() {
 //   --test-cmd post-edit hooks only. BYOK via OPENAI_API_BASE + OPENAI_API_KEY.
 //   Headless: aider --message "prompt" --yes-always.
 //
-// Cursor `agent` CLI (curl cursor.com/install; binary `agent`, alias
-//   cursor-agent) — has -p, --output-format stream-json, --endpoint /
-//   CURSOR_API_ENDPOINT and CURSOR_API_KEY, so it can be pointed at a mock.
-//   Probed 2026-09: after POST /auth/exchange_user_api_key it speaks
-//   Connect-protobuf (application/proto) to aiserver.v1.DashboardService
-//   (GetMe, GetUserPrivacyMode, ListMarketplaces, ...), ServerConfigService/
-//   GetServerConfig and then the chat stream. Driving it needs a protobuf
-//   mock of that API, comparable to the kiro EventStream work. Headless -p
-//   reportedly fires only sessionStart/sessionEnd (forum #148316); the TUI
-//   fires the rest. Not added as a test mode yet.
+// Cursor `agent` CLI — added above (2026-09). Notes from the investigation:
+//   the public build has no client-side provider; a hidden "agent-cli-local"
+//   mode (--base-url, --authless, CURSOR_LOCAL_AGENT_BASE_URL) exists in the
+//   option parser but its runtime is not shipped. After
+//   /auth/exchange_user_api_key the CLI speaks Connect-protobuf to
+//   aiserver.v1.* (unary) and agent.v1.AgentService/RunSSE (server stream,
+//   request = BidiRequestId) with client messages pushed through
+//   BidiService/BidiAppend as hex-encoded AgentClientMessage, gzip above a
+//   few hundred bytes. GetServerConfig.http2_config=FORCE_ALL_DISABLED(1)
+//   keeps it on HTTP/1.1; otherwise it opens an h2c bidi Run stream. The
+//   server asks for rules via ExecServerMessage.request_context_args and
+//   gets RequestContext{rules[]} back. Schemas: see server/cursor.go.
 // Windsurf / Cline / Roo — IDE extensions only, no standalone CLI.
 //
 // Remaining skip investigations (3 skips across 2 harnesses, 249/3):
