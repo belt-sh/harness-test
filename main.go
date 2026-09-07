@@ -209,6 +209,13 @@ func main() {
 
 	for _, name := range targets {
 		h := harness.All[name]
+		if reason, detail := h.SkipFor(*mode); reason != harness.SkipNone {
+			// Only a typed skip: "cannot be tested" is not a failure, and the
+			// summary says why. Explicitly named harnesses still skip, loudly.
+			fmt.Printf("=== %s ===\n  ○ skipped [%s]: %s\n\n", name, reason, detail)
+			results = append(results, runner.SkippedResult(h, reason, detail))
+			continue
+		}
 		srv.ClearLog()
 		r := runner.New(h, srv, baseURL)
 		r.SetMode(*mode)
@@ -239,6 +246,10 @@ func main() {
 		}
 		if len(ver) > 30 {
 			ver = ver[:30]
+		}
+		if r.SkipReason != harness.SkipNone {
+			fmt.Printf("%-12s %-30s %6s %6s %6s %8s  skipped [%s]\n", r.Harness, "—", "—", "—", "—", "—", r.SkipReason)
+			continue
 		}
 		fmt.Printf("%-12s %-30s %6d %6d %6d %8s\n", r.Harness, ver, r.Passed, r.Failed, r.Skipped, r.Duration.Round(time.Second))
 	}

@@ -94,3 +94,26 @@ func TestInstructionFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestHookContextTableCoversAllHarnesses(t *testing.T) {
+	for name := range All {
+		if _, ok := hookContexts[name]; !ok {
+			t.Errorf("%s: missing from hookContexts", name)
+		}
+	}
+	if out, ok := HookStdout("gemini", "user-prompt-submit", "hi"); !ok || out != `{"hookSpecificOutput":{"additionalContext":"hi","hookEventName":"BeforeAgent"}}` {
+		t.Errorf("gemini payload: %q %v", out, ok)
+	}
+	if _, ok := HookStdout("goose", "user-prompt-submit", "hi"); ok {
+		t.Error("goose has no prompt context channel")
+	}
+	if reason, _ := All["windsurf"].SkipFor("headless"); reason != SkipIDEOnly {
+		t.Errorf("windsurf skip = %q", reason)
+	}
+	if reason, _ := All["kiro"].SkipFor("acp"); reason != SkipNone {
+		t.Errorf("kiro acp skip = %q", reason)
+	}
+	if reason, _ := All["claude"].SkipFor("headless"); reason != SkipNone {
+		t.Errorf("claude skip = %q", reason)
+	}
+}

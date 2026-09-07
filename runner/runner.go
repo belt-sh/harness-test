@@ -19,12 +19,19 @@ import (
 )
 
 type Result struct {
-	Harness  string
-	Version  string
-	Passed   int
-	Failed   int
-	Skipped  int
-	Duration time.Duration
+	Harness    string
+	Version    string
+	Passed     int
+	Failed     int
+	Skipped    int
+	Duration   time.Duration
+	SkipReason harness.SkipReason // set when the whole harness was skipped
+	SkipDetail string
+}
+
+// SkippedResult records a harness that was not run at all.
+func SkippedResult(h harness.Harness, reason harness.SkipReason, detail string) Result {
+	return Result{Harness: h.Name, SkipReason: reason, SkipDetail: detail}
 }
 
 type Mode int
@@ -67,6 +74,38 @@ type Runner struct {
 }
 
 const hookLogPath = "/tmp/belt-hook-events.log"
+
+// promptPayload is what the mock prompt hook prints, in the shape the
+// agent's context channel expects (harness.HookStdout). Empty when the
+// agent has no stdout channel for that event.
+func (r *Runner) promptPayload() string {
+	payload, ok := harness.HookStdout(r.harness.Name, "user-prompt-submit", "The project codename is "+r.injectCode+".")
+	if !ok {
+		return ""
+	}
+	return payload
+}
+
+// shellPrint returns a shell fragment that prints payload verbatim, safe
+// to append after "&&". Single quotes in the payload are escaped.
+func shellPrint(payload string) string {
+	return "printf '%s\\n' '" + strings.ReplaceAll(payload, "'", `'\''`) + "'"
+}
+
+// promptEcho is the "&& print" suffix for the prompt hook command, or "".
+func (r *Runner) promptEcho() string {
+	p := r.promptPayload()
+	if p == "" {
+		return ""
+	}
+	return " && " + shellPrint(p)
+}
+
+// jsonStr escapes a shell command for embedding inside a JSON/TOML string.
+func jsonStr(cmd string) string {
+	b, _ := json.Marshal(cmd)
+	return string(b[1 : len(b)-1])
+}
 
 const (
 	TagSessionStart = "SESSION_START"
@@ -405,16 +444,9 @@ func (r *Runner) writeHooks() {
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 			if e.Tag == TagPrompt {
-				if r.harness.HookWrapper != "" {
-					// Cursor: hook stdout must be JSON; additional_context is
-					// accepted on beforeSubmitPrompt (undocumented, see the
-					// HOOK_STEPS_SUPPORTING_ADDITIONAL_CONTEXT table in the CLI).
-					cmd += fmt.Sprintf(` && printf '{\"additional_context\": \"The project codename is %s.\"}'`, r.injectCode)
-				} else {
-					cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
-				}
+				cmd += r.promptEcho()
 			}
-			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, cmd))
+			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, jsonStr(cmd)))
 		}
 		hooks := "{" + strings.Join(parts, ",") + "}"
 		if r.harness.HookWrapper != "" {
@@ -429,10 +461,10 @@ func (r *Runner) writeHooks() {
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 			if e.Tag == TagPrompt {
-				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+				cmd += r.promptEcho()
 			}
 			hook := fmt.Sprintf(`{"name":"belt-%s","trigger":"%s","action":{"type":"command","command":"%s"},"timeout":5}`,
-				strings.ToLower(e.Tag), e.Event, cmd)
+				strings.ToLower(e.Tag), e.Event, jsonStr(cmd))
 			hooks = append(hooks, hook)
 		}
 		content = fmt.Sprintf(`{"version":"v1","hooks":[%s]}`, strings.Join(hooks, ","))
@@ -442,7 +474,7 @@ func (r *Runner) writeHooks() {
 		scriptDir := filepath.Join(r.home, ".copilot", "test-hooks")
 		os.MkdirAll(scriptDir, 0755)
 		promptScript := filepath.Join(scriptDir, "prompt.sh")
-		os.WriteFile(promptScript, []byte(fmt.Sprintf("#!/bin/sh\necho PROMPT >> %s\nprintf '{\"additionalContext\": \"The project codename is %s.\"}\\n'\n", logPath, r.injectCode)), 0755)
+		os.WriteFile(promptScript, []byte(fmt.Sprintf("#!/bin/sh\necho PROMPT >> %s\n%s\n", logPath, shellPrint(r.promptPayload()))), 0755)
 		stopScript := filepath.Join(scriptDir, "stop.sh")
 		os.WriteFile(stopScript, []byte(fmt.Sprintf("#!/bin/sh\necho STOP >> %s\n", logPath)), 0755)
 		content = fmt.Sprintf(`{"version":1,"hooks":{"%s":[{"type":"command","bash":"%s","timeoutSec":5}],"%s":[{"type":"command","bash":"%s","timeoutSec":5}]}}`,
@@ -457,7 +489,9 @@ func (r *Runner) writeHooks() {
 			script := filepath.Join(scriptDir, e.Tag+".sh")
 			body := fmt.Sprintf("#!/bin/sh\ncat - >/dev/null\necho %s >> %s\n", e.Tag, logPath)
 			if e.Tag == TagPrompt {
-				body += fmt.Sprintf("printf '{\"context\": \"The project codename is %s.\"}\\n'\n", r.injectCode)
+				if p := r.promptPayload(); p != "" {
+					body += shellPrint(p) + "\n"
+				}
 			}
 			os.WriteFile(script, []byte(body), 0755)
 			yamlHooks += fmt.Sprintf("  %s:\n    - command: %s\n      timeout: 5\n", e.Event, script)
@@ -495,12 +529,12 @@ func (r *Runner) writeHooks() {
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 			if e.Tag == TagPrompt {
-				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+				cmd += r.promptEcho()
 			}
 			if e.Tag == TagPreTool || e.Tag == TagPostTool {
-				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\nmatcher = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, r.toolMatcher(), cmd)
+				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\nmatcher = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, r.toolMatcher(), jsonStr(cmd))
 			} else {
-				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, cmd)
+				tomlHooks += fmt.Sprintf("\n[[hooks]]\nevent = \"%s\"\ncommand = \"%s\"\ntimeout = 10\n", e.Event, jsonStr(cmd))
 			}
 		}
 		content = string(existing) + tomlHooks
@@ -1097,9 +1131,9 @@ func (r *Runner) buildNestedHooksJSON(logPath string) string {
 	for _, e := range entries {
 		cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 		if e.Tag == TagPrompt {
-			cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+			cmd += r.promptEcho()
 		}
-		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":5}`, cmd)
+		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":5}`, jsonStr(cmd))
 		if e.Tag == TagPreTool || e.Tag == TagPostTool {
 			parts = append(parts, fmt.Sprintf(`"%s":[{"matcher":"%s","hooks":[%s]}]`, e.Event, r.toolMatcher(), hook))
 		} else {

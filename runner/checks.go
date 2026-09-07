@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/belt-sh/harness-test/harness"
 	"github.com/belt-sh/harness-test/server"
 )
 
@@ -29,13 +30,22 @@ func (r *Runner) checkHookInjection(phase string, entries []server.LogEntry) {
 		return
 	}
 	fmt.Printf("[check] hook injection (%s)\n", phase)
+	if !r.promptHookFired() {
+		r.skip(fmt.Sprintf("%s: prompt hook did not fire, nothing to inject", phase))
+		return
+	}
 	for _, e := range entries {
 		if strings.Contains(string(e.Body), r.injectCode) {
 			r.pass(fmt.Sprintf("%s: prompt hook context reached the model", phase))
 			return
 		}
 	}
-	r.skip(fmt.Sprintf("%s: prompt hook context not seen in any request", phase))
+	if harness.ContextChannelFor(r.harness.Name, "user-prompt-submit") == harness.ContextNone ||
+		harness.ContextChannelFor(r.harness.Name, "user-prompt-submit") == harness.ContextPlugin {
+		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
+		return
+	}
+	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
 }
 
 // checkInstructions verifies that the codename from each instruction file
@@ -138,4 +148,12 @@ func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
 		}
 	}
 	r.skip(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
+}
+
+// promptHookFired reports whether the mock prompt hook ran in this phase.
+func (r *Runner) promptHookFired() bool {
+	if data, err := os.ReadFile(hookLogPath); err == nil && strings.Contains(string(data), TagPrompt) {
+		return true
+	}
+	return strings.Contains(stripANSI(r.lastOutput), "hook: "+r.harness.Events.PromptSubmit)
 }

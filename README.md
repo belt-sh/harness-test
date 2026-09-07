@@ -83,6 +83,22 @@ Each agent loads instruction files into its system prompt at user scope and at p
 
 Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/registry.go`. The belt CLI imports this package and derives its install targets (skills dir, hooks path, instruction file) from it; there is no second copy.
 
+### Hook context protocol
+
+`harness/protocol.go` records, per agent and event, how a command hook hands context back to the model, and `harness.HookStdout(agent, event, text)` renders it. The runner's mock prompt hook prints that payload and the "prompt hook context reached the model" check verifies it; belt's `plugin hook` prints its suggestions through the same function, so the two cannot drift.
+
+| Channel | Agents |
+|---------|--------|
+| `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` | claude, codex, droid, gemini, grok, qwen |
+| `{"additionalContext":…}` | copilot |
+| `{"additional_context":…}` | cursor (TUI; headless never fires the prompt hook) |
+| `{"context":…}` | hermes |
+| plain stdout | kimi, kiro |
+| in-plugin (TS) | kilo, omp, opencode, pi |
+| none | goose (hooks are observation-only), windsurf (exit code only) |
+
+`harness.SkipFor(mode)` gives a typed reason (`ide-only`, `no-such-mode`) when a harness cannot be run; `--harness all` reports those in the summary instead of failing.
+
 ### Control modes
 
 | Mode | Transport | What it tests |
