@@ -18,6 +18,24 @@ func (r *Runner) runChecks(phase string) {
 	r.checkStreamingFormat(phase, entries)
 	r.checkModelSelection(phase, entries)
 	r.checkInstructions(phase, entries)
+	r.checkHookInjection(phase, entries)
+}
+
+// checkHookInjection verifies the codename the prompt hook emitted reached
+// the model, i.e. the agent turns hook stdout into context. Agents without
+// a context channel on that event skip rather than fail.
+func (r *Runner) checkHookInjection(phase string, entries []server.LogEntry) {
+	if r.injectCode == "" || r.hookSource != HooksMock {
+		return
+	}
+	fmt.Printf("[check] hook injection (%s)\n", phase)
+	for _, e := range entries {
+		if strings.Contains(string(e.Body), r.injectCode) {
+			r.pass(fmt.Sprintf("%s: prompt hook context reached the model", phase))
+			return
+		}
+	}
+	r.skip(fmt.Sprintf("%s: prompt hook context not seen in any request", phase))
 }
 
 // checkInstructions verifies that the codename from each instruction file

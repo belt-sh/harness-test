@@ -405,7 +405,14 @@ func (r *Runner) writeHooks() {
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 			if e.Tag == TagPrompt {
-				cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+				if r.harness.HookWrapper != "" {
+					// Cursor: hook stdout must be JSON; additional_context is
+					// accepted on beforeSubmitPrompt (undocumented, see the
+					// HOOK_STEPS_SUPPORTING_ADDITIONAL_CONTEXT table in the CLI).
+					cmd += fmt.Sprintf(` && printf '{\"additional_context\": \"The project codename is %s.\"}'`, r.injectCode)
+				} else {
+					cmd += fmt.Sprintf(" && echo 'The project codename is %s.'", r.injectCode)
+				}
 			}
 			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, cmd))
 		}
