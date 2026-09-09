@@ -65,6 +65,10 @@ func TestKiroAgentConfigFreshInstallRemovedOnUninstall(t *testing.T) {
 	if res := Install("kiro", ScopeUser); res.Error != nil {
 		t.Fatal(res.Error)
 	}
+	data, _ := os.ReadFile(filepath.Join(home, ".kiro", "agents", "kiro_default.json"))
+	if !strings.Contains(string(data), `"tools":["*"]`) || !strings.Contains(string(data), `"includeMcpJson":true`) {
+		t.Errorf("scaffold must keep built-in tools and mcp.json:\n%s", data)
+	}
 	Uninstall("kiro", ScopeUser)
 	if _, err := os.Stat(filepath.Join(home, ".kiro", "agents", "kiro_default.json")); !os.IsNotExist(err) {
 		t.Error("belt-created kiro_default.json should be removed on uninstall")

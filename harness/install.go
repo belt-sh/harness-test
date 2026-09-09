@@ -208,7 +208,7 @@ func removeMergedHooks(path string, format HookFormat) error {
 			delete(obj, "hooks")
 		}
 		// Only belt's own scaffold left: remove the file so the built-in default agent returns.
-		if len(obj) <= 2 && obj["name"] == kiroDefaultAgent && obj["description"] == kiroAgentDescription {
+		if obj["description"] == kiroAgentDescription && isKiroScaffold(obj) {
 			return os.Remove(path)
 		}
 		out, _ := json.MarshalIndent(obj, "", "  ")
@@ -222,6 +222,18 @@ const (
 	kiroDefaultAgent     = "kiro_default"
 	kiroAgentDescription = "Default agent with belt hooks"
 )
+
+// isKiroScaffold reports whether obj holds nothing beyond what generateJSONKiro writes.
+func isKiroScaffold(obj map[string]any) bool {
+	for k := range obj {
+		switch k {
+		case "name", "description", "tools", "includeMcpJson":
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // withoutBeltHooks drops entries whose command is a belt hook from a kiro hook list.
 func withoutBeltHooks(list any) []any {
@@ -373,7 +385,11 @@ func generateJSONKiro(h Harness) string {
 	add(evts.Stop, "stop")
 	add(evts.PreCompact, "pre-compact")
 
-	return fmt.Sprintf(`{"name":"%s","description":"%s","hooks":{%s}}`, kiroDefaultAgent, kiroAgentDescription, strings.Join(hooks, ","))
+	// Overriding kiro_default replaces the built-in agent wholesale: a config
+	// without "tools" has no tools at all (verified: the request carries no
+	// toolSpecification). tools ["*"] + includeMcpJson keep the built-in
+	// behaviour; steering, skills and AGENTS.md are inherited regardless.
+	return fmt.Sprintf(`{"name":"%s","description":"%s","tools":["*"],"includeMcpJson":true,"hooks":{%s}}`, kiroDefaultAgent, kiroAgentDescription, strings.Join(hooks, ","))
 }
 
 func generateJSONNested(name string, h Harness) string {

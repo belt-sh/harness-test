@@ -466,7 +466,7 @@ func (r *Runner) writeHooks() {
 			}
 			hooks = append(hooks, fmt.Sprintf(`"%s":[{"command":"%s","timeout_ms":5000}]`, e.Event, jsonStr(cmd)))
 		}
-		content = fmt.Sprintf(`{"name":"kiro_default","description":"harness test agent","hooks":{%s}}`, strings.Join(hooks, ","))
+		content = fmt.Sprintf(`{"name":"kiro_default","description":"harness test agent","tools":["*"],"hooks":{%s}}`, strings.Join(hooks, ","))
 
 	case harness.JSONCopilot:
 		filename = "belt.json"

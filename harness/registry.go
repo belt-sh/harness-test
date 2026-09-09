@@ -263,6 +263,8 @@ var All = map[string]Harness{
 		APIKeyEnvVar: "KIRO_API_KEY",
 		DefaultModel: "kiro-default",
 		NeedsGitRepo: true,
+		ToolCallName: "read",
+		ToolCallArgs: `{"operations":[{"mode":"Line","path":"README.md"}]}`,
 		// kiro-cli runs hooks from the agent config, not from .kiro/hooks/*.json
 		// (those are Kiro IDE hook documents; the CLI never fires them — verified
 		// 2026-09 on kiro-cli 2.21 with the documented PromptSubmit/AgentStop

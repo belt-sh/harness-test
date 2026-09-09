@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -197,9 +198,23 @@ func New() *MockServer {
 		case "AmazonCodeWhispererStreamingService.GenerateAssistantResponse":
 			body, _ := io.ReadAll(r.Body)
 			s.record(r, body, "kiro-default")
-			text := s.getResponse()
 			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 			w.WriteHeader(200)
+			// Tool call round-trip: toolUseEvent carries the input as a JSON
+			// string (streamed in fragments; one fragment with stop=true is
+			// enough). kiro replies with userInputMessageContext.toolResults.
+			if s.shouldToolCall(strings.Contains(string(body), `"toolSpecification"`), r.URL.Path) {
+				name, args := s.getToolCall()
+				writeEventStreamMessage(w, "toolUseEvent",
+					[]byte(mustJSON(map[string]any{"toolUseId": "mock-tool-1", "name": name, "input": args, "stop": true})))
+				writeEventStreamMessage(w, "messageMetadataEvent",
+					[]byte(mustJSON(map[string]any{"conversationId": "mock-conv-1"})))
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				return
+			}
+			text := s.getResponse()
 			writeEventStreamMessage(w, "assistantResponseEvent",
 				[]byte(mustJSON(map[string]any{"content": text})))
 			writeEventStreamMessage(w, "messageMetadataEvent",
@@ -484,6 +499,11 @@ func (s *MockServer) parseRequest(r *http.Request) (llmRequest, []byte) {
 func (s *MockServer) record(r *http.Request, body []byte, model string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// HARNESS_DUMP=1 prints every recorded request body (for protocol work).
+	if os.Getenv("HARNESS_DUMP") != "" {
+		fmt.Printf("[dump] %s %s (%d bytes)\n%s\n", r.Method, r.URL.Path, len(body), body)
+	}
 
 	headers := make(map[string]string)
 	for k, v := range r.Header {
