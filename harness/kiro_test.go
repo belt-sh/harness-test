@@ -74,3 +74,21 @@ func TestKiroAgentConfigFreshInstallRemovedOnUninstall(t *testing.T) {
 		t.Error("belt-created kiro_default.json should be removed on uninstall")
 	}
 }
+
+func TestKiroActiveAgent(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	if got := KiroActiveAgent(home, cwd); got != "" {
+		t.Errorf("no settings: %q", got)
+	}
+	os.MkdirAll(filepath.Join(home, ".kiro"), 0755)
+	os.WriteFile(filepath.Join(home, ".kiro", "settings.json"), []byte(`{"chat.defaultAgent":"mine"}`), 0644)
+	if got := KiroActiveAgent(home, cwd); got != "mine" {
+		t.Errorf("global: %q", got)
+	}
+	os.MkdirAll(filepath.Join(cwd, ".kiro", "settings"), 0755)
+	os.WriteFile(filepath.Join(cwd, ".kiro", "settings", "cli.json"), []byte(`{"chat.defaultAgent":"ws"}`), 0644)
+	if got := KiroActiveAgent(home, cwd); got != "ws" {
+		t.Errorf("workspace override: %q", got)
+	}
+}
