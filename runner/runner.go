@@ -945,6 +945,14 @@ func (r *Runner) runInteractive() {
 func (r *Runner) writeACPConfig() {
 	if r.harness.ACPNeedsTempHome {
 		tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
+		// The user-scope artifacts written in earlier phases (hooks or belt
+		// plugin, skills, instruction file) must follow HOME, or the ACP run
+		// tests an empty home.
+		for _, rel := range []string{r.harness.HookConfigDir, r.harness.SkillsDir, r.harness.InstructionFile} {
+			if rel != "" {
+				copyTree(filepath.Join(r.home, rel), filepath.Join(tmpHome, rel))
+			}
+		}
 		os.Setenv("HOME", tmpHome)
 		r.home = tmpHome
 	}
@@ -1238,4 +1246,24 @@ func run(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd.Run()
+}
+
+// copyTree copies a file or directory tree; missing sources are ignored.
+func copyTree(src, dst string) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return
+	}
+	if !info.IsDir() {
+		os.MkdirAll(filepath.Dir(dst), 0755)
+		if data, err := os.ReadFile(src); err == nil {
+			os.WriteFile(dst, data, info.Mode())
+		}
+		return
+	}
+	entries, _ := os.ReadDir(src)
+	os.MkdirAll(dst, 0755)
+	for _, e := range entries {
+		copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()))
+	}
 }
