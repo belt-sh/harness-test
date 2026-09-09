@@ -10,6 +10,22 @@ type llmRequest struct {
 
 func (r llmRequest) hasTools() bool { return len(r.Tools) > 0 || len(r.Functions) > 0 }
 
+// singleFunction returns the function name when the request offers exactly one tool.
+func (r llmRequest) singleFunction() string {
+	if len(r.Tools) != 1 {
+		return ""
+	}
+	t, _ := r.Tools[0].(map[string]any)
+	if n, _ := t["name"].(string); n != "" {
+		return n
+	}
+	if f, _ := t["function"].(map[string]any); f != nil {
+		n, _ := f["name"].(string)
+		return n
+	}
+	return ""
+}
+
 func (r llmRequest) modelOrDefault() string {
 	if r.Model != "" {
 		return r.Model
@@ -111,11 +127,19 @@ type ResponsePart struct {
 // Shared
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CompletionTokens int `json:"completion_tokens,omitempty"`
-	InputTokens      int `json:"input_tokens,omitempty"`
-	OutputTokens     int `json:"output_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int           `json:"prompt_tokens,omitempty"`
+	CompletionTokens    int           `json:"completion_tokens,omitempty"`
+	InputTokens         int           `json:"input_tokens,omitempty"`
+	OutputTokens        int           `json:"output_tokens,omitempty"`
+	TotalTokens         int           `json:"total_tokens"`
+	InputTokensDetails  *TokenDetails `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails *TokenDetails `json:"output_tokens_details,omitempty"`
+}
+
+// TokenDetails is the Responses API usage breakdown (required by strict clients).
+type TokenDetails struct {
+	CachedTokens    int `json:"cached_tokens"`
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 type ModelEntry struct {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -9,6 +10,10 @@ func newResponse(id, status string, output []ResponseItem, usage *Usage) Respons
 	ts := time.Now().Unix()
 	if output == nil {
 		output = []ResponseItem{} // clients (grok) reject "output": null
+	}
+	if usage != nil && usage.InputTokensDetails == nil {
+		usage.InputTokensDetails = &TokenDetails{}
+		usage.OutputTokensDetails = &TokenDetails{}
 	}
 	return ResponseObject{
 		ID: id, Object: "response", Ts: ts, TsAlt: ts, Model: "mock-model",
@@ -19,12 +24,25 @@ func newResponse(id, status string, output []ResponseItem, usage *Usage) Respons
 func (s *MockServer) handleResponses(w http.ResponseWriter, r *http.Request) {
 	req, _ := s.parseRequest(r)
 
+	// Side calls that ask for one specific function (grok's session_title)
+	// get that function call, the way the real backend answers them.
+	if name := req.singleFunction(); name != "" && name != s.currentToolName() {
+		s.responsesFunctionCall(w, name, `{"`+name+`":"Mock value"}`)
+		return
+	}
+
 	if s.shouldToolCall(req.hasTools(), r.URL.Path) {
-		s.responsesToolCall(w)
+		name, args := s.getToolCall()
+		s.responsesFunctionCall(w, name, args)
 		return
 	}
 
 	s.responsesText(w, s.getResponse())
+}
+
+func (s *MockServer) currentToolName() string {
+	name, _ := s.getToolCall()
+	return name
 }
 
 func (s *MockServer) responsesText(w http.ResponseWriter, text string) {
@@ -41,19 +59,19 @@ func (s *MockServer) responsesText(w http.ResponseWriter, text string) {
 			"output_index": 0, "item": emptyMsg,
 		}),
 		typed("response.content_part.added", map[string]any{
-			"output_index": 0, "content_index": 0, "part": emptyPart,
+			"item_id": "msg_mock_1", "output_index": 0, "content_index": 0, "part": emptyPart,
 		}),
 		typed("response.output_text.delta", map[string]any{
-			"output_index": 0, "content_index": 0, "delta": text,
+			"item_id": "msg_mock_1", "output_index": 0, "content_index": 0, "delta": text,
 		}),
 		typed("response.output_text.done", map[string]any{
-			"output_index": 0, "content_index": 0, "text": text,
+			"item_id": "msg_mock_1", "output_index": 0, "content_index": 0, "text": text,
 		}),
 		typed("response.content_part.done", map[string]any{
-			"output_index": 0, "content_index": 0, "part": part,
+			"item_id": "msg_mock_1", "output_index": 0, "content_index": 0, "part": part,
 		}),
 		typed("response.output_item.done", map[string]any{
-			"output_index": 0, "item": msg,
+			"item_id": "msg_mock_1", "output_index": 0, "item": msg,
 		}),
 		typed("response.completed", map[string]any{
 			"response": newResponse("mock-resp-1", "completed", []ResponseItem{msg},
@@ -63,8 +81,7 @@ func (s *MockServer) responsesText(w http.ResponseWriter, text string) {
 	streamSSEEvents(w, events)
 }
 
-func (s *MockServer) responsesToolCall(w http.ResponseWriter) {
-	name, args := s.getToolCall()
+func (s *MockServer) responsesFunctionCall(w http.ResponseWriter, name, args string) {
 	fc := ResponseItem{
 		Type: "function_call", ID: "fc_mock_1", CallID: "call_mock_1",
 		Name: name, Status: "in_progress",

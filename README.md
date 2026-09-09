@@ -103,7 +103,7 @@ Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kir
 
 `--hooks belt` installs belt's actual hook commands through `harness.Install` and checks the events belt logs. `tests/fetch-belt.sh` downloads the released CLI from `dist.inference.sh` into `tests/belt` (`BELT_VERSION=vX.Y.Z` pins one); the Docker build copies it in. CI runs every harness in both mock and belt mode on push and nightly. Run all agents non-root (Claude Code refuses to skip permissions as root) and kiro separately with `--user root --intercept`.
 
-`Harness.KnownIssues` records agent defects the runner cannot work around, keyed by `<mode>:<check>`; a failing check with a known issue reports as a skip that carries the note. One today: grok `agent stdio` attaches the prompt hook's output on only some turns (`acp:prompt-context`).
+`Harness.KnownIssues` records agent defects the runner cannot work around, keyed by `<mode>:<check>`; a failing check with a known issue reports as a skip that carries the note. One today: grok attaches the prompt hook's output on only some turns, headless and `agent stdio` alike (`headless:prompt-context`, `acp:prompt-context`).
 
 `harness.SkipFor(mode)` gives a typed reason (`ide-only`, `no-such-mode`) when a harness cannot be run; `--harness all` reports those in the summary instead of failing.
 
