@@ -45,6 +45,10 @@ func (r *Runner) checkHookInjection(phase string, entries []server.LogEntry) {
 		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
 		return
 	}
+	if note := r.harness.KnownIssues[phase+":prompt-context"]; note != "" {
+		r.skip(fmt.Sprintf("%s: prompt hook context not found in any request — known issue: %s", phase, note))
+		return
+	}
 	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
 }
 

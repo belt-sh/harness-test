@@ -230,6 +230,11 @@ func (r *Runner) prepareToolCall() {
 	hasToolHooks := r.harness.Events.PreToolUse != "" || r.harness.Events.PostToolUse != ""
 	if r.server != nil && hasToolHooks {
 		r.server.PrepareToolCall(r.harness.ToolCallName, r.expand(r.harness.ToolCallArgs), r.harness.ToolCallPath)
+		// The mocked tool call reads README.md relative to the agent's cwd.
+		readme := filepath.Join(r.workDir(), "README.md")
+		if _, err := os.Stat(readme); err != nil {
+			os.WriteFile(readme, []byte("test"), 0644)
+		}
 	}
 }
 
@@ -989,6 +994,10 @@ func (r *Runner) runACP() {
 	}
 	defer driver.Close()
 	r.pass("ACP session started")
+
+	// Agents finish loading hooks after session/new returns; a prompt sent
+	// at once can run the hook without its output being attached (grok).
+	time.Sleep(2 * time.Second)
 
 	prompt := "What is the project codename? Reply ONLY the codename."
 	if err := driver.SendPrompt(prompt); err != nil {

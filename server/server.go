@@ -590,7 +590,10 @@ func beginSSE(w http.ResponseWriter) http.Flusher {
 
 func streamSSEEvents(w http.ResponseWriter, events []sseEvent) {
 	f := beginSSE(w)
-	for _, evt := range events {
+	for i, evt := range events {
+		if m, ok := evt.Data.(map[string]any); ok {
+			m["sequence_number"] = i // Responses API clients (grok) require it
+		}
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, mustJSON(evt.Data))
 		if f != nil {
 			f.Flush()

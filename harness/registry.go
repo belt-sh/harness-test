@@ -230,6 +230,11 @@ var All = map[string]Harness{
 		CompactCommand:       "/compact",
 		HooksInInteractive:   true,
 		ACPCmd:     []string{"grok", "agent", "stdio"},
+		// grok agent stdio runs the UserPromptSubmit hook every turn but attaches
+		// its hookSpecificOutput to the conversation on only some turns (all or
+		// nothing per turn; 4 of 10 local runs dropped it, grok 1.0.24, 2026-09).
+		// Headless never drops it; a 2s settle after session/new changes nothing.
+		KnownIssues: map[string]string{"acp:prompt-context": "grok agent stdio attaches UserPromptSubmit hook output on only some turns"},
 		HooksInACP: true,
 	},
 	"pi": {

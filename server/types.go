@@ -86,6 +86,7 @@ type ResponseObject struct {
 	Ts     int64          `json:"created"`
 	TsAlt  int64          `json:"created_at"`
 	Status string         `json:"status"`
+	Model  string         `json:"model"`
 	Output []ResponseItem `json:"output"`
 	Usage  *Usage         `json:"usage,omitempty"`
 }
@@ -102,8 +103,9 @@ type ResponseItem struct {
 }
 
 type ResponsePart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type        string `json:"type"`
+	Text        string `json:"text"`
+	Annotations []any  `json:"annotations"`
 }
 
 // Shared

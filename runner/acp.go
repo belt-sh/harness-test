@@ -287,6 +287,14 @@ func (d *ACPDriver) readLoop() {
 		// Server-initiated notification or request
 		if handler, ok := d.handlers[msg.Method]; ok {
 			handler(msg)
+			continue
+		}
+		if msg.ID != nil {
+			// Answer unknown requests at once; a silent drop leaves the agent
+			// waiting on its own timeout (grok's x.ai/hooks/run, for one).
+			p := string(msg.Params)
+			d.appendOutput("[acp] unhandled request " + msg.Method + " " + truncate(p, 300) + "\n")
+			d.respondError(*msg.ID, -32601, "method not found: "+msg.Method)
 		}
 	}
 }
@@ -310,6 +318,9 @@ func (d *ACPDriver) handleUpdate(msg rpcMessage) {
 		d.mu.Lock()
 		d.lastUpdate = time.Now()
 		d.mu.Unlock()
+		if os.Getenv("HARNESS_DEBUG") != "" {
+			d.appendOutput(fmt.Sprintf("[acp] update %s %s %s\n", notif.Update.Kind, notif.Update.Status, truncate(string(msg.Params), 160)))
+		}
 
 		d.updates <- notif.Update
 
@@ -351,9 +362,11 @@ func (d *ACPDriver) handleFsRead(msg rpcMessage) {
 	json.Unmarshal(msg.Params, &req)
 	content, err := os.ReadFile(req.Path)
 	if err != nil {
+		d.appendOutput("[acp] fs/read " + req.Path + ": " + err.Error() + "\n")
 		d.respondError(*msg.ID, -32600, err.Error())
 		return
 	}
+	d.appendOutput("[acp] fs/read " + req.Path + "\n")
 	d.respond(*msg.ID, map[string]any{"content": string(content)})
 }
 

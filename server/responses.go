@@ -7,8 +7,11 @@ import (
 
 func newResponse(id, status string, output []ResponseItem, usage *Usage) ResponseObject {
 	ts := time.Now().Unix()
+	if output == nil {
+		output = []ResponseItem{} // clients (grok) reject "output": null
+	}
 	return ResponseObject{
-		ID: id, Object: "response", Ts: ts, TsAlt: ts,
+		ID: id, Object: "response", Ts: ts, TsAlt: ts, Model: "mock-model",
 		Status: status, Output: output, Usage: usage,
 	}
 }
@@ -25,10 +28,10 @@ func (s *MockServer) handleResponses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MockServer) responsesText(w http.ResponseWriter, text string) {
-	part := ResponsePart{Type: "output_text", Text: text}
-	msg := ResponseItem{Type: "message", Role: "assistant", Content: []ResponsePart{part}}
-	emptyPart := ResponsePart{Type: "output_text"}
-	emptyMsg := ResponseItem{Type: "message", Role: "assistant", Content: []ResponsePart{emptyPart}}
+	part := ResponsePart{Type: "output_text", Text: text, Annotations: []any{}}
+	msg := ResponseItem{Type: "message", ID: "msg_mock_1", Status: "completed", Role: "assistant", Content: []ResponsePart{part}}
+	emptyPart := ResponsePart{Type: "output_text", Annotations: []any{}}
+	emptyMsg := ResponseItem{Type: "message", ID: "msg_mock_1", Status: "in_progress", Role: "assistant", Content: []ResponsePart{emptyPart}}
 
 	events := []sseEvent{
 		typed("response.created", map[string]any{

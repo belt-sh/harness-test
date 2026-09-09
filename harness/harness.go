@@ -98,6 +98,11 @@ type Harness struct {
 	HookTimeoutMs  bool   // true = timeout field is milliseconds (gemini), false = seconds
 	HookNoEnvelope bool   // true = hooks file is raw hooks object, no {"hooks":...} wrapper (droid)
 	HookFlatBare   bool   // JSONFlat entries carry only "command" (windsurf rejects nothing but documents nothing else)
+	// KnownIssues records agent defects the runner cannot work around, keyed
+	// by "<mode>:<check>" (e.g. "acp:prompt-context"). A failing check with a
+	// known issue is reported as a skip that carries the note, so the matrix
+	// stays green while the defect stays visible.
+	KnownIssues map[string]string
 	Events         Events
 
 	// Mock tool call configuration
