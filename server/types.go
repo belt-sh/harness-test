@@ -113,7 +113,7 @@ type ResponseItem struct {
 	CallID    string         `json:"call_id,omitempty"`
 	Role      string         `json:"role,omitempty"`
 	Name      string         `json:"name,omitempty"`
-	Arguments string         `json:"arguments,omitempty"`
+	Arguments *string        `json:"arguments,omitempty"` // function_call items carry it even while in progress
 	Status    string         `json:"status,omitempty"`
 	Content   []ResponsePart `json:"content,omitempty"`
 }

@@ -81,13 +81,14 @@ func (s *MockServer) responsesText(w http.ResponseWriter, text string) {
 }
 
 func (s *MockServer) responsesFunctionCall(w http.ResponseWriter, name, args string) {
+	empty := ""
 	fc := ResponseItem{
 		Type: "function_call", ID: "fc_mock_1", CallID: "call_mock_1",
-		Name: name, Status: "in_progress",
+		Name: name, Arguments: &empty, Status: "in_progress",
 	}
 	fcDone := ResponseItem{
 		Type: "function_call", ID: "fc_mock_1", CallID: "call_mock_1",
-		Name: name, Arguments: args, Status: "completed",
+		Name: name, Arguments: &args, Status: "completed",
 	}
 
 	events := []sseEvent{
