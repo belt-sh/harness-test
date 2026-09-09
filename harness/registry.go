@@ -230,17 +230,6 @@ var All = map[string]Harness{
 		CompactCommand:       "/compact",
 		HooksInInteractive:   true,
 		ACPCmd:     []string{"grok", "agent", "stdio"},
-		// grok runs the UserPromptSubmit hook every turn but attaches its
-		// hookSpecificOutput to the conversation on only some turns (all or
-		// nothing per turn). Measured on grok 1.0.24, 2026-09: headless 9 of 30
-		// runs dropped it, agent stdio 8 of 16. Independent of the mock's
-		// Responses-API strictness, the session_title side call, workspace
-		// size, README presence, and a 2s settle after session/new. The hook
-		// itself always runs (log line every time).
-		KnownIssues: map[string]string{
-			"headless:prompt-context": "grok attaches UserPromptSubmit hook output on only some turns",
-			"acp:prompt-context":      "grok agent stdio attaches UserPromptSubmit hook output on only some turns",
-		},
 		HooksInACP: true,
 	},
 	"pi": {
@@ -502,6 +491,7 @@ var All = map[string]Harness{
 		ToolCallName:    "read_file",
 		ToolCallArgs:    `{"file_path":"{{.RepoDir}}/README.md"}`,
 		HookFormat:    JSONNested,
+		HookTimeoutMs: true, // gemini-cli fork: "timeout" is milliseconds
 		HookConfigDir: ".qwen",
 		HookFileName:  "settings.json",
 		HookWrapper:   `{"permissions":{"allow":["Bash(*)","Read(*)","Write(*)"]},"hooks":%s}`,
@@ -510,8 +500,13 @@ var All = map[string]Harness{
 		HeadlessCmd:         []string{"qwen", "-p"},
 		HeadlessModelArgs:   []string{"--model", "{{.Model}}", "--yolo", "--auth-type", "openai"},
 		HooksInHeadless:     true,
+		// -i/--prompt-interactive runs the prompt and stays in the TUI; a bare
+		// positional prompt would run one-shot. Typing it instead (SendLine)
+		// made qwen fire UserPromptSubmit after the turn had already started,
+		// so the hook's context never reached the model.
 		InteractiveCmd:          []string{"qwen"},
-		InteractiveArgs:         []string{"--model", "{{.Model}}", "--yolo", "--auth-type", "openai"},
+		InteractiveArgs:         []string{"--model", "{{.Model}}", "--yolo", "--auth-type", "openai", "-i", "What is the project codename? Reply ONLY the codename."},
+		InteractivePromptInArgs: true,
 		SlowInput:               true,
 		PostHeadlessCmd:         [][]string{{"-p", "--continue", "--yolo", "--auth-type", "openai", "/compress"}},
 		ExitCommand:             "/exit",

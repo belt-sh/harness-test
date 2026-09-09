@@ -89,15 +89,19 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 
 | Channel | Agents |
 |---------|--------|
-| `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` | claude, codex, droid, gemini, grok, qwen |
+| `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` | claude, codex, droid, gemini, qwen |
 | `{"additionalContext":…}` | copilot |
 | `{"additional_context":…}` | cursor (TUI; headless never fires the prompt hook) |
 | `{"context":…}` | hermes |
 | plain stdout | kimi, kiro (TUI only; `--no-interactive` and ACP never run hooks) |
 | in-plugin (TS) | kilo, omp, opencode, pi |
-| none | goose (hooks are observation-only), windsurf (exit code only) |
+| none | goose (hooks are observation-only), grok (prompt and session-start stdout is read only for a block decision; its tool and Stop hooks can add context), windsurf (exit code only) |
 
 Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into `~/.kiro/agents/kiro_default.json`, which overrides the built-in default agent so plain `kiro-cli chat` picks it up. The override replaces the built-in agent wholesale, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; an existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries.
+
+### Codenames
+
+Each check writes a distinct codename into the model's context and looks for it in the recorded requests: `HOOK-<AGENT>-<ts>` from the prompt hook, `INSTR-USER-<AGENT>-<ts>` and `INSTR-PROJ-<AGENT>-<ts>` from the instruction files. The prefixes must stay distinct — a bare `<AGENT>-<ts>` hook code is a substring of the instruction codes, so the injection check passed whenever the instruction file loaded and hid three real failures (2026-09).
 
 ### Pushing
 
@@ -107,7 +111,7 @@ Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kir
 
 `--hooks belt` installs belt's actual hook commands through `harness.Install` and checks the events belt logs. `tests/fetch-belt.sh` downloads the released CLI from `dist.inference.sh` into `tests/belt` (`BELT_VERSION=vX.Y.Z` pins one); the Docker build copies it in. CI runs every harness in both mock and belt mode on push and nightly. Run all agents non-root (Claude Code refuses to skip permissions as root) and kiro separately with `--user root --intercept`.
 
-`Harness.KnownIssues` records agent defects the runner cannot work around, keyed by `<mode>:<check>`; a failing check with a known issue reports as a skip that carries the note. One today: grok attaches the prompt hook's output on only some turns, headless and `agent stdio` alike (`headless:prompt-context`, `acp:prompt-context`).
+`Harness.KnownIssues` records agent defects the runner cannot work around, keyed by `<mode>:<check>`; a failing check with a known issue reports as a skip that carries the note. None recorded today.
 
 `harness.SkipFor(mode)` gives a typed reason (`ide-only`, `no-such-mode`) when a harness cannot be run; `--harness all` reports those in the summary instead of failing.
 

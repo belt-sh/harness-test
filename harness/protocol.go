@@ -60,7 +60,11 @@ var hookContexts = map[string]HookContext{
 	"droid":    {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
 	"gemini":   {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
 	"goose":    {SessionStart: ContextNone, PromptSubmit: ContextNone},
-	"grok":     {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
+	// grok reads UserPromptSubmit stdout only for a block decision; its docs:
+	// "an allowing hook's stdout / additionalContext is discarded rather than
+	// added as context", and SessionStart stdout "is ignored". Only
+	// PreToolUse, PostToolUse and Stop can add additionalContext.
+	"grok":     {SessionStart: ContextNone, PromptSubmit: ContextNone},
 	"hermes":   {SessionStart: ContextNone, PromptSubmit: ContextKey},
 	"kilo":     {SessionStart: ContextPlugin, PromptSubmit: ContextPlugin},
 	"kimi":     {SessionStart: ContextPlainText, PromptSubmit: ContextPlainText},

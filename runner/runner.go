@@ -52,25 +52,25 @@ const (
 )
 
 type Runner struct {
-	harness      harness.Harness
-	server       *server.MockServer
-	baseURL      string
-	home         string
-	repoDir      string
-	injectCode   string
+	harness          harness.Harness
+	server           *server.MockServer
+	baseURL          string
+	home             string
+	repoDir          string
+	injectCode       string
 	instructionCodes map[string]string // instruction file → codename written into it
-	cleanups     []func() // undo steps for files written into a preserved HOME
-	tokenHash16  string
-	sessionID    string
-	startTime    time.Time
-	savedEnv     []string
-	mode         Mode
-	hookSource   HookSource
-	intercept    bool
-	failed       bool
-	result       Result
-	lastOutput   string
-	proxyURL     string // HTTPS_PROXY value, set only during agent execution
+	cleanups         []func()          // undo steps for files written into a preserved HOME
+	tokenHash16      string
+	sessionID        string
+	startTime        time.Time
+	savedEnv         []string
+	mode             Mode
+	hookSource       HookSource
+	intercept        bool
+	failed           bool
+	result           Result
+	lastOutput       string
+	proxyURL         string // HTTPS_PROXY value, set only during agent execution
 }
 
 const hookLogPath = "/tmp/belt-hook-events.log"
@@ -222,6 +222,7 @@ func (r *Runner) Run() Result {
 
 func (r *Runner) resetPhase() {
 	os.Remove(hookLogPath)
+	os.Remove(hookLogPath + ".stdin")
 	r.server.ClearLog()
 	r.prepareToolCall()
 }
@@ -427,7 +428,10 @@ func (r *Runner) writeHooks() {
 
 	logPath := hookLogPath
 	os.Remove(logPath)
-	r.injectCode = fmt.Sprintf("%s-%d", strings.ToUpper(r.harness.Name), time.Now().UnixMilli())
+	// Distinct prefix: instruction-file codes are INSTR-<scope>-<NAME>-<ts> and
+	// share the millisecond, so a bare <NAME>-<ts> matched them and the
+	// injection check passed whenever the instruction file loaded.
+	r.injectCode = fmt.Sprintf("HOOK-%s-%d", strings.ToUpper(r.harness.Name), time.Now().UnixMilli())
 
 	var content string
 	var filename string
@@ -451,7 +455,11 @@ func (r *Runner) writeHooks() {
 			if e.Tag == TagPrompt {
 				cmd += r.promptEcho()
 			}
-			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":5}]`, e.Event, jsonStr(cmd)))
+			timeout := 5
+			if r.harness.HookTimeoutMs {
+				timeout = 5000
+			}
+			parts = append(parts, fmt.Sprintf(`"%s":[{"type":"command","command":"%s","timeout":%d}]`, e.Event, jsonStr(cmd), timeout))
 		}
 		hooks := "{" + strings.Join(parts, ",") + "}"
 		if r.harness.HookWrapper != "" {
@@ -596,6 +604,7 @@ func (r *Runner) writeBeltHooks() {
 	os.Setenv("BELT_HOOK_DEBUG_LOG", hookLogPath)
 	os.Setenv("BELT_NO_HOOKS", "0")
 	os.Remove(hookLogPath)
+	os.Remove(hookLogPath + ".stdin")
 	os.MkdirAll(filepath.Join(r.home, ".belt"), 0755)
 	// Logged-out belt opens device auth from the session-start hook and polls
 	// for 45s, which starves slow TUIs. A fresh cooldown marker makes the hook
@@ -1044,6 +1053,7 @@ func (r *Runner) runSDK() {
 func (r *Runner) checkHookEvents(phase string) {
 	fmt.Printf("[phase] hook events (%s)\n", phase)
 
+	r.dumpHookLogs(phase)
 	if r.hookSource == HooksBelt {
 		r.checkBeltHookEvents(phase)
 		return
@@ -1080,6 +1090,17 @@ var beltEventNames = map[string]string{
 	TagPostTool:     "post-tool-use",
 	TagStop:         "stop",
 	TagPreCompact:   "pre-compact",
+}
+
+func (r *Runner) dumpHookLogs(phase string) {
+	if os.Getenv("HARNESS_DEBUG") == "" {
+		return
+	}
+	for _, p := range []string{hookLogPath, hookLogPath + ".stdin"} {
+		if data, err := os.ReadFile(p); err == nil {
+			fmt.Printf("    [debug] %s %s (%d bytes):\n%s\n", phase, p, len(data), truncate(string(data), 3000))
+		}
+	}
 }
 
 func (r *Runner) checkBeltHookEvents(phase string) {
@@ -1155,11 +1176,21 @@ func (r *Runner) buildNestedHooksJSON(logPath string) string {
 	entries := r.eventEntries()
 	parts := []string{}
 	for _, e := range entries {
-		cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
+		// Drain the JSON payload the agent pipes to the hook, as a real hook
+		// (belt reads stdin) would: a hook that exits with stdin unread gives
+		// the agent a broken pipe, and gemini's TUI then discards its output.
+		cmd := fmt.Sprintf("[ -t 0 ] || cat >> %s.stdin; echo %s >> %s", logPath, e.Tag, logPath)
 		if e.Tag == TagPrompt {
 			cmd += r.promptEcho()
 		}
-		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":5}`, jsonStr(cmd))
+		// Same unit belt's generated config uses: seconds, or milliseconds
+		// where the registry says so (gemini, qwen read "timeout" as ms and
+		// killed a 5-"second" hook after 5ms).
+		timeout := 5
+		if r.harness.HookTimeoutMs {
+			timeout = 5000
+		}
+		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":%d}`, jsonStr(cmd), timeout)
 		if e.Tag == TagPreTool || e.Tag == TagPostTool {
 			parts = append(parts, fmt.Sprintf(`"%s":[{"matcher":"%s","hooks":[%s]}]`, e.Event, r.toolMatcher(), hook))
 		} else {
