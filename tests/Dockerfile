@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /harness-test /usr/local/bin/harness-test
 
-# belt CLI (optional; place at tests/belt before building for --hooks belt mode)
+# belt CLI for --hooks belt mode: tests/fetch-belt.sh downloads the released binary
 COPY tests/belt /usr/local/bin/belt
 
 # Non-root user (Claude/Codex refuse --dangerously-skip-permissions as root)

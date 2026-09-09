@@ -48,31 +48,35 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: |
-          echo '#!/bin/sh' > tests/belt
-          chmod +x tests/belt
+          tests/fetch-belt.sh
           docker build -f tests/Dockerfile -t harness-test .
 
       - name: Test ${{ matrix.harness }}
         id: test
         run: |
           results=""
+          extra=""; user=""
+          if [ "${{ matrix.harness }}" = "kiro" ]; then extra="--intercept"; user="--user root"; fi
           for mode in $(echo "${{ matrix.modes }}" | tr ',' ' '); do
-            echo "=== ${{ matrix.harness }} ($mode) ==="
-            extra=""; user=""
-            if [ "${{ matrix.harness }}" = "kiro" ]; then extra="--intercept"; user="--user root"; fi
-            if docker run --rm $user harness-test --harness ${{ matrix.harness }} --mode $mode $extra 2>&1 | tee /tmp/out.log; then
-              results="${results}${mode}:pass,"
-            else
-              results="${results}${mode}:fail,"
-            fi
-            # Extract version from output
-            ver=$(grep -oP '→ version: \K.*' /tmp/out.log | head -1)
-            if [ -n "$ver" ]; then
-              echo "version=$ver" >> $GITHUB_OUTPUT
-            fi
+            # Each mode runs twice: the runner's mock hooks, then the released
+            # belt CLI's real hook commands (--hooks belt).
+            for hooks in mock belt; do
+              echo "=== ${{ matrix.harness }} ($mode, $hooks hooks) ==="
+              hookflag=""; [ "$hooks" = belt ] && hookflag="--hooks belt"
+              if docker run --rm $user harness-test --harness ${{ matrix.harness }} --mode $mode $hookflag $extra 2>&1 | tee /tmp/out.log; then
+                results="${results}${mode}/${hooks}:pass,"
+              else
+                results="${results}${mode}/${hooks}:fail,"
+              fi
+              # Extract version from output
+              ver=$(grep -oP '→ version: \K.*' /tmp/out.log | head -1)
+              if [ -n "$ver" ]; then
+                echo "version=$ver" >> $GITHUB_OUTPUT
+              fi
+            done
           done
           echo "results=$results" >> $GITHUB_OUTPUT
-        timeout-minutes: 10
+        timeout-minutes: 20
 
       - name: Report
         if: always()
