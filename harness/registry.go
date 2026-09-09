@@ -311,7 +311,11 @@ var All = map[string]Harness{
 		HeadlessCmd:         []string{"omp", "-p"},
 		HeadlessModelArgs:   []string{"--model", "{{.Model}}", "--approval-mode", "yolo"},
 		HooksInHeadless:     true,
-		InteractiveCmd:      []string{"omp"},
+		// omp >= 18.1.15 drops a line typed right after the welcome screen; the
+		// documented "omp <message>" form starts the TUI with the prompt queued.
+		InteractiveCmd:          []string{"omp"},
+		InteractiveArgs:         []string{"--model", "{{.Model}}", "What is the project codename? Reply ONLY the codename."},
+		InteractivePromptInArgs: true,
 		ExitCommand:         "/exit",
 		HooksInInteractive:  true,
 		ACPCmd:              []string{"omp", "acp"},
@@ -412,6 +416,9 @@ var All = map[string]Harness{
 		ConfigFiles: []ConfigFile{
 			{Path: ".config/goose/custom_providers/mock.json", Content: `{"name":"mock","engine":"openai","display_name":"Mock","api_key_env":"OPENAI_API_KEY","base_url":"{{.BaseURL}}/v1/chat/completions","models":[{"name":"gpt-4o-mini","context_limit":128000}],"supports_streaming":true,"requires_auth":true}`},
 			{Path: ".agents/plugins/belt-test/plugin.json", Content: `{"name":"belt-test","version":"1.0.0","description":"Belt harness test hooks"}`},
+			// goose >= 1.50 opens a provider wizard (OpenRouter OAuth) in the TUI
+			// unless the provider is set in config.yaml; env vars alone only cover `goose run`.
+			{Path: ".config/goose/config.yaml", Content: "GOOSE_PROVIDER: mock\nGOOSE_MODEL: {{.Model}}\nGOOSE_MODE: auto\n"},
 		},
 		HookFormat:    JSONNested,
 		HookConfigDir: ".agents/plugins/belt-test/hooks",

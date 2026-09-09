@@ -592,6 +592,11 @@ func (r *Runner) writeBeltHooks() {
 	os.Setenv("BELT_NO_HOOKS", "0")
 	os.Remove(hookLogPath)
 	os.MkdirAll(filepath.Join(r.home, ".belt"), 0755)
+	// Logged-out belt opens device auth from the session-start hook and polls
+	// for 45s, which starves slow TUIs. A fresh cooldown marker makes the hook
+	// print the login hint and return at once.
+	os.MkdirAll(filepath.Join(r.home, ".inferencesh"), 0755)
+	os.WriteFile(filepath.Join(r.home, ".inferencesh", "hook-auth-cooldown"), []byte(time.Now().Format(time.RFC3339)), 0644)
 
 	// Harnesses with HookWrapper need the non-hook config (permissions, base URL, auth)
 	// pre-seeded so Install()'s merge adds hooks alongside them.
@@ -923,10 +928,15 @@ func (r *Runner) runInteractive() {
 	r.lastOutput = session.Output()
 	if os.Getenv("HARNESS_DEBUG") != "" {
 		stripped := stripANSI(r.lastOutput)
-		if len(stripped) > 500 {
-			stripped = stripped[len(stripped)-500:]
+		head := stripped
+		if len(head) > 1500 {
+			head = head[:1500]
 		}
-		fmt.Printf("    [debug] PTY output (%d bytes):\n%s\n", len(r.lastOutput), stripped)
+		tail := stripped
+		if len(tail) > 500 {
+			tail = tail[len(tail)-500:]
+		}
+		fmt.Printf("    [debug] PTY output (%d bytes) head:\n%s\n    [debug] tail:\n%s\n", len(r.lastOutput), head, tail)
 	}
 
 	r.pass("interactive session completed")
