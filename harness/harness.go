@@ -7,7 +7,7 @@ const (
 	JSONNested  HookFormat = iota // Claude, Codex, Grok, Droid, Goose, Gemini, Qwen
 	JSONFlat                      // Cursor, Windsurf: {"hooks":{event:[{command}]}} with optional wrapper
 	JSONCopilot                   // Copilot v1 format (version field, bash field)
-	JSONKiro                      // Kiro v1 format (version + hooks array with trigger/action)
+	JSONKiro                      // Kiro CLI agent config: "hooks" object inside .kiro/agents/kiro_default.json
 	TOML                          // Kimi
 	YAML                          // Hermes
 	TSExtension                   // Pi

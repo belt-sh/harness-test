@@ -43,7 +43,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | OpenAI |
 | [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
-| [Kiro](https://kiro.dev) | — | ✅ | — | ✅ | — | JSONNested | OpenAI |
+| [Kiro](https://kiro.dev) | 2.21.x | ✅ | — | ✅ | — | JSONKiro | OpenAI |
 | [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | OpenAI |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
@@ -93,9 +93,11 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 | `{"additionalContext":…}` | copilot |
 | `{"additional_context":…}` | cursor (TUI; headless never fires the prompt hook) |
 | `{"context":…}` | hermes |
-| plain stdout | kimi, kiro |
+| plain stdout | kimi, kiro (TUI only; `--no-interactive` and ACP never run hooks) |
 | in-plugin (TS) | kilo, omp, opencode, pi |
 | none | goose (hooks are observation-only), windsurf (exit code only) |
+
+Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into `~/.kiro/agents/kiro_default.json`, which overrides the built-in default agent so plain `kiro-cli chat` picks it up; the user's prompt, tools, and own hooks are kept, and uninstall removes only belt's entries.
 
 `harness.SkipFor(mode)` gives a typed reason (`ide-only`, `no-such-mode`) when a harness cannot be run; `--harness all` reports those in the summary instead of failing.
 

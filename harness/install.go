@@ -84,9 +84,12 @@ func Install(name string, scope InstallScope) InstallResult {
 			err = writeFile(hooksPath, content)
 			result.Created = true
 		}
-	case JSONFlat, JSONCopilot, JSONKiro:
+	case JSONFlat, JSONCopilot:
 		err = writeFile(hooksPath, content)
 		result.Created = true
+	case JSONKiro:
+		result.Merged = true
+		err = mergeKiroAgentHooks(hooksPath, content)
 	case TOML:
 		result.Merged = true
 		err = appendTOMLHooks(hooksPath, content)
@@ -155,7 +158,7 @@ func Uninstall(name string, scope InstallScope) InstallResult {
 	}
 
 	result := InstallResult{Harness: name, Scope: scope, HooksPath: hooksPath}
-	if needsMerge(h) {
+	if needsMerge(h) || h.HookFormat == JSONKiro {
 		result.Merged = true
 		result.Error = removeMergedHooks(hooksPath, h.HookFormat)
 	} else {
@@ -187,9 +190,80 @@ func removeMergedHooks(path string, format HookFormat) error {
 		}
 		out, _ := json.MarshalIndent(obj, "", "  ")
 		return os.WriteFile(path, out, 0644)
+	case JSONKiro:
+		var obj map[string]any
+		if json.Unmarshal(data, &obj) != nil {
+			return nil
+		}
+		hooks, _ := obj["hooks"].(map[string]any)
+		for k, v := range hooks {
+			kept := withoutBeltHooks(v)
+			if len(kept) == 0 {
+				delete(hooks, k)
+			} else {
+				hooks[k] = kept
+			}
+		}
+		if len(hooks) == 0 {
+			delete(obj, "hooks")
+		}
+		// Only belt's own scaffold left: remove the file so the built-in default agent returns.
+		if len(obj) <= 2 && obj["name"] == kiroDefaultAgent && obj["description"] == kiroAgentDescription {
+			return os.Remove(path)
+		}
+		out, _ := json.MarshalIndent(obj, "", "  ")
+		return os.WriteFile(path, out, 0644)
 	default:
 		return os.Remove(path)
 	}
+}
+
+const (
+	kiroDefaultAgent     = "kiro_default"
+	kiroAgentDescription = "Default agent with belt hooks"
+)
+
+// withoutBeltHooks drops entries whose command is a belt hook from a kiro hook list.
+func withoutBeltHooks(list any) []any {
+	arr, _ := list.([]any)
+	var kept []any
+	for _, e := range arr {
+		m, _ := e.(map[string]any)
+		cmd, _ := m["command"].(string)
+		if strings.Contains(cmd, "belt plugin hook") {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
+// mergeKiroAgentHooks adds belt's hooks to a kiro agent config, keeping the
+// user's prompt, tools, and their own hooks; belt entries are replaced, not duplicated.
+func mergeKiroAgentHooks(path, newContent string) error {
+	os.MkdirAll(filepath.Dir(path), 0755)
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return writeFile(path, newContent)
+	}
+	var obj map[string]any
+	if json.Unmarshal(existing, &obj) != nil {
+		return writeFile(path, newContent)
+	}
+	var newObj map[string]any
+	json.Unmarshal([]byte(newContent), &newObj)
+	newHooks, _ := newObj["hooks"].(map[string]any)
+
+	hooks, _ := obj["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	for k, v := range newHooks {
+		hooks[k] = append(withoutBeltHooks(hooks[k]), v.([]any)...)
+	}
+	obj["hooks"] = hooks
+	out, _ := json.MarshalIndent(obj, "", "  ")
+	return os.WriteFile(path, out, 0644)
 }
 
 // HooksInstalled checks if belt hooks exist for an agent at the given scope.
@@ -289,8 +363,7 @@ func generateJSONKiro(h Harness) string {
 		if event == "" {
 			return
 		}
-		hooks = append(hooks, fmt.Sprintf(`{"name":"belt-%s","trigger":"%s","action":{"type":"command","command":"%s"},"timeout":%d}`,
-			beltEvent, event, beltCmd(beltEvent), timeout))
+		hooks = append(hooks, fmt.Sprintf(`"%s":[{"command":"%s","timeout_ms":%d}]`, event, beltCmd(beltEvent), timeout))
 	}
 
 	add(evts.SessionStart, "session-start")
@@ -300,7 +373,7 @@ func generateJSONKiro(h Harness) string {
 	add(evts.Stop, "stop")
 	add(evts.PreCompact, "pre-compact")
 
-	return fmt.Sprintf(`{"version":"v1","hooks":[%s]}`, strings.Join(hooks, ","))
+	return fmt.Sprintf(`{"name":"%s","description":"%s","hooks":{%s}}`, kiroDefaultAgent, kiroAgentDescription, strings.Join(hooks, ","))
 }
 
 func generateJSONNested(name string, h Harness) string {

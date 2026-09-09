@@ -263,17 +263,25 @@ var All = map[string]Harness{
 		APIKeyEnvVar: "KIRO_API_KEY",
 		DefaultModel: "kiro-default",
 		NeedsGitRepo: true,
+		// kiro-cli runs hooks from the agent config, not from .kiro/hooks/*.json
+		// (those are Kiro IDE hook documents; the CLI never fires them — verified
+		// 2026-09 on kiro-cli 2.21 with the documented PromptSubmit/AgentStop
+		// triggers). A file named kiro_default.json in the agents dir overrides
+		// the built-in default agent, so hooks there run with plain `kiro-cli chat`.
 		HookFormat:    JSONKiro,
-		HookConfigDir: ".kiro/hooks",
+		HookConfigDir: ".kiro/agents",
+		HookFileName:  "kiro_default.json",
+		HookTimeoutMs: true,
 		Events: Events{
-			PromptSubmit: "UserPromptSubmit",
-			PreToolUse:   "PreToolUse",
-			PostToolUse:  "PostToolUse",
-			Stop:         "Stop",
+			SessionStart: "agentSpawn",
+			PromptSubmit: "userPromptSubmit",
+			PreToolUse:   "preToolUse",
+			PostToolUse:  "postToolUse",
+			Stop:         "stop",
 		},
 		NeedsIntercept:  true,
 		HeadlessCmd:     []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools"},
-		HooksInHeadless: false,
+		HooksInHeadless: false, // agent-config hooks verified silent in --no-interactive (2.21.2)
 		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools"},
 		InteractiveArgs:         []string{"What is the project codename? Reply ONLY the codename."},
 		InteractivePromptInArgs: true,
@@ -703,7 +711,10 @@ func init() {
 //   Has TypeScript plugins via amp.on() with 5 events (tool.call, tool.result,
 //   agent.start, agent.end, session.start). Headless: amp -x "prompt".
 //
-// Kiro — now added above with NeedsIntercept. Uses Amazon Q backend
+// Kiro — now added above with NeedsIntercept. Hooks live in the agent config
+//   (~/.kiro/agents/kiro_default.json, keys agentSpawn/userPromptSubmit/
+//   preToolUse/postToolUse/stop, `command` + `timeout_ms`); userPromptSubmit
+//   stdout is appended to the prompt as plain text. Uses Amazon Q backend
 //   (q.us-east-1.amazonaws.com, runtime.*.kiro.dev), NOT direct Bedrock.
 //   Rust binary (reqwest + rustls). Supports HTTPS_PROXY since v1.8.0.
 //   No BYOK: github.com/kirodotdev/Kiro/issues/695. MITM proxy approach

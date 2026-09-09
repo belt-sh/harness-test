@@ -456,18 +456,17 @@ func (r *Runner) writeHooks() {
 		}
 
 	case harness.JSONKiro:
-		filename = "belt.json"
+		// kiro-cli agent config; kiro_default.json overrides the built-in default agent.
+		filename = r.harness.HookFileName
 		var hooks []string
 		for _, e := range r.eventEntries() {
 			cmd := fmt.Sprintf("echo %s >> %s", e.Tag, logPath)
 			if e.Tag == TagPrompt {
 				cmd += r.promptEcho()
 			}
-			hook := fmt.Sprintf(`{"name":"belt-%s","trigger":"%s","action":{"type":"command","command":"%s"},"timeout":5}`,
-				strings.ToLower(e.Tag), e.Event, jsonStr(cmd))
-			hooks = append(hooks, hook)
+			hooks = append(hooks, fmt.Sprintf(`"%s":[{"command":"%s","timeout_ms":5000}]`, e.Event, jsonStr(cmd)))
 		}
-		content = fmt.Sprintf(`{"version":"v1","hooks":[%s]}`, strings.Join(hooks, ","))
+		content = fmt.Sprintf(`{"name":"kiro_default","description":"harness test agent","hooks":{%s}}`, strings.Join(hooks, ","))
 
 	case harness.JSONCopilot:
 		filename = "belt.json"
