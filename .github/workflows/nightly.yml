@@ -76,6 +76,9 @@ jobs:
             done
           done
           echo "results=$results" >> $GITHUB_OUTPUT
+          # Every mode above runs to completion; only now does a failure fail
+          # the job, so the summary is complete and the badge is truthful.
+          case "$results" in *:fail*) echo "::error::${{ matrix.harness }}: $results"; exit 1;; esac
         timeout-minutes: 20
 
       - name: Report
