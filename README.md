@@ -109,7 +109,9 @@ KnownIssues: map[string]string{
 },
 ```
 
-Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries in the table was measured in Docker in both hook sources, mock and belt, which agreed on every one. Add an entry only after a Docker run shows the agent cannot do it, never to quiet a flaky test, and `TestKnownIssueKeysAreWellFormed` rejects a key whose mode, tag, or event the harness does not have.
+Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries was measured in Docker in both hook sources, mock and belt, which agreed on every one.
+
+The measurement and the explanation are different claims, so the table says which it is. Five entries cite an investigation (codex and droid compaction, cursor's prompt hook, and cursor interactive, which has no compaction command to drive). Nine begin `observed only` and say what happened without claiming why. Treat those as open questions, not findings — twice in one day a confident-sounding cause here was wrong, and both times the real fault was in this harness. Add an entry only after a Docker run shows the agent cannot do it, never to quiet a flaky test, and `TestKnownIssueKeysAreWellFormed` rejects a key whose mode, tag, or event the harness does not have.
 
 ### The mock must not steer the agent
 

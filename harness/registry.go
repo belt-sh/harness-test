@@ -96,9 +96,11 @@ var All = map[string]Harness{
 			{Path: ".claude.json", Content: `{"projects":{"{{.RepoDir}}":{"hasTrustDialogAccepted":true}}}`},
 			{Path: ".claude/settings.local.json", Content: `{"theme":"dark","hasCompletedOnboarding":true}`},
 		},
-		// Verified in Docker 2026-09: these hook events do not fire here.
+		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
+		// not fire here. A reason marked "observed only" states what happened and
+		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"sdk:event:PRE_COMPACT": "compaction is a TUI-only slash command; the SDK session never compacts",
+			"sdk:event:PRE_COMPACT": "observed only; the SDK session never compacts, cause not established",
 		},
 		Events:                  standardEvents,
 		SkillsDir:               ".claude/skills",
@@ -139,10 +141,12 @@ var All = map[string]Harness{
 		HookFormat:      JSONNested,
 		HookConfigDir:   ".codex",
 		HookFileName:    "hooks.json",
-		// Verified in Docker 2026-09: these hook events do not fire here.
+		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
+		// not fire here. A reason marked "observed only" states what happened and
+		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
 			"headless:event:PRE_COMPACT": "/compact is TUI-only (slash_dispatch.rs); codex exec never auto-compacts",
-			"sdk:event:PRE_COMPACT":      "/compact is TUI-only; the SDK session never compacts",
+			"sdk:event:PRE_COMPACT":      "observed only; the SDK session never compacts, cause not established",
 		},
 		Events:      standardEvents,
 		SkillsDir:   ".agents/skills",
@@ -467,11 +471,13 @@ var All = map[string]Harness{
 		HookFileName:   "settings.json",
 		HookWrapper:    `{"baseUrl":"{{.BaseURL}}","security":{"auth":{"selectedType":"gemini-api-key","useExternal":true}},"hooks":%s}`,
 		HookTimeoutMs:  true,
-		// Verified in Docker 2026-09: these hook events do not fire here.
+		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
+		// not fire here. A reason marked "observed only" states what happened and
+		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"acp:event:POST_TOOL":     "gemini does not run tool hooks over ACP",
-			"acp:event:PRE_TOOL":      "gemini does not run tool hooks over ACP",
-			"acp:event:SESSION_START": "gemini does not run the session-start hook over ACP",
+			"acp:event:POST_TOOL":     "observed only; the tool call is offered and called but no tool hook runs over ACP, cause not established",
+			"acp:event:PRE_TOOL":      "observed only; the tool call is offered and called but no tool hook runs over ACP, cause not established",
+			"acp:event:SESSION_START": "observed only; no session-start hook over ACP, cause not established",
 		},
 		Events: Events{
 			SessionStart: "SessionStart",
@@ -552,10 +558,12 @@ var All = map[string]Harness{
 		HookFileName:   "hooks.json",
 		HookWrapper:    "%s",
 		HookNoEnvelope: true,
-		// Verified in Docker 2026-09: these hook events do not fire here.
+		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
+		// not fire here. A reason marked "observed only" states what happened and
+		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"acp:event:PRE_COMPACT":         "droid does not compact over ACP",
-			"acp:event:PROMPT":              "droid does not run the prompt hook over ACP",
+			"acp:event:PRE_COMPACT":         "observed only; no compaction over ACP, cause not established",
+			"acp:event:PROMPT":              "observed only; no prompt hook over ACP, cause not established",
 			"headless:event:PRE_COMPACT":    "exec treats /compact as a user message and never auto-compacts",
 			"interactive:event:PRE_COMPACT": "/compress needs context accounting the mock model lacks",
 		},
@@ -604,11 +612,13 @@ var All = map[string]Harness{
 		HookConfigDir: ".cursor",
 		HookFileName:  "hooks.json",
 		HookWrapper:   `{"version":1,"hooks":%s}`,
-		// Verified in Docker 2026-09: these hook events do not fire here.
+		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
+		// not fire here. A reason marked "observed only" states what happened and
+		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"headless:event:PRE_COMPACT":    "agent -p never compacts",
+			"headless:event:PRE_COMPACT":    "observed only; agent -p never compacted, cause not established",
 			"headless:event:PROMPT":         "agent -p never runs the prompt hook",
-			"headless:event:STOP":           "agent -p never runs the stop hook",
+			"headless:event:STOP":           "observed only; agent -p ran no stop hook, cause not established",
 			"interactive:event:PRE_COMPACT": "the TUI has no compaction command to drive",
 		},
 		Events: Events{
