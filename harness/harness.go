@@ -65,7 +65,6 @@ func (f HookFormat) String() string {
 	}
 }
 
-
 // ConfigFile is a file to write relative to $HOME before running the harness.
 // Content supports {{.BaseURL}}, {{.Model}}, {{.RepoDir}}, {{.APIKey}} placeholders.
 type ConfigFile struct {
@@ -75,8 +74,8 @@ type ConfigFile struct {
 
 // Harness describes a coding agent CLI and how belt integrates with it.
 type Harness struct {
-	Name    string
-	Binary  string // CLI binary name
+	Name   string
+	Binary string // CLI binary name
 
 	// Install
 	InstallCmd     []string   // command to install the CLI if missing
@@ -85,31 +84,38 @@ type Harness struct {
 
 	// API
 	APIFormat      APIFormat
-	EnvVars map[string]string // env vars to set (supports {{.BaseURL}} and literal values)
+	EnvVars        map[string]string // env vars to set (supports {{.BaseURL}} and literal values)
 	APIKeyEnvVar   string            // env var for API key
 	DefaultModel   string
 	AcceptedModels []string // additional model names the agent may use instead of DefaultModel
 
 	// Hooks
-	HookFormat    HookFormat
-	HookConfigDir string // where hook config goes (relative to $HOME)
-	HookFileName  string // override hook filename (default: format-dependent)
+	HookFormat     HookFormat
+	HookConfigDir  string // where hook config goes (relative to $HOME)
+	HookFileName   string // override hook filename (default: format-dependent)
 	HookWrapper    string // JSON to wrap hooks in (e.g. Claude's permissions + hooks)
 	HookTimeoutMs  bool   // true = timeout field is milliseconds (gemini, qwen, kiro), false = seconds
 	HookNoEnvelope bool   // true = hooks file is raw hooks object, no {"hooks":...} wrapper (droid)
 	HookFlatBare   bool   // JSONFlat entries carry only "command" (windsurf rejects nothing but documents nothing else)
-	// KnownIssues records agent defects the runner cannot work around, keyed
-	// by "<mode>:<check>" (e.g. "acp:prompt-context"). A failing check with a
-	// known issue is reported as a skip that carries the note, so the matrix
-	// stays green while the defect stays visible.
+	// KnownIssues records what an agent genuinely cannot do, so the runner can
+	// tell "not supported here" apart from "broken". Keys:
+	//
+	//	"<mode>:<check>"          a named check, e.g. "acp:prompt-context"
+	//	"<mode>:event:<TAG>"      a hook event that does not fire in that mode,
+	//	                          e.g. "headless:event:PRE_COMPACT"
+	//
+	// The value is the reason, shown in the run. A check or event listed here
+	// is skipped with that reason; one that is NOT listed and does not happen
+	// fails the run. Every entry is a claim about the agent that was verified
+	// in Docker — never a way to quiet a flaky test.
 	KnownIssues map[string]string
-	Events         Events
+	Events      Events
 
 	// Mock tool call configuration
-	ToolCallName     string // tool name in mock responses (default: "Read")
-	ToolCallArgs     string // JSON args for mock tool call (default: {"file_path":"README.md"})
-	ToolCallPath     string // only fire tool calls on requests to this path suffix
-	HookToolMatcher  string // hook matcher name if different from ToolCallName (e.g. codex: "Bash" matches exec_command)
+	ToolCallName    string // tool name in mock responses (default: "Read")
+	ToolCallArgs    string // JSON args for mock tool call (default: {"file_path":"README.md"})
+	ToolCallPath    string // only fire tool calls on requests to this path suffix
+	HookToolMatcher string // hook matcher name if different from ToolCallName (e.g. codex: "Bash" matches exec_command)
 
 	// Pre-flight config files (auth, trust, provider config, permissions)
 	ConfigFiles    []ConfigFile
@@ -133,12 +139,12 @@ type Harness struct {
 	ConfigDirEnv string
 
 	// Headless (-p) mode
-	HeadlessCmd          []string // command prefix
-	HeadlessModelArgs    []string // model selection flags, supports {{.Model}}
-	PostHeadlessCmd      [][]string // commands to run after headless (e.g. [["-p","--continue","/compact"]])
-	PromptViaStdin       bool     // true = feed prompt on stdin (codex exec)
-	NeedsGitRepo         bool
-	HooksInHeadless      bool
+	HeadlessCmd       []string   // command prefix
+	HeadlessModelArgs []string   // model selection flags, supports {{.Model}}
+	PostHeadlessCmd   [][]string // commands to run after headless (e.g. [["-p","--continue","/compact"]])
+	PromptViaStdin    bool       // true = feed prompt on stdin (codex exec)
+	NeedsGitRepo      bool
+	HooksInHeadless   bool
 
 	// Interactive (PTY/TUI) mode
 	InteractiveCmd          []string
@@ -146,21 +152,21 @@ type Harness struct {
 	InteractivePromptInArgs bool     // prompt is part of InteractiveArgs, don't SendLine
 	SlowInput               bool     // type characters individually (bypasses anti-paste protection)
 	ExitCommand             string
-	CompactCommand          string   // slash command to trigger compaction (e.g. "/compact")
+	CompactCommand          string // slash command to trigger compaction (e.g. "/compact")
 	HooksInInteractive      bool
 	OnboardingDismiss       []DismissAction
 
 	// ACP (Agent Client Protocol) mode — JSON-RPC over stdio
-	ACPCmd          []string     // command to start agent in ACP mode (e.g. ["claude", "acp"])
-	ACPArgs         []string     // extra args for ACP mode
-	HooksInACP      bool
-	ACPConfigFiles  []ConfigFile // extra config files for ACP mode (provider overrides)
-	ACPNeedsTempHome bool        // create temp HOME for ACP (isolate provider config)
+	ACPCmd           []string // command to start agent in ACP mode (e.g. ["claude", "acp"])
+	ACPArgs          []string // extra args for ACP mode
+	HooksInACP       bool
+	ACPConfigFiles   []ConfigFile // extra config files for ACP mode (provider overrides)
+	ACPNeedsTempHome bool         // create temp HOME for ACP (isolate provider config)
 
 	// SDK mode — agent-specific programmatic protocol over stdio (e.g. claude stream-json)
-	SDKCmd          []string // command to start agent in SDK mode
-	SDKArgs         []string // extra args for SDK mode
-	HooksInSDK      bool
+	SDKCmd     []string // command to start agent in SDK mode
+	SDKArgs    []string // extra args for SDK mode
+	HooksInSDK bool
 
 	// Intercept
 	NeedsIntercept bool // agent can't point to mock via env vars; requires MITM interception

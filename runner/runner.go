@@ -1070,11 +1070,7 @@ func (r *Runner) checkHookEvents(phase string) {
 		label := strings.ToLower(strings.ReplaceAll(e.Tag, "_", "-"))
 		found := strings.Contains(logContent, e.Tag) ||
 			strings.Contains(ptyContent, "hook: "+e.Event)
-		if found {
-			r.pass(fmt.Sprintf("%s: %s hook fired", phase, label))
-		} else {
-			r.skip(fmt.Sprintf("%s: %s hook not fired", phase, label))
-		}
+		r.reportEvent(phase, label, e.Tag, found, "")
 	}
 
 	if r.server.LogCount() > 0 {
@@ -1126,11 +1122,7 @@ func (r *Runner) checkBeltHookEvents(phase string) {
 			found = strings.Contains(ptyContent, "[belt:hook] "+beltName+" done")
 		}
 
-		if found {
-			r.pass(fmt.Sprintf("%s: belt %s hook fired", phase, label))
-		} else {
-			r.skip(fmt.Sprintf("%s: belt %s hook not fired", phase, label))
-		}
+		r.reportEvent(phase, label, e.Tag, found, "belt ")
 	}
 
 	if r.server.LogCount() > 0 {
@@ -1306,4 +1298,20 @@ func copyTree(src, dst string) {
 	for _, e := range entries {
 		copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()))
 	}
+}
+
+// reportEvent records one hook event. An event that fires passes. One that
+// does not fire is a skip only when the registry says this agent cannot fire
+// it in this mode; otherwise it fails, so a hook that silently stops firing
+// cannot pass as a skip.
+func (r *Runner) reportEvent(phase, label, tag string, fired bool, prefix string) {
+	if fired {
+		r.pass(fmt.Sprintf("%s: %s%s hook fired", phase, prefix, label))
+		return
+	}
+	if reason, ok := r.harness.EventKnownMissing(phase, tag); ok {
+		r.skip(fmt.Sprintf("%s: %s%s hook not fired — %s", phase, prefix, label, reason))
+		return
+	}
+	r.fail(fmt.Sprintf("%s: %s%s hook did not fire", phase, prefix, label))
 }

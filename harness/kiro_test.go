@@ -92,3 +92,54 @@ func TestKiroActiveAgent(t *testing.T) {
 		t.Errorf("workspace override: %q", got)
 	}
 }
+
+// Every KnownIssues key must be one the runner actually looks up, or a typo
+// silently turns a skip back into a failure (or hides a real regression).
+func TestKnownIssueKeysAreWellFormed(t *testing.T) {
+	modes := map[string]bool{"headless": true, "interactive": true, "acp": true, "sdk": true}
+	tags := map[string]bool{"SESSION_START": true, "PROMPT": true, "PRE_TOOL": true, "POST_TOOL": true, "STOP": true, "PRE_COMPACT": true}
+	checks := map[string]bool{"prompt-context": true}
+	for name, h := range All {
+		for key, reason := range h.KnownIssues {
+			if reason == "" {
+				t.Errorf("%s: %q has no reason", name, key)
+			}
+			parts := strings.Split(key, ":")
+			if len(parts) < 2 || !modes[parts[0]] {
+				t.Errorf("%s: %q does not start with a mode", name, key)
+				continue
+			}
+			switch {
+			case len(parts) == 3 && parts[1] == "event":
+				if !tags[parts[2]] {
+					t.Errorf("%s: %q names an unknown event tag", name, key)
+				}
+				// The event must exist for this harness, or the entry is dead.
+				if !hasEvent(h, parts[2]) {
+					t.Errorf("%s: %q but the harness declares no such event", name, key)
+				}
+			case len(parts) == 2 && checks[parts[1]]:
+			default:
+				t.Errorf("%s: %q is not a known key shape", name, key)
+			}
+		}
+	}
+}
+
+func hasEvent(h Harness, tag string) bool {
+	switch tag {
+	case "SESSION_START":
+		return h.Events.SessionStart != ""
+	case "PROMPT":
+		return h.Events.PromptSubmit != ""
+	case "PRE_TOOL":
+		return h.Events.PreToolUse != ""
+	case "POST_TOOL":
+		return h.Events.PostToolUse != ""
+	case "STOP":
+		return h.Events.Stop != ""
+	case "PRE_COMPACT":
+		return h.Events.PreCompact != ""
+	}
+	return false
+}

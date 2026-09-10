@@ -53,13 +53,13 @@ type HookContext struct {
 // bundle; goose hooks are observation-only; windsurf hooks are exit-code
 // only; kiro hooks did not fire on kiro-cli 2.21.
 var hookContexts = map[string]HookContext{
-	"claude":   {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
-	"codex":    {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
-	"copilot":  {SessionStart: ContextNone, PromptSubmit: ContextAdditionalCamel},
-	"cursor":   {SessionStart: ContextAdditionalSnake, PromptSubmit: ContextAdditionalSnake},
-	"droid":    {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
-	"gemini":   {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
-	"goose":    {SessionStart: ContextNone, PromptSubmit: ContextNone},
+	"claude":  {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
+	"codex":   {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
+	"copilot": {SessionStart: ContextNone, PromptSubmit: ContextAdditionalCamel},
+	"cursor":  {SessionStart: ContextAdditionalSnake, PromptSubmit: ContextAdditionalSnake},
+	"droid":   {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
+	"gemini":  {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
+	"goose":   {SessionStart: ContextNone, PromptSubmit: ContextNone},
 	// grok reads UserPromptSubmit stdout only for a block decision; its docs:
 	// "an allowing hook's stdout / additionalContext is discarded rather than
 	// added as context", and SessionStart stdout "is ignored". Only
@@ -166,4 +166,11 @@ func (h Harness) SkipFor(mode string) (SkipReason, string) {
 		return SkipNoMode, h.Name + " has no " + mode + " mode"
 	}
 	return SkipNone, ""
+}
+
+// EventKnownMissing returns the recorded reason why a hook event does not fire
+// for this harness in the given mode, and whether one is recorded.
+func (h Harness) EventKnownMissing(mode, tag string) (string, bool) {
+	reason, ok := h.KnownIssues[mode+":event:"+tag]
+	return reason, ok
 }
