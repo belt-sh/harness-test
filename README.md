@@ -99,7 +99,7 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 
 Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into `~/.kiro/agents/kiro_default.json`, which overrides the built-in default agent so plain `kiro-cli chat` picks it up. The override replaces the built-in agent wholesale, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; an existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries.
 
-### Hook events: skip means "cannot", not "did not"
+### Checks fail; a skip needs a reason
 
 A hook event that does not fire fails the run unless `Harness.KnownIssues` records why it cannot fire there, keyed `<mode>:event:<TAG>`:
 
@@ -108,6 +108,8 @@ KnownIssues: map[string]string{
     "headless:event:PRE_COMPACT": "/compact is TUI-only (slash_dispatch.rs); codex exec never auto-compacts",
 },
 ```
+
+The same rule covers the rest of a phase: no requests reaching the mock is always a failure, and a missing stream or a model the agent never asked for fails unless `KnownIssues` records why, keyed `<mode>:streaming` and `<mode>:model`. That last one earned its keep immediately: pi in interactive and qwen over ACP were quietly running someone else's model, `moonshotai/kimi-k2.6` and `qwen3.7-max`, because this registry never passed `--model` in those two modes.
 
 Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries was measured in Docker in both hook sources, mock and belt, which agreed on every one.
 

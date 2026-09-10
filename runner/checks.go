@@ -61,6 +61,7 @@ func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
 	}
 	fmt.Printf("[check] instruction files (%s)\n", phase)
 	if len(entries) == 0 {
+		// checkAPIRequests already failed this phase; don't repeat it.
 		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction files", phase))
 		return
 	}
@@ -96,10 +97,12 @@ func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
 func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] API requests (%s)\n", phase)
 
+	// No requests at all means the agent never reached the mock, so nothing
+	// else this phase checked was actually exercised. Always a failure.
 	if len(entries) > 0 {
 		r.pass(fmt.Sprintf("%s: mock server received %d request(s)", phase, len(entries)))
 	} else {
-		r.skip(fmt.Sprintf("%s: mock server received no requests", phase))
+		r.fail(fmt.Sprintf("%s: mock server received no requests", phase))
 	}
 }
 
@@ -132,7 +135,15 @@ func (r *Runner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 			return
 		}
 	}
-	r.skip(fmt.Sprintf("%s: no streaming requests observed", phase))
+	if len(entries) == 0 {
+		r.skip(fmt.Sprintf("%s: no requests to inspect for streaming", phase))
+		return
+	}
+	if reason, ok := r.harness.KnownIssues[phase+":streaming"]; ok {
+		r.skip(fmt.Sprintf("%s: no streaming requests observed — %s", phase, reason))
+		return
+	}
+	r.fail(fmt.Sprintf("%s: no streaming requests observed", phase))
 }
 
 func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
@@ -151,7 +162,17 @@ func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
 			}
 		}
 	}
-	r.skip(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
+	if len(entries) == 0 {
+		r.skip(fmt.Sprintf("%s: no requests to inspect for model selection", phase))
+		return
+	}
+	// The agent ignored the model this harness configures, so the run measured
+	// some other model: a gap in the harness, not a detail to wave through.
+	if reason, ok := r.harness.KnownIssues[phase+":model"]; ok {
+		r.skip(fmt.Sprintf("%s: model %s not found in requests — %s", phase, r.harness.DefaultModel, reason))
+		return
+	}
+	r.fail(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
 }
 
 // promptHookFired reports whether the mock prompt hook ran in this phase.

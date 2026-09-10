@@ -70,7 +70,15 @@ type Runner struct {
 	failed           bool
 	result           Result
 	lastOutput       string
-	proxyURL         string // HTTPS_PROXY value, set only during agent execution
+	proxyURL         string            // HTTPS_PROXY value, set only during agent execution
+	testEntries      []server.LogEntry // checks read these when set (unit tests)
+}
+
+func (r *Runner) entries() []server.LogEntry {
+	if r.testEntries != nil || r.server == nil {
+		return r.testEntries
+	}
+	return r.server.Log()
 }
 
 const hookLogPath = "/tmp/belt-hook-events.log"
@@ -832,7 +840,9 @@ func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
 	for _, a := range rawArgs {
 		expanded := r.expand(a)
 		if expanded == "" {
-			r.skip("post-headless skipped (missing template variable)")
+			// A registry template that expands to nothing is a configuration
+			// error in this repo, not something the agent did.
+			r.fail("post-headless step not run: template variable expanded to nothing in " + strings.Join(rawArgs, " "))
 			return
 		}
 		args = append(args, expanded)

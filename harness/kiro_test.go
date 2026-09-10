@@ -98,7 +98,7 @@ func TestKiroActiveAgent(t *testing.T) {
 func TestKnownIssueKeysAreWellFormed(t *testing.T) {
 	modes := map[string]bool{"headless": true, "interactive": true, "acp": true, "sdk": true}
 	tags := map[string]bool{"SESSION_START": true, "PROMPT": true, "PRE_TOOL": true, "POST_TOOL": true, "STOP": true, "PRE_COMPACT": true}
-	checks := map[string]bool{"prompt-context": true}
+	checks := map[string]bool{"prompt-context": true, "streaming": true, "model": true}
 	for name, h := range All {
 		for key, reason := range h.KnownIssues {
 			if reason == "" {
