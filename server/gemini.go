@@ -8,10 +8,10 @@ import (
 )
 
 type geminiRequest struct {
-	Contents         []geminiContent        `json:"contents"`
-	Tools            []any                  `json:"tools,omitempty"`
-	GenerationConfig map[string]any         `json:"generationConfig,omitempty"`
-	SystemInstruction *geminiContent        `json:"systemInstruction,omitempty"`
+	Contents          []geminiContent `json:"contents"`
+	Tools             []any           `json:"tools,omitempty"`
+	GenerationConfig  map[string]any  `json:"generationConfig,omitempty"`
+	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
 }
 
 type geminiContent struct {
@@ -70,11 +70,20 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Gemini classifier requests JSON via responseMimeType — return valid JSON
-	// so the classifier doesn't exhaust retries.
+	// Structured output: gemini's model router asks for JSON against a schema
+	// and re-routes the whole turn when the answer does not parse, which loses
+	// the prepared tool call and with it the tool hooks. Answer the schema.
 	text := s.getResponse()
 	if mime, _ := req.GenerationConfig["responseMimeType"].(string); mime == "application/json" {
 		text = `{"choice":0,"confidence":1.0}`
+		for _, key := range []string{"responseJsonSchema", "responseSchema"} {
+			if schema, ok := req.GenerationConfig[key].(map[string]any); ok {
+				if b, err := json.Marshal(synthFromSchema(schema)); err == nil {
+					text = string(b)
+				}
+				break
+			}
+		}
 	}
 
 	if strings.Contains(r.URL.RawQuery, "alt=sse") {
@@ -128,4 +137,35 @@ func (s *MockServer) geminiToolCall(w http.ResponseWriter, model string) {
 			ModelVersion:  model,
 		},
 	})
+}
+
+// synthFromSchema builds the smallest value satisfying a JSON schema, so the
+// mock can answer a structured-output request instead of returning prose.
+func synthFromSchema(schema map[string]any) any {
+	t, _ := schema["type"].(string)
+	switch strings.ToUpper(t) {
+	case "OBJECT":
+		out := map[string]any{}
+		props, _ := schema["properties"].(map[string]any)
+		for name, raw := range props {
+			if sub, ok := raw.(map[string]any); ok {
+				out[name] = synthFromSchema(sub)
+			}
+		}
+		return out
+	case "ARRAY":
+		if items, ok := schema["items"].(map[string]any); ok {
+			return []any{synthFromSchema(items)}
+		}
+		return []any{}
+	case "INTEGER", "NUMBER":
+		return 1
+	case "BOOLEAN":
+		return true
+	default:
+		if enum, ok := schema["enum"].([]any); ok && len(enum) > 0 {
+			return enum[0]
+		}
+		return "mock"
+	}
 }

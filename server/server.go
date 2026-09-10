@@ -1,7 +1,6 @@
 package server
 
 import (
-	"os"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -59,21 +59,22 @@ var LLMHosts = []string{
 }
 
 type MockServer struct {
-	srv         *http.Server
-	listener    net.Listener
-	tlsListener net.Listener
+	srv           *http.Server
+	listener      net.Listener
+	tlsListener   net.Listener
 	proxyListener net.Listener
-	caPEM       []byte            // PEM-encoded CA cert (set after StartIntercept)
-	tlsCerts    []tls.Certificate // server certs signed by our CA
+	caPEM         []byte            // PEM-encoded CA cert (set after StartIntercept)
+	tlsCerts      []tls.Certificate // server certs signed by our CA
 
-	mu           sync.Mutex
-	log          []LogEntry
-	response     string
-	toolCallMode bool
-	toolName     string
-	toolArgs     string
-	toolCallPath  string
-	cursor map[string]*cursorSession // Cursor agent run streams by request id
+	mu             sync.Mutex
+	log            []LogEntry
+	response       string
+	toolCallMode   bool
+	toolCallServed bool
+	toolName       string
+	toolArgs       string
+	toolCallPath   string
+	cursor         map[string]*cursorSession // Cursor agent run streams by request id
 }
 
 func New() *MockServer {
@@ -249,6 +250,7 @@ func (s *MockServer) PrepareToolCall(name, args, path string) {
 	s.toolArgs = args
 	s.toolCallPath = path
 	s.toolCallMode = true
+	s.toolCallServed = false
 }
 
 func (s *MockServer) LogCount() int {
@@ -347,9 +349,9 @@ func HostsEntries() string {
 }
 
 type caBundle struct {
-	cert    tls.Certificate
-	caCert  []byte // DER-encoded CA certificate
-	caPEM   []byte // PEM-encoded CA certificate (for NODE_EXTRA_CA_CERTS etc.)
+	cert   tls.Certificate
+	caCert []byte // DER-encoded CA certificate
+	caPEM  []byte // PEM-encoded CA certificate (for NODE_EXTRA_CA_CERTS etc.)
 }
 
 func generateCA() (*ecdsa.PrivateKey, []byte, error) {
@@ -482,9 +484,20 @@ func (s *MockServer) shouldToolCall(hasTools bool, requestPath string) bool {
 			return false
 		}
 		s.toolCallMode = false
+		s.toolCallServed = true
 		return true
 	}
 	return false
+}
+
+// ToolCallServed reports whether the prepared tool call was handed to the agent
+// since the last ClearLog. Agents route a turn through models and retries of
+// their own, so a turn can end without ever being offered the tool; the tool
+// hooks cannot fire then, and that is a gap in this harness, not a regression.
+func (s *MockServer) ToolCallServed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.toolCallServed
 }
 
 // parseRequest reads the body, records the request, and returns the parsed fields.

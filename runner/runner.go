@@ -1309,6 +1309,10 @@ func (r *Runner) reportEvent(phase, label, tag string, fired bool, prefix string
 		r.pass(fmt.Sprintf("%s: %s%s hook fired", phase, prefix, label))
 		return
 	}
+	if (tag == TagPreTool || tag == TagPostTool) && r.server != nil && !r.server.ToolCallServed() {
+		r.skip(fmt.Sprintf("%s: %s%s hook not checked — the agent was never offered the tool call", phase, prefix, label))
+		return
+	}
 	if reason, ok := r.harness.EventKnownMissing(phase, tag); ok {
 		r.skip(fmt.Sprintf("%s: %s%s hook not fired — %s", phase, prefix, label, reason))
 		return
