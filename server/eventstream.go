@@ -20,7 +20,7 @@ import (
 
 func writeEventStreamMessage(w io.Writer, eventType string, payload []byte) {
 	headers := encodeHeaders(map[string]string{
-		":event-type":  eventType,
+		":event-type":   eventType,
 		":content-type": "application/json",
 		":message-type": "event",
 	})

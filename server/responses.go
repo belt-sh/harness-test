@@ -21,7 +21,7 @@ func newResponse(id, status string, output []ResponseItem, usage *Usage) Respons
 }
 
 func (s *MockServer) handleResponses(w http.ResponseWriter, r *http.Request) {
-	req, _ := s.parseRequest(r)
+	req, body := s.parseRequest(r)
 
 	// Side calls that ask for one specific function (grok's session_title)
 	// get that function call, the way the real backend answers them.
@@ -30,7 +30,7 @@ func (s *MockServer) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.shouldToolCall(req.hasTools(), r.URL.Path) {
+	if s.shouldToolCall(req.hasTools() && s.bodyOffersTool(body), r.URL.Path) {
 		name, args := s.getToolCall()
 		s.responsesFunctionCall(w, name, args)
 		return

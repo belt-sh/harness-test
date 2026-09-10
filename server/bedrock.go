@@ -53,11 +53,11 @@ func (s *MockServer) bedrockStream(w http.ResponseWriter, text string) {
 	})
 	writeBedrockEvent(w, "contentBlockStart", map[string]any{
 		"contentBlockIndex": 0,
-		"start":            map[string]any{"text": ""},
+		"start":             map[string]any{"text": ""},
 	})
 	writeBedrockEvent(w, "contentBlockDelta", map[string]any{
 		"contentBlockIndex": 0,
-		"delta":            map[string]any{"text": text},
+		"delta":             map[string]any{"text": text},
 	})
 	writeBedrockEvent(w, "contentBlockStop", map[string]any{
 		"contentBlockIndex": 0,
@@ -112,7 +112,7 @@ func (s *MockServer) bedrockToolCallStream(w http.ResponseWriter) {
 	})
 	writeBedrockEvent(w, "contentBlockDelta", map[string]any{
 		"contentBlockIndex": 0,
-		"delta":            map[string]any{"toolUse": map[string]any{"input": args}},
+		"delta":             map[string]any{"toolUse": map[string]any{"input": args}},
 	})
 	writeBedrockEvent(w, "contentBlockStop", map[string]any{"contentBlockIndex": 0})
 	writeBedrockEvent(w, "messageStop", map[string]any{"stopReason": "tool_use"})
@@ -145,8 +145,8 @@ type bedrockMessage struct {
 }
 
 type bedrockContent struct {
-	Text      string           `json:"text,omitempty"`
-	ToolUse   *bedrockToolUse  `json:"toolUse,omitempty"`
+	Text       string             `json:"text,omitempty"`
+	ToolUse    *bedrockToolUse    `json:"toolUse,omitempty"`
 	ToolResult *bedrockToolResult `json:"toolResult,omitempty"`
 }
 

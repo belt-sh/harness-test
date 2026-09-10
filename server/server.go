@@ -204,7 +204,7 @@ func New() *MockServer {
 			// Tool call round-trip: toolUseEvent carries the input as a JSON
 			// string (streamed in fragments; one fragment with stop=true is
 			// enough). kiro replies with userInputMessageContext.toolResults.
-			if s.shouldToolCall(strings.Contains(string(body), `"toolSpecification"`), r.URL.Path) {
+			if s.shouldToolCall(s.bodyOffersTool(body), r.URL.Path) {
 				name, args := s.getToolCall()
 				writeEventStreamMessage(w, "toolUseEvent",
 					[]byte(mustJSON(map[string]any{"toolUseId": "mock-tool-1", "name": name, "input": args, "stop": true})))
@@ -629,4 +629,47 @@ func writeJSON(w http.ResponseWriter, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// bodyOffersTool reports whether this request declares the tool the mock is
+// about to call. Agents route one turn across several models with different
+// toolsets (gemini answers a prepared write_file call from its small flash
+// toolset with "Tool not found" and never runs it, so no tool hook fires), so
+// the prepared call must go to a request that actually offers it. The search
+// is confined to "tools" sections: the tool's name also appears in ordinary
+// conversation history, error text included.
+func (s *MockServer) bodyOffersTool(body []byte) bool {
+	name, _ := s.getToolCall()
+	if name == "" {
+		return false
+	}
+	var doc any
+	if json.Unmarshal(body, &doc) != nil {
+		return false
+	}
+	found := false
+	var walk func(any)
+	walk = func(v any) {
+		if found {
+			return
+		}
+		switch t := v.(type) {
+		case map[string]any:
+			for k, sub := range t {
+				if k == "tools" || k == "functionDeclarations" {
+					if b, err := json.Marshal(sub); err == nil && strings.Contains(string(b), `"`+name+`"`) {
+						found = true
+						return
+					}
+				}
+				walk(sub)
+			}
+		case []any:
+			for _, sub := range t {
+				walk(sub)
+			}
+		}
+	}
+	walk(doc)
+	return found
 }

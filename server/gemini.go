@@ -65,7 +65,7 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 	s.record(r, body, model)
 
 	hasTools := len(req.Tools) > 0
-	if s.shouldToolCall(hasTools, r.URL.Path) {
+	if s.shouldToolCall(hasTools && s.bodyOffersTool(body), r.URL.Path) {
 		s.geminiToolCall(w, model)
 		return
 	}
@@ -159,7 +159,15 @@ func synthFromSchema(schema map[string]any) any {
 		}
 		return []any{}
 	case "INTEGER", "NUMBER":
-		return 1
+		// Deliberately high. The one structured request agents make of a mock
+		// is a routing or complexity score, and a low answer sends the turn to
+		// a cheaper model with a smaller toolset — gemini then rejects the
+		// prepared tool call as "Tool not found" and no tool hook can fire.
+		// A mock must not decide the agent under test into a degraded path.
+		if max, ok := schema["maximum"].(float64); ok {
+			return max
+		}
+		return 100
 	case "BOOLEAN":
 		return true
 	default:

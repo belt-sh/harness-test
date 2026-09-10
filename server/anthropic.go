@@ -6,10 +6,10 @@ import (
 )
 
 func (s *MockServer) handleMessages(w http.ResponseWriter, r *http.Request) {
-	req, _ := s.parseRequest(r)
+	req, body := s.parseRequest(r)
 	model := req.modelOrDefault()
 
-	if s.shouldToolCall(req.hasTools(), r.URL.Path) {
+	if s.shouldToolCall(req.hasTools() && s.bodyOffersTool(body), r.URL.Path) {
 		s.anthropicToolCall(w, model, req.Stream)
 		return
 	}

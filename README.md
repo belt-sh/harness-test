@@ -111,6 +111,13 @@ KnownIssues: map[string]string{
 
 Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries in the table was measured in Docker in both hook sources, mock and belt, which agreed on every one. Add an entry only after a Docker run shows the agent cannot do it, never to quiet a flaky test, and `TestKnownIssueKeysAreWellFormed` rejects a key whose mode, tag, or event the harness does not have.
 
+### The mock must not steer the agent
+
+Two ways a mock quietly changes what it is measuring, both found on gemini in 2026-09:
+
+- **Answering a request that cannot use the answer.** One turn is routed across models with different toolsets, so the prepared tool call is served only to a request that declares that tool. Served to gemini's small flash toolset it came back "Tool `write_file` not found", nothing ran, and both tool hooks were reported missing.
+- **Answering a routing question badly.** Agents ask the model to score a request and pick a tier. `synthFromSchema` answers `responseJsonSchema` requests, and numbers come back at the top of the range, because a low score routes the turn to a cheaper model and a smaller toolset.
+
 ### Codenames
 
 Each check writes a distinct codename into the model's context and looks for it in the recorded requests: `HOOK-<AGENT>-<ts>` from the prompt hook, `INSTR-USER-<AGENT>-<ts>` and `INSTR-PROJ-<AGENT>-<ts>` from the instruction files. The prefixes must stay distinct — a bare `<AGENT>-<ts>` hook code is a substring of the instruction codes, so the injection check passed whenever the instruction file loaded and hid three real failures (2026-09).

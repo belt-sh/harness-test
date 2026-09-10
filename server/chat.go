@@ -14,10 +14,10 @@ func newChat(id, object, model string, choices []ChatChoice, usage *Usage) ChatC
 }
 
 func (s *MockServer) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	req, _ := s.parseRequest(r)
+	req, body := s.parseRequest(r)
 	model := req.modelOrDefault()
 
-	if s.shouldToolCall(req.hasTools(), r.URL.Path) {
+	if s.shouldToolCall(req.hasTools() && s.bodyOffersTool(body), r.URL.Path) {
 		s.chatToolCall(w, model, req.Stream)
 		return
 	}
