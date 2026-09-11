@@ -53,6 +53,7 @@ func Install(name string, scope InstallScope) InstallResult {
 
 	home, _ := os.UserHomeDir()
 	var hooksPath string
+	root := home
 
 	switch scope {
 	case ScopeUser:
@@ -62,8 +63,8 @@ func Install(name string, scope InstallScope) InstallResult {
 		}
 		hooksPath = filepath.Join(home, target)
 	case ScopeProject:
-		cwd, _ := os.Getwd()
-		hooksPath = filepath.Join(cwd, h.HookConfigDir, hookFileName(h))
+		root, _ = os.Getwd()
+		hooksPath = filepath.Join(root, h.HookConfigDir, hookFileName(h))
 	}
 
 	content, err := generateHookConfig(name, h)
@@ -90,6 +91,12 @@ func Install(name string, scope InstallScope) InstallResult {
 	case JSONKiro:
 		result.Merged = true
 		err = mergeKiroAgentHooks(hooksPath, content)
+		if err == nil {
+			// Earlier belt versions merged into a kiro_default.json override.
+			removeMergedHooks(filepath.Join(root, h.HookConfigDir, KiroDefaultAgentName+".json"), JSONKiro)
+			// A user-chosen default agent is left alone; doctor reports it.
+			_, err = KiroSelectBeltAgent(root)
+		}
 	case TOML:
 		result.Merged = true
 		err = appendTOMLHooks(hooksPath, content)
@@ -145,6 +152,7 @@ func Uninstall(name string, scope InstallScope) InstallResult {
 
 	home, _ := os.UserHomeDir()
 	var hooksPath string
+	root := home
 	switch scope {
 	case ScopeUser:
 		target := hooksTarget(name)
@@ -153,12 +161,19 @@ func Uninstall(name string, scope InstallScope) InstallResult {
 		}
 		hooksPath = filepath.Join(home, target)
 	case ScopeProject:
-		cwd, _ := os.Getwd()
-		hooksPath = filepath.Join(cwd, h.HookConfigDir, hookFileName(h))
+		root, _ = os.Getwd()
+		hooksPath = filepath.Join(root, h.HookConfigDir, hookFileName(h))
 	}
 
 	result := InstallResult{Harness: name, Scope: scope, HooksPath: hooksPath}
-	if needsMerge(h) || h.HookFormat == JSONKiro {
+	if h.HookFormat == JSONKiro {
+		result.Merged = true
+		result.Error = removeMergedHooks(hooksPath, JSONKiro)
+		removeMergedHooks(filepath.Join(root, h.HookConfigDir, KiroDefaultAgentName+".json"), JSONKiro)
+		if err := kiroDeselectBeltAgent(root); result.Error == nil {
+			result.Error = err
+		}
+	} else if needsMerge(h) {
 		result.Merged = true
 		result.Error = removeMergedHooks(hooksPath, h.HookFormat)
 	} else {
@@ -207,7 +222,7 @@ func removeMergedHooks(path string, format HookFormat) error {
 		if len(hooks) == 0 {
 			delete(obj, "hooks")
 		}
-		// Only belt's own scaffold left: remove the file so the built-in default agent returns.
+		// Only belt's own scaffold left: remove the file.
 		if obj["description"] == kiroAgentDescription && isKiroScaffold(obj) {
 			return os.Remove(path)
 		}
@@ -218,10 +233,9 @@ func removeMergedHooks(path string, format HookFormat) error {
 	}
 }
 
-const (
-	kiroDefaultAgent     = "kiro_default"
-	kiroAgentDescription = "Default agent with belt hooks"
-)
+// kiroAgentDescription marks a kiro agent file belt created; the legacy
+// kiro_default.json override carried the same description.
+const kiroAgentDescription = "Default agent with belt hooks"
 
 // isKiroScaffold reports whether obj holds nothing beyond what generateJSONKiro writes.
 func isKiroScaffold(obj map[string]any) bool {
@@ -385,11 +399,12 @@ func generateJSONKiro(h Harness) string {
 	add(evts.Stop, "stop")
 	add(evts.PreCompact, "pre-compact")
 
-	// Overriding kiro_default replaces the built-in agent wholesale: a config
-	// without "tools" has no tools at all (verified: the request carries no
-	// toolSpecification). tools ["*"] + includeMcpJson keep the built-in
-	// behaviour; steering, skills and AGENTS.md are inherited regardless.
-	return fmt.Sprintf(`{"name":"%s","description":"%s","tools":["*"],"includeMcpJson":true,"hooks":{%s}}`, kiroDefaultAgent, kiroAgentDescription, strings.Join(hooks, ","))
+	// Selected as the default, belt's agent stands in for the built-in one: a
+	// config without "tools" has no tools at all (verified: the request
+	// carries no toolSpecification). tools ["*"] + includeMcpJson keep the
+	// built-in behaviour; steering, README and skill descriptions reach the
+	// model as they do with the built-in (compared in Docker on V1 and V2).
+	return fmt.Sprintf(`{"name":"%s","description":"%s","tools":["*"],"includeMcpJson":true,"hooks":{%s}}`, KiroBeltAgentName, kiroAgentDescription, strings.Join(hooks, ","))
 }
 
 func generateJSONNested(name string, h Harness) string {

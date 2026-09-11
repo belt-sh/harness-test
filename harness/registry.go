@@ -280,11 +280,12 @@ var All = map[string]Harness{
 		// kiro-cli runs hooks from the agent config, not from .kiro/hooks/*.json
 		// (those are Kiro IDE hook documents; the CLI never fires them — verified
 		// 2026-09 on kiro-cli 2.21 with the documented PromptSubmit/AgentStop
-		// triggers). A file named kiro_default.json in the agents dir overrides
-		// the built-in default agent, so hooks there run with plain `kiro-cli chat`.
+		// triggers). belt installs its own agent, belt.json, and selects it with
+		// chat.defaultAgent: the V1 engine ignores a kiro_default.json override
+		// and runs the built-in agent, so hooks there never fired on V1.
 		HookFormat:    JSONKiro,
 		HookConfigDir: ".kiro/agents",
-		HookFileName:  "kiro_default.json",
+		HookFileName:  "belt.json",
 		HookTimeoutMs: true,
 		Events: Events{
 			SessionStart: "agentSpawn",
@@ -293,9 +294,17 @@ var All = map[string]Harness{
 			PostToolUse:  "postToolUse",
 			Stop:         "stop",
 		},
-		NeedsIntercept:  true,
-		HeadlessCmd:     []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools"},
-		HooksInHeadless: false, // agent-config hooks verified silent in --no-interactive (2.21.2)
+		NeedsIntercept: true,
+		// kiro-cli has two engines. `chat --no-interactive` starts V1 for 75% of
+		// installs and V2 for the rest (the embedded "v2_non_interactive"
+		// rollout, treatment_percent 25); fresh Docker installs landed on
+		// either. Headless pins V1, the one most scripted runs get; the
+		// TUI and ACP run V2. V2's non-interactive client also drops --model
+		// ("failed to set model 'kiro-default': Method not found", 2.21.3).
+		HeadlessCmd:          []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools", "--agent-engine", "v1", "--model", "{{.Model}}"},
+		HeadlessToolCallName: "fs_read",
+		HeadlessToolCallArgs: `{"operations":[{"mode":"Line","path":"README.md"}]}`,
+		HooksInHeadless:      true,
 		// Without --model, kiro sends an empty modelId and the backend picks.
 		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools", "--model", "{{.Model}}"},
 		InteractiveArgs:         []string{"What is the project codename? Reply ONLY the codename."},
@@ -306,9 +315,10 @@ var All = map[string]Harness{
 			{Pattern: "navigate"}, {Pattern: "select"}, {Pattern: "Welcome"},
 		},
 		ACPCmd:     []string{"kiro-cli", "acp"},
-		ACPArgs:    []string{"--trust-all-tools"},
-		HooksInACP: false,
+		ACPArgs:    []string{"--trust-all-tools", "--model", "{{.Model}}"},
+		HooksInACP: true,
 	},
+
 	"omp": {
 		Name: "omp", Binary: "omp",
 		InstallCmd:        []string{"npm", "install", "-g", "@oh-my-pi/pi-coding-agent"},
@@ -566,7 +576,7 @@ var All = map[string]Harness{
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
 			"acp:event:PRE_COMPACT":      "ACP mode is droid exec; PreCompact fires only from the TUI's manual compaction (droid 0.217 source)",
-			"acp:event:PROMPT":           "observed only; no prompt hook over ACP, cause not established",
+			"acp:event:PROMPT":           "the ACP agent (exec --output-format acp, also each acp-daemon child) calls the turn runner directly; UserPromptSubmit runs only in the JSON-RPC processUserMessage path (droid 0.217 source)",
 			"headless:event:PRE_COMPACT": "PreCompact fires only from the TUI's manual compaction; exec never compacts (droid 0.217 source)",
 		},
 		Events: standardEvents,

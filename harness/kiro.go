@@ -6,31 +6,89 @@ import (
 	"path/filepath"
 )
 
-// KiroDefaultAgentName is the built-in agent that a kiro_default.json in the
-// agents dir overrides; belt's hooks are installed there.
+// KiroDefaultAgentName is kiro-cli's built-in agent. Earlier belt versions
+// installed their hooks into a kiro_default.json override; kiro's V2 engine
+// honours that override but the V1 engine ignores it and keeps the built-in
+// (kiro-cli 2.21.3, measured in Docker), so belt now uses its own agent.
 const KiroDefaultAgentName = "kiro_default"
 
-// KiroActiveAgent returns the agent kiro-cli starts with: the workspace
-// setting .kiro/settings/cli.json overrides the global ~/.kiro/settings.json,
-// key "chat.defaultAgent"; empty means the built-in default (kiro_default).
-// Hooks installed into kiro_default.json do not run when a different agent is
-// the default.
+// KiroBeltAgentName is the agent belt installs its kiro hooks into. Install
+// selects it with chat.defaultAgent, which both engines honour.
+const KiroBeltAgentName = "belt"
+
+// kiroSettingsPath is where kiro-cli keeps settings under root: the home dir
+// for global settings, the project dir for workspace settings (the file
+// `kiro-cli settings --workspace` writes, which overrides the global one).
+func kiroSettingsPath(root string) string {
+	return filepath.Join(root, ".kiro", "settings", "cli.json")
+}
+
+// KiroActiveAgent returns the agent kiro-cli starts with: chat.defaultAgent
+// from the workspace settings, else from the global settings; empty means the
+// built-in default. belt's hooks run only when this is KiroBeltAgentName.
 func KiroActiveAgent(home, cwd string) string {
-	for _, p := range []string{
-		filepath.Join(cwd, ".kiro", "settings", "cli.json"),
-		filepath.Join(home, ".kiro", "settings.json"),
-	} {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		var obj map[string]any
-		if json.Unmarshal(data, &obj) != nil {
-			continue
-		}
-		if name, _ := obj["chat.defaultAgent"].(string); name != "" {
+	for _, root := range []string{cwd, home} {
+		if name := kiroDefaultAgentAt(root); name != "" {
 			return name
 		}
 	}
 	return ""
+}
+
+func kiroDefaultAgentAt(root string) string {
+	obj, _ := readKiroSettings(root)
+	name, _ := obj["chat.defaultAgent"].(string)
+	return name
+}
+
+func readKiroSettings(root string) (map[string]any, error) {
+	data, err := os.ReadFile(kiroSettingsPath(root))
+	if err != nil {
+		return map[string]any{}, err
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
+		return map[string]any{}, err
+	}
+	return obj, nil
+}
+
+func writeKiroSettings(root string, obj map[string]any) error {
+	path := kiroSettingsPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	out, _ := json.MarshalIndent(obj, "", "  ")
+	return os.WriteFile(path, append(out, '\n'), 0600)
+}
+
+// KiroSelectBeltAgent makes belt's agent the default in root's kiro settings
+// when no other agent is: chat.defaultAgent unset, kiro_default, or already
+// belt. It returns the other agent's name, untouched, when the user chose one.
+func KiroSelectBeltAgent(root string) (other string, err error) {
+	obj, readErr := readKiroSettings(root)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		// Unparseable settings: leave the user's file alone.
+		return "", readErr
+	}
+	switch name, _ := obj["chat.defaultAgent"].(string); name {
+	case KiroBeltAgentName:
+		return "", nil
+	case "", KiroDefaultAgentName:
+		obj["chat.defaultAgent"] = KiroBeltAgentName
+		return "", writeKiroSettings(root, obj)
+	default:
+		return name, nil
+	}
+}
+
+// kiroDeselectBeltAgent drops chat.defaultAgent from root's kiro settings when
+// it points at belt's agent, so kiro falls back to its built-in default.
+func kiroDeselectBeltAgent(root string) error {
+	obj, err := readKiroSettings(root)
+	if err != nil || obj["chat.defaultAgent"] != KiroBeltAgentName {
+		return nil
+	}
+	delete(obj, "chat.defaultAgent")
+	return writeKiroSettings(root, obj)
 }

@@ -202,7 +202,7 @@ func (r *Runner) Run() Result {
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		if r.harness.HooksInHeadless {
-			r.prepareToolCall()
+			r.prepareToolCall(true)
 			r.requestHooksFor("headless")
 			r.runHeadless()
 			r.runChecks("headless")
@@ -236,13 +236,17 @@ func (r *Runner) resetPhase() {
 	os.Remove(hookLogPath)
 	os.Remove(hookLogPath + ".stdin")
 	r.server.ClearLog()
-	r.prepareToolCall()
+	r.prepareToolCall(false)
 }
 
-func (r *Runner) prepareToolCall() {
+func (r *Runner) prepareToolCall(headless bool) {
 	hasToolHooks := r.harness.Events.PreToolUse != "" || r.harness.Events.PostToolUse != ""
 	if r.server != nil && hasToolHooks {
-		r.server.PrepareToolCall(r.harness.ToolCallName, r.expand(r.harness.ToolCallArgs), r.harness.ToolCallPath)
+		name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
+		if headless && r.harness.HeadlessToolCallName != "" {
+			name, args = r.harness.HeadlessToolCallName, r.harness.HeadlessToolCallArgs
+		}
+		r.server.PrepareToolCall(name, r.expand(args), r.harness.ToolCallPath)
 		// The mocked tool call reads README.md relative to the agent's cwd.
 		readme := filepath.Join(r.workDir(), "README.md")
 		if _, err := os.Stat(readme); err != nil {
@@ -481,7 +485,8 @@ func (r *Runner) writeHooks() {
 		}
 
 	case harness.JSONKiro:
-		// kiro-cli agent config; kiro_default.json overrides the built-in default agent.
+		// kiro-cli agent config, selected below with chat.defaultAgent as belt's
+		// install does.
 		filename = r.harness.HookFileName
 		var hooks []string
 		for _, e := range r.eventEntries() {
@@ -491,7 +496,10 @@ func (r *Runner) writeHooks() {
 			}
 			hooks = append(hooks, fmt.Sprintf(`"%s":[{"command":"%s","timeout_ms":5000}]`, e.Event, jsonStr(cmd)))
 		}
-		content = fmt.Sprintf(`{"name":"kiro_default","description":"harness test agent","tools":["*"],"hooks":{%s}}`, strings.Join(hooks, ","))
+		content = fmt.Sprintf(`{"name":"%s","description":"harness test agent","tools":["*"],"hooks":{%s}}`, strings.TrimSuffix(filename, ".json"), strings.Join(hooks, ","))
+		if other, err := harness.KiroSelectBeltAgent(r.home); err != nil || other != "" {
+			r.fail(fmt.Sprintf("kiro default agent not selected (other=%q, err=%v)", other, err))
+		}
 
 	case harness.JSONCopilot:
 		filename = "belt.json"

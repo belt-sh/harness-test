@@ -8,22 +8,77 @@ import (
 	"testing"
 )
 
-// Kiro hooks live in the agent config; installing must keep the user's agent
-// settings and their own hooks, and uninstalling must remove only belt's entries.
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return obj
+}
+
+// A fresh install writes belt's own agent and selects it with
+// chat.defaultAgent, keeping the user's other kiro settings; uninstall
+// removes both and hands the default back to the built-in agent.
+func TestKiroInstallSelectsBeltAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := filepath.Join(home, ".kiro", "settings", "cli.json")
+	os.MkdirAll(filepath.Dir(settings), 0755)
+	os.WriteFile(settings, []byte(`{"chat.agentEngine":"v2"}`), 0600)
+
+	res := Install("kiro", ScopeUser)
+	agent := filepath.Join(home, ".kiro", "agents", "belt.json")
+	if res.Error != nil || res.HooksPath != agent {
+		t.Fatalf("install: %+v", res)
+	}
+	obj := readJSON(t, agent)
+	if obj["name"] != KiroBeltAgentName {
+		t.Errorf("agent name = %v, want %s (kiro selects agents by this name)", obj["name"], KiroBeltAgentName)
+	}
+	data, _ := os.ReadFile(agent)
+	if !strings.Contains(string(data), `"tools":["*"]`) || !strings.Contains(string(data), `"includeMcpJson":true`) {
+		t.Errorf("agent must keep the built-in tools and mcp.json:\n%s", data)
+	}
+	if got := KiroActiveAgent(home, t.TempDir()); got != KiroBeltAgentName {
+		t.Errorf("active agent after install = %q", got)
+	}
+	if s := readJSON(t, settings); s["chat.agentEngine"] != "v2" {
+		t.Errorf("install dropped the user's settings: %v", s)
+	}
+	if fi, _ := os.Stat(settings); fi.Mode().Perm() != 0600 {
+		t.Errorf("settings mode = %v, kiro writes 0600", fi.Mode().Perm())
+	}
+
+	if res := Uninstall("kiro", ScopeUser); res.Error != nil {
+		t.Fatalf("uninstall: %v", res.Error)
+	}
+	if _, err := os.Stat(agent); !os.IsNotExist(err) {
+		t.Error("belt-created belt.json should be removed on uninstall")
+	}
+	s := readJSON(t, settings)
+	if _, ok := s["chat.defaultAgent"]; ok || s["chat.agentEngine"] != "v2" {
+		t.Errorf("uninstall should drop only chat.defaultAgent: %v", s)
+	}
+}
+
+// Installing must keep the user's edits to belt's agent and their own hooks,
+// never duplicate belt's, and uninstall must remove only belt's entries.
 func TestKiroAgentConfigMerge(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	path := filepath.Join(home, ".kiro", "agents", "kiro_default.json")
+	path := filepath.Join(home, ".kiro", "agents", "belt.json")
 	os.MkdirAll(filepath.Dir(path), 0755)
-	os.WriteFile(path, []byte(`{"name":"kiro_default","prompt":"be terse","tools":["*"],"hooks":{"userPromptSubmit":[{"command":"echo mine"}]}}`), 0644)
+	os.WriteFile(path, []byte(`{"name":"belt","prompt":"be terse","tools":["*"],"hooks":{"userPromptSubmit":[{"command":"echo mine"}]}}`), 0644)
 
-	res := Install("kiro", ScopeUser)
-	if res.Error != nil || !res.Merged || res.HooksPath != path {
+	if res := Install("kiro", ScopeUser); res.Error != nil || !res.Merged {
 		t.Fatalf("install: %+v", res)
 	}
-	var obj map[string]any
-	data, _ := os.ReadFile(path)
-	json.Unmarshal(data, &obj)
+	obj := readJSON(t, path)
 	if obj["prompt"] != "be terse" {
 		t.Errorf("prompt lost: %v", obj["prompt"])
 	}
@@ -39,9 +94,8 @@ func TestKiroAgentConfigMerge(t *testing.T) {
 		t.Error("HooksInstalled false after install")
 	}
 
-	// Reinstall must not duplicate.
 	Install("kiro", ScopeUser)
-	data, _ = os.ReadFile(path)
+	data, _ := os.ReadFile(path)
 	if strings.Count(string(data), "belt plugin hook user-prompt-submit") != 1 {
 		t.Errorf("duplicate belt hooks after reinstall:\n%s", data)
 	}
@@ -50,7 +104,7 @@ func TestKiroAgentConfigMerge(t *testing.T) {
 		t.Fatalf("uninstall: %v", res.Error)
 	}
 	data, _ = os.ReadFile(path)
-	json.Unmarshal(data, &obj)
+	obj = readJSON(t, path)
 	if strings.Contains(string(data), "belt plugin hook") || obj["prompt"] != "be terse" {
 		t.Errorf("uninstall left belt hooks or dropped user config:\n%s", data)
 	}
@@ -59,30 +113,96 @@ func TestKiroAgentConfigMerge(t *testing.T) {
 	}
 }
 
-func TestKiroAgentConfigFreshInstallRemovedOnUninstall(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if res := Install("kiro", ScopeUser); res.Error != nil {
-		t.Fatal(res.Error)
-	}
-	data, _ := os.ReadFile(filepath.Join(home, ".kiro", "agents", "kiro_default.json"))
-	if !strings.Contains(string(data), `"tools":["*"]`) || !strings.Contains(string(data), `"includeMcpJson":true`) {
-		t.Errorf("scaffold must keep built-in tools and mcp.json:\n%s", data)
-	}
-	Uninstall("kiro", ScopeUser)
-	if _, err := os.Stat(filepath.Join(home, ".kiro", "agents", "kiro_default.json")); !os.IsNotExist(err) {
-		t.Error("belt-created kiro_default.json should be removed on uninstall")
+// Earlier belt versions merged into a kiro_default.json override, which the
+// V1 engine ignores. Install moves belt out of it: a pure belt scaffold is
+// deleted, a file the user extended keeps everything but belt's entries.
+func TestKiroInstallMigratesKiroDefaultOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name, legacy string
+		wantGone     bool
+	}{
+		{"scaffold", `{"name":"kiro_default","description":"Default agent with belt hooks","tools":["*"],"includeMcpJson":true,"hooks":{"stop":[{"command":"belt plugin hook stop","timeout_ms":10000}]}}`, true},
+		{"user file", `{"name":"kiro_default","prompt":"mine","hooks":{"stop":[{"command":"echo mine"},{"command":"belt plugin hook stop"}]}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			legacy := filepath.Join(home, ".kiro", "agents", "kiro_default.json")
+			os.MkdirAll(filepath.Dir(legacy), 0755)
+			os.WriteFile(legacy, []byte(tc.legacy), 0644)
+
+			if res := Install("kiro", ScopeUser); res.Error != nil {
+				t.Fatal(res.Error)
+			}
+			_, err := os.Stat(legacy)
+			if tc.wantGone {
+				if !os.IsNotExist(err) {
+					t.Error("belt's kiro_default.json scaffold should be deleted")
+				}
+				return
+			}
+			data, _ := os.ReadFile(legacy)
+			if strings.Contains(string(data), "belt plugin hook") || !strings.Contains(string(data), "echo mine") || !strings.Contains(string(data), `"prompt": "mine"`) {
+				t.Errorf("legacy file should keep only the user's content:\n%s", data)
+			}
+		})
 	}
 }
 
+// A default agent the user chose stays the default; belt's agent is written
+// but not selected, and doctor reports that its hooks will not run.
+func TestKiroInstallKeepsUserDefaultAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := filepath.Join(home, ".kiro", "settings", "cli.json")
+	os.MkdirAll(filepath.Dir(settings), 0755)
+	os.WriteFile(settings, []byte(`{"chat.defaultAgent":"mine"}`), 0600)
+
+	if res := Install("kiro", ScopeUser); res.Error != nil {
+		t.Fatal(res.Error)
+	}
+	if got := KiroActiveAgent(home, t.TempDir()); got != "mine" {
+		t.Errorf("install replaced the user's default agent: %q", got)
+	}
+	Uninstall("kiro", ScopeUser)
+	if got := KiroActiveAgent(home, t.TempDir()); got != "mine" {
+		t.Errorf("uninstall touched the user's default agent: %q", got)
+	}
+}
+
+func TestKiroProjectInstall(t *testing.T) {
+	home, cwd := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	wd, _ := os.Getwd()
+	os.Chdir(cwd)
+	defer os.Chdir(wd)
+
+	if res := Install("kiro", ScopeProject); res.Error != nil {
+		t.Fatal(res.Error)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".kiro", "agents", "belt.json")); err != nil {
+		t.Errorf("project agent: %v", err)
+	}
+	if got := kiroDefaultAgentAt(cwd); got != KiroBeltAgentName {
+		t.Errorf("workspace chat.defaultAgent = %q", got)
+	}
+	if got := kiroDefaultAgentAt(home); got != "" {
+		t.Errorf("project install wrote the global setting: %q", got)
+	}
+}
+
+// The paths are the ones kiro-cli 2.21.3 writes: `kiro-cli settings` puts
+// global settings in ~/.kiro/settings/cli.json and `--workspace` puts them in
+// .kiro/settings/cli.json, which wins (checked in Docker with
+// `kiro-cli settings list`).
 func TestKiroActiveAgent(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	if got := KiroActiveAgent(home, cwd); got != "" {
 		t.Errorf("no settings: %q", got)
 	}
-	os.MkdirAll(filepath.Join(home, ".kiro"), 0755)
-	os.WriteFile(filepath.Join(home, ".kiro", "settings.json"), []byte(`{"chat.defaultAgent":"mine"}`), 0644)
+	os.MkdirAll(filepath.Join(home, ".kiro", "settings"), 0755)
+	os.WriteFile(filepath.Join(home, ".kiro", "settings", "cli.json"), []byte(`{"chat.defaultAgent":"mine"}`), 0600)
 	if got := KiroActiveAgent(home, cwd); got != "mine" {
 		t.Errorf("global: %q", got)
 	}

@@ -43,7 +43,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | OpenAI |
 | [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
-| [Kiro](https://kiro.dev) | 2.21.x | ✅ | — | ✅ | — | JSONKiro | OpenAI |
+| [Kiro](https://kiro.dev) | 2.21.x | ✅ | ✅ | ✅ | — | JSONKiro | OpenAI |
 | [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | OpenAI |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
 | [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
@@ -91,13 +91,15 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 |---------|--------|
 | `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` | claude, codex, droid, gemini, qwen |
 | `{"additionalContext":…}` | copilot |
-| `{"additional_context":…}` | cursor (TUI; headless never fires the prompt hook) |
+| `{"additional_context":…}` | cursor (the prompt hook runs when the backend requests it; see below) |
 | `{"context":…}` | hermes |
-| plain stdout | kimi, kiro (TUI only; `--no-interactive` and ACP never run hooks) |
+| plain stdout | kimi, kiro |
 | in-plugin (TS) | kilo, omp, opencode, pi |
 | none | goose (hooks are observation-only), grok (prompt and session-start stdout is read only for a block decision; its tool and Stop hooks can add context), windsurf (exit code only) |
 
-Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into `~/.kiro/agents/kiro_default.json`, which overrides the built-in default agent so plain `kiro-cli chat` picks it up. The override replaces the built-in agent wholesale, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; an existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries.
+Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into belt's own agent, `~/.kiro/agents/belt.json`, and selects it with `chat.defaultAgent` in `~/.kiro/settings/cli.json` (project scope: `.kiro/agents/belt.json` and `.kiro/settings/cli.json`). kiro-cli 2.21 has two engines, and the V1 engine ignores a `kiro_default.json` override and runs its built-in agent, so the override earlier belt versions installed never fired on V1; `chat.defaultAgent` works on both, and install strips belt's entries from a leftover `kiro_default.json`. A default agent the user chose stays the default (`belt plugin doctor` reports it). belt's agent stands in for the built-in one, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; with it, the requests carry the same steering, README and skill descriptions as the built-in agent's. An existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries and the `chat.defaultAgent` it set.
+
+Which engine runs is not always the user's choice: `kiro-cli chat --no-interactive` starts V1 for 75% of installs and V2 for the rest (the `v2_non_interactive` rollout embedded in the binary, `treatment_percent: 25`), so the registry pins headless to V1 with `--agent-engine v1`; the TUI and ACP run V2. Until 2026-09 headless and ACP were switched off with `HooksInHeadless: false` and `HooksInACP: false`, which skipped every check in those modes and printed "does not support ACP mode". Switched on, every ACP hook fired at once.
 
 ### Checks fail; a skip needs a reason
 
@@ -113,7 +115,7 @@ The same rule covers the rest of a phase: no requests reaching the mock is alway
 
 Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries was measured in Docker in both hook sources, mock and belt, which agreed on every one.
 
-The measurement and the explanation are different claims, so the table says which it is. Of the 8 entries left, 7 cite a cause: codex runs `exec`, where `/compact` is only a user message (headless and SDK); droid fires PreCompact only from its TUI's manual compaction and never in `exec` (headless and ACP, droid 0.217 source); and gemini's ACP agent runs tools with `invocation.execute()` directly and fires `SessionStart` only in its non-interactive `main()` (gemini-cli 0.59 source). One begins `observed only`: droid's prompt hook over ACP, where the ACP daemon forwards the prompt to a child process and the only `UserPromptSubmit` call site sits in a JSON-RPC handler that route may skip.
+The measurement and the explanation are different claims, so the table says which it is: a reason that begins `observed only` states what happened and not why. All 8 entries now cite a cause: codex runs `exec`, where `/compact` is only a user message (headless and SDK); droid fires PreCompact only from its TUI's manual compaction and never in `exec` (headless and ACP, droid 0.217 source); droid's ACP agent (`exec --output-format acp`, and every child the ACP daemon spawns) calls its turn runner directly, while `UserPromptSubmit` runs only in the JSON-RPC `processUserMessage` path (droid 0.217 source); and gemini's ACP agent runs tools with `invocation.execute()` directly and fires `SessionStart` only in its non-interactive `main()` (gemini-cli 0.59 source).
 
 Revisiting the table in 2026-09 took it from 14 entries to 8, and every removal was a fault in this harness, not the agent: claude's SDK compaction needed the runner to send `/compact`; gemini's ACP tool calls failed on this driver's invalid permission reply (`{"outcome":"approved"}` instead of `{"outcome":{"outcome":"selected","optionId":...}}`), which hid that gemini's ACP path bypasses tool hooks altogether; Cursor's prompt, stop and compaction hooks need a backend request the mock never sent; and droid's TUI compaction needed a context window on the custom model, the right command (`/compress`, confirmed), the trust dialog out of the way, and the model actually selected. Treat `observed only` as an open question.
 
