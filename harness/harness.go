@@ -162,7 +162,6 @@ type Harness struct {
 	PostHeadlessCmd   [][]string // commands to run after headless (e.g. [["-p","--continue","/compact"]])
 	PromptViaStdin    bool       // true = feed prompt on stdin (codex exec)
 	NeedsGitRepo      bool
-	HooksInHeadless   bool
 
 	// Interactive (PTY/TUI) mode
 	InteractiveCmd          []string
@@ -171,20 +170,17 @@ type Harness struct {
 	SlowInput               bool     // type characters individually (bypasses anti-paste protection)
 	ExitCommand             string
 	CompactCommand          string // slash command to trigger compaction (e.g. "/compact")
-	HooksInInteractive      bool
 	OnboardingDismiss       []DismissAction
 
 	// ACP (Agent Client Protocol) mode — JSON-RPC over stdio
-	ACPCmd           []string // command to start agent in ACP mode (e.g. ["claude", "acp"])
-	ACPArgs          []string // extra args for ACP mode
-	HooksInACP       bool
+	ACPCmd           []string     // command to start agent in ACP mode (e.g. ["claude", "acp"])
+	ACPArgs          []string     // extra args for ACP mode
 	ACPConfigFiles   []ConfigFile // extra config files for ACP mode (provider overrides)
 	ACPNeedsTempHome bool         // create temp HOME for ACP (isolate provider config)
 
 	// SDK mode — agent-specific programmatic protocol over stdio (e.g. claude stream-json)
-	SDKCmd     []string // command to start agent in SDK mode
-	SDKArgs    []string // extra args for SDK mode
-	HooksInSDK bool
+	SDKCmd  []string // command to start agent in SDK mode
+	SDKArgs []string // extra args for SDK mode
 
 	// Intercept
 	NeedsIntercept bool // agent can't point to mock via env vars; requires MITM interception

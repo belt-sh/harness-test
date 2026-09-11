@@ -201,13 +201,13 @@ func (r *Runner) Run() Result {
 	r.writeInstructions()
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
-		if r.harness.HooksInHeadless {
+		if len(r.harness.HeadlessCmd) > 0 {
 			r.prepareToolCall(true)
 			r.requestHooksFor("headless")
 			r.runHeadless()
 			r.runChecks("headless")
 		} else {
-			r.skip(r.harness.Name + " does not fire hooks in headless mode")
+			r.skip(r.harness.Name + " has no headless mode")
 		}
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
@@ -890,7 +890,8 @@ func (r *Runner) sendLine(session *PTYSession, text string) {
 }
 
 func (r *Runner) runInteractive() {
-	if len(r.harness.InteractiveCmd) == 0 || !r.harness.HooksInInteractive {
+	if len(r.harness.InteractiveCmd) == 0 {
+		r.skip(r.harness.Name + " has no interactive mode")
 		return
 	}
 
@@ -1057,7 +1058,7 @@ func (r *Runner) writeACPConfig() {
 }
 
 func (r *Runner) runACP() {
-	if len(r.harness.ACPCmd) == 0 || !r.harness.HooksInACP {
+	if len(r.harness.ACPCmd) == 0 {
 		r.skip(r.harness.Name + " does not support ACP mode")
 		return
 	}
@@ -1122,7 +1123,7 @@ func (r *Runner) runACP() {
 }
 
 func (r *Runner) runSDK() {
-	if len(r.harness.SDKCmd) == 0 || !r.harness.HooksInSDK {
+	if len(r.harness.SDKCmd) == 0 {
 		r.skip(r.harness.Name + " does not support SDK mode")
 		return
 	}

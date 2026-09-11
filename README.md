@@ -99,7 +99,7 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 
 Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into belt's own agent, `~/.kiro/agents/belt.json`, and selects it with `chat.defaultAgent` in `~/.kiro/settings/cli.json` (project scope: `.kiro/agents/belt.json` and `.kiro/settings/cli.json`). kiro-cli 2.21 has two engines, and the V1 engine ignores a `kiro_default.json` override and runs its built-in agent, so the override earlier belt versions installed never fired on V1; `chat.defaultAgent` works on both, and install strips belt's entries from a leftover `kiro_default.json`. A default agent the user chose stays the default (`belt plugin doctor` reports it). belt's agent stands in for the built-in one, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; with it, the requests carry the same steering, README and skill descriptions as the built-in agent's. An existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries and the `chat.defaultAgent` it set.
 
-Which engine runs is not always the user's choice: `kiro-cli chat --no-interactive` starts V1 for 75% of installs and V2 for the rest (the `v2_non_interactive` rollout embedded in the binary, `treatment_percent: 25`), so the registry pins headless to V1 with `--agent-engine v1`; the TUI and ACP run V2. Until 2026-09 headless and ACP were switched off with `HooksInHeadless: false` and `HooksInACP: false`, which skipped every check in those modes and printed "does not support ACP mode". Switched on, every ACP hook fired at once.
+Which engine runs is not always the user's choice: `kiro-cli chat --no-interactive` starts V1 for 75% of installs and V2 for the rest (the `v2_non_interactive` rollout embedded in the binary, `treatment_percent: 25`), so the registry pins headless to V1 with `--agent-engine v1`; the TUI and ACP run V2. Until 2026-09 headless and ACP were switched off with `HooksInHeadless: false` and `HooksInACP: false`, which skipped every check in those modes — model, instruction files, API requests, not just the hooks — and printed "does not support ACP mode". Switched on, every ACP hook fired at once. Those four flags are gone: a mode with a command runs, and an agent that fires no hook there says why in `KnownIssues`, which a test checks.
 
 ### Checks fail; a skip needs a reason
 
@@ -214,9 +214,7 @@ You're building a new agent CLI and want to verify your hook/API implementation.
     HookFormat: JSONNested,
     Events: Events{PromptSubmit: "UserPromptSubmit", Stop: "Stop"},
     HeadlessCmd: []string{"myagent", "-p"},
-    HooksInHeadless: true,
     ACPCmd: []string{"myagent", "--acp"},
-    HooksInACP: true,
 },
 ```
 

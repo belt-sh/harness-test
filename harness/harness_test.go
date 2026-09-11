@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -45,10 +46,7 @@ func TestAllHarnessesHaveAtLeastOneMode(t *testing.T) {
 
 func TestACPHarnessesHaveACPCmd(t *testing.T) {
 	acpAgents := 0
-	for name, h := range All {
-		if h.HooksInACP && len(h.ACPCmd) == 0 {
-			t.Errorf("%s: HooksInACP=true but no ACPCmd", name)
-		}
+	for _, h := range All {
 		if len(h.ACPCmd) > 0 {
 			acpAgents++
 		}
@@ -115,5 +113,22 @@ func TestHookContextTableCoversAllHarnesses(t *testing.T) {
 	}
 	if reason, _ := All["claude"].SkipFor("headless"); reason != SkipNone {
 		t.Errorf("claude skip = %q", reason)
+	}
+}
+
+// A mode used to be switchable off per harness with HooksIn<mode>, which
+// skipped the whole phase — every check in it, not just the hooks — with no
+// reason anyone had to write down. That is how kiro's headless and ACP went
+// untested. Coverage now follows the commands: a mode with a command runs,
+// and an agent that fires no hook there says why in KnownIssues.
+func TestModesAreNotSwitchableOff(t *testing.T) {
+	fields := map[string]bool{}
+	for _, f := range reflect.VisibleFields(reflect.TypeOf(Harness{})) {
+		fields[f.Name] = true
+	}
+	for _, name := range []string{"HooksInHeadless", "HooksInInteractive", "HooksInACP", "HooksInSDK"} {
+		if fields[name] {
+			t.Errorf("%s is back: a mode must not be skippable without a stated cause", name)
+		}
 	}
 }
