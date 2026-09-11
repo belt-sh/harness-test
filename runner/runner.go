@@ -1058,6 +1058,12 @@ func (r *Runner) runSDK() {
 
 	fmt.Println("[phase 8] SDK (stream-json over stdio)")
 	r.runOneShot("SDK", r.harness.SDKCmd, r.harness.SDKArgs)
+	// Drive compaction the same way headless does (a --continue turn that
+	// sends the compact command); without this the runner never asked, and
+	// "the SDK session never compacts" was a statement about the runner.
+	for _, step := range r.harness.PostHeadlessCmd {
+		r.runPostHeadless(r.workDir(), step)
+	}
 }
 
 func (r *Runner) checkHookEvents(phase string) {

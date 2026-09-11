@@ -53,50 +53,6 @@ func TestACPResponseParsing(t *testing.T) {
 	}
 }
 
-func TestACPSessionNewParams(t *testing.T) {
-	params := map[string]any{
-		"cwd":        "/tmp/test",
-		"mcpServers": []any{},
-	}
-	data, _ := json.Marshal(params)
-	s := string(data)
-	if !strings.Contains(s, `"cwd"`) {
-		t.Error("missing cwd")
-	}
-	if !strings.Contains(s, `"mcpServers"`) {
-		t.Error("missing mcpServers")
-	}
-}
-
-func TestACPPromptFormat(t *testing.T) {
-	params := map[string]any{
-		"sessionId": "test-session",
-		"prompt": []map[string]any{
-			{"type": "text", "text": "hello world"},
-		},
-	}
-	data, _ := json.Marshal(params)
-	s := string(data)
-	if !strings.Contains(s, `"prompt"`) {
-		t.Error("missing prompt field")
-	}
-	if strings.Contains(s, `"turns"`) {
-		t.Error("should use prompt not turns")
-	}
-}
-
-func TestACPPermissionResponse(t *testing.T) {
-	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      42,
-		"result":  map[string]any{"outcome": "approved"},
-	}
-	data, _ := json.Marshal(resp)
-	if !strings.Contains(string(data), `"outcome":"approved"`) {
-		t.Error("missing approved outcome")
-	}
-}
-
 func TestACPExtractText(t *testing.T) {
 	d := &ACPDriver{}
 	tests := []struct {

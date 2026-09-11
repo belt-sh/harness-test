@@ -96,12 +96,6 @@ var All = map[string]Harness{
 			{Path: ".claude.json", Content: `{"projects":{"{{.RepoDir}}":{"hasTrustDialogAccepted":true}}}`},
 			{Path: ".claude/settings.local.json", Content: `{"theme":"dark","hasCompletedOnboarding":true}`},
 		},
-		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
-		// not fire here. A reason marked "observed only" states what happened and
-		// not why; the others cite an investigation.
-		KnownIssues: map[string]string{
-			"sdk:event:PRE_COMPACT": "observed only; the SDK session never compacts, cause not established",
-		},
 		Events:                  standardEvents,
 		SkillsDir:               ".claude/skills",
 		HeadlessCmd:             []string{"claude", "-p"},
@@ -146,7 +140,7 @@ var All = map[string]Harness{
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
 			"headless:event:PRE_COMPACT": "/compact is TUI-only (slash_dispatch.rs); codex exec never auto-compacts",
-			"sdk:event:PRE_COMPACT":      "observed only; the SDK session never compacts, cause not established",
+			"sdk:event:PRE_COMPACT":      "SDK mode is codex exec, where /compact is only a user message and nothing auto-compacts (same investigation as headless)",
 		},
 		Events:      standardEvents,
 		SkillsDir:   ".agents/skills",
@@ -476,9 +470,9 @@ var All = map[string]Harness{
 		// not fire here. A reason marked "observed only" states what happened and
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"acp:event:POST_TOOL":     "observed only; the tool call is offered and called but no tool hook runs over ACP, cause not established",
-			"acp:event:PRE_TOOL":      "observed only; the tool call is offered and called but no tool hook runs over ACP, cause not established",
-			"acp:event:SESSION_START": "observed only; no session-start hook over ACP, cause not established",
+			"acp:event:POST_TOOL":     "gemini ACP runs tools with invocation.execute() directly and never enters executeToolWithHooks (gemini-cli 0.59 source)",
+			"acp:event:PRE_TOOL":      "gemini ACP runs tools with invocation.execute() directly and never enters executeToolWithHooks (gemini-cli 0.59 source)",
+			"acp:event:SESSION_START": "gemini fires SessionStart only in the non-interactive main(); the ACP newSession never does (gemini-cli 0.59 source)",
 		},
 		Events: Events{
 			SessionStart: "SessionStart",
@@ -563,7 +557,7 @@ var All = map[string]Harness{
 		// not fire here. A reason marked "observed only" states what happened and
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"acp:event:PRE_COMPACT":         "observed only; no compaction over ACP, cause not established",
+			"acp:event:PRE_COMPACT":         "ACP mode is droid exec, which treats /compact as a user message and never auto-compacts (same investigation as headless)",
 			"acp:event:PROMPT":              "observed only; no prompt hook over ACP, cause not established",
 			"headless:event:PRE_COMPACT":    "exec treats /compact as a user message and never auto-compacts",
 			"interactive:event:PRE_COMPACT": "/compress needs context accounting the mock model lacks",
@@ -617,10 +611,10 @@ var All = map[string]Harness{
 		// not fire here. A reason marked "observed only" states what happened and
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"headless:event:PRE_COMPACT":    "observed only; agent -p never compacted, cause not established",
-			"headless:event:PROMPT":         "agent -p never runs the prompt hook",
-			"headless:event:STOP":           "observed only; agent -p ran no stop hook, cause not established",
-			"interactive:event:PRE_COMPACT": "the TUI has no compaction command to drive",
+			"headless:event:PRE_COMPACT":    "Cursor compaction is backend-initiated (preCompact is a server request) and this mock never compacts; says nothing about Cursor",
+			"headless:event:PROMPT":         "observed only; Cursor hooks run on backend request and this mock sends none, cause not established",
+			"headless:event:STOP":           "observed only; Cursor hooks run on backend request and this mock sends none, cause not established",
+			"interactive:event:PRE_COMPACT": "Cursor compaction is backend-initiated (preCompact is a server request) and this mock never compacts; says nothing about Cursor",
 		},
 		Events: Events{
 			SessionStart: "sessionStart",

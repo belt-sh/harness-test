@@ -34,7 +34,7 @@ type ACPDriver struct {
 	handlers   map[string]notificationHandler
 	done       chan struct{}
 	turnDone   chan struct{} // signaled when the agent finishes a turn
-	lastUpdate time.Time    // timestamp of last session/update
+	lastUpdate time.Time     // timestamp of last session/update
 }
 
 type notificationHandler func(msg rpcMessage)
@@ -333,12 +333,53 @@ func (d *ACPDriver) handleUpdate(msg rpcMessage) {
 	}
 }
 
+// handlePermission answers session/request_permission per the ACP spec:
+// {"outcome":{"outcome":"selected","optionId":<one of the offered options>}}.
+// It used to send {"outcome":"approved"}, which is not a valid response;
+// lenient agents let it through, but gemini validates it with a schema, threw,
+// and failed every tool call before it ran, so no tool hook could fire and the
+// registry recorded "gemini runs no tool hooks over ACP" as an agent trait.
 func (d *ACPDriver) handlePermission(msg rpcMessage) {
 	if msg.ID == nil {
 		return
 	}
-	d.respond(*msg.ID, map[string]any{"outcome": "approved"})
-	d.appendOutput("[acp] auto-approved permission\n")
+	var req struct {
+		Options []struct {
+			OptionID string `json:"optionId"`
+			Kind     string `json:"kind"`
+		} `json:"options"`
+	}
+	json.Unmarshal(msg.Params, &req)
+	chosen := ""
+	for _, pref := range []string{"allow_once", "allow_always"} {
+		for _, o := range req.Options {
+			if o.Kind == pref {
+				chosen = o.OptionID
+				break
+			}
+		}
+		if chosen != "" {
+			break
+		}
+	}
+	if chosen == "" {
+		for _, o := range req.Options {
+			if strings.HasPrefix(o.Kind, "allow") {
+				chosen = o.OptionID
+				break
+			}
+		}
+	}
+	if chosen == "" && len(req.Options) > 0 {
+		chosen = req.Options[0].OptionID
+	}
+	if chosen == "" {
+		d.respond(*msg.ID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
+		d.appendOutput("[acp] permission request offered no options; cancelled\n")
+		return
+	}
+	d.respond(*msg.ID, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": chosen}})
+	d.appendOutput("[acp] approved permission (" + chosen + ")\n")
 }
 
 func (d *ACPDriver) handleFsWrite(msg rpcMessage) {
