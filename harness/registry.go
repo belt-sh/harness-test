@@ -578,15 +578,19 @@ var All = map[string]Harness{
 			"acp:event:PRE_COMPACT":      "ACP mode is droid exec; PreCompact fires only from the TUI's manual compaction (droid 0.217 source)",
 			"acp:event:PROMPT":           "the ACP agent (exec --output-format acp, also each acp-daemon child) calls the turn runner directly; UserPromptSubmit runs only in the JSON-RPC processUserMessage path (droid 0.217 source)",
 			"headless:event:PRE_COMPACT": "PreCompact fires only from the TUI's manual compaction; exec never compacts (droid 0.217 source)",
+			"headless:event:PROMPT":      "plain exec (-o text/json/stream-json) runs the turn through kDA, which never calls executeUserPromptSubmitHooks; only -o stream-jsonrpc goes through the JSON-RPC processUserMessage path (droid 0.217 source)",
 		},
 		Events: standardEvents,
 		ConfigFiles: []ConfigFile{
 			{Path: ".factory/settings.json", Content: `{"customModels":[{"model":"mock-model","displayName":"Mock","baseUrl":"{{.BaseURL}}/v1","apiKey":"mock-key","provider":"openai","maxOutputTokens":4096,"maxContextLimit":128000}],"sessionDefaultSettings":{"model":"custom:mock-model"}}`},
 		},
-		SkillsDir:         ".factory/skills",
-		NeedsGitRepo:      true,
-		HeadlessCmd:       []string{"droid", "exec"},
-		HeadlessModelArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
+		SkillsDir:    ".factory/skills",
+		NeedsGitRepo: true,
+		HeadlessCmd:  []string{"droid", "exec"},
+		// -o json is the plain exec path scripts use. -o stream-jsonrpc goes
+		// through the JSON-RPC worker the TUI uses, the only exec path that runs
+		// the prompt hook; testing it here hid that plain exec never does.
+		HeadlessModelArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "json"},
 		PostHeadlessCmd:   [][]string{{"exec", "--session-id", "{{.SessionID}}", "--auto", "high", "-m", "{{.Model}}", "/compact"}},
 		HooksInHeadless:   true,
 		InteractiveCmd:    []string{"droid"},
