@@ -203,6 +203,7 @@ func (r *Runner) Run() Result {
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		if r.harness.HooksInHeadless {
 			r.prepareToolCall()
+			r.requestHooksFor("headless")
 			r.runHeadless()
 			r.runChecks("headless")
 		} else {
@@ -211,16 +212,19 @@ func (r *Runner) Run() Result {
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
 		r.resetPhase()
+		r.requestHooksFor("interactive")
 		r.runInteractive()
 		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
 		r.resetPhase()
+		r.requestHooksFor("acp")
 		r.runACP()
 		r.runChecks("acp")
 	}
 	if r.mode == ModeSDK {
 		r.resetPhase()
+		r.requestHooksFor("sdk")
 		r.runSDK()
 		r.runChecks("sdk")
 	}
@@ -769,7 +773,9 @@ func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	prompt := "What is the project codename? Reply ONLY the codename."
 
 	var args []string
-	args = append(args, cmdSlice[1:]...)
+	for _, a := range cmdSlice[1:] {
+		args = append(args, r.expand(a))
+	}
 	if !r.harness.PromptViaStdin {
 		args = append(args, prompt)
 	}
@@ -862,11 +868,17 @@ func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
 }
 
 func (r *Runner) sendLine(session *PTYSession, text string) {
+	delay := time.Duration(0)
 	if r.harness.SlowInput {
-		session.SendLineDelayed(text, 5*time.Millisecond)
-	} else {
-		session.SendLine(text)
+		delay = 5 * time.Millisecond
 	}
+	session.SendText(text, delay)
+	// pi-tui (kimi, pi, omp) reads a fast run of keystrokes as a paste and
+	// turns an Enter within 120ms of it into a newline. Sent 50ms after the
+	// text, kimi's prompt sat in the composer until the next line ("/exit")
+	// submitted both. A person pauses before Enter; so does the runner.
+	time.Sleep(250 * time.Millisecond)
+	session.SendRaw("\r")
 }
 
 func (r *Runner) runInteractive() {
@@ -879,11 +891,18 @@ func (r *Runner) runInteractive() {
 	dir := r.workDir()
 
 	var iargs []string
-	iargs = append(iargs, r.harness.InteractiveCmd[1:]...)
+	for _, a := range r.harness.InteractiveCmd[1:] {
+		iargs = append(iargs, r.expand(a)) // kiro received a literal "{{.Model}}" before this
+	}
 	for _, a := range r.harness.InteractiveArgs {
 		iargs = append(iargs, r.expand(a))
 	}
 
+	// An agent given its prompt as a launch argument can be answered while
+	// the runner is still dismissing onboarding screens, so count answers from
+	// before launch; otherwise the wait below looks for a second answer that
+	// never comes and sits out its whole timeout (kiro: 55s became 2m23s).
+	answeredAtLaunch := r.server.AnswersServed()
 	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.envIn(dir))
 	if err != nil {
 		r.fail("PTY start: " + err.Error())
@@ -893,13 +912,37 @@ func (r *Runner) runInteractive() {
 
 	time.Sleep(3 * time.Second)
 	if len(r.harness.OnboardingDismiss) > 0 {
-		for i := 0; i < 15; i++ {
+		// Match only output drawn since the last dismissal: the whole buffer
+		// keeps a dismissed dialog's text forever, which pressed Enter on every
+		// pass (up to 15 times, 30 seconds) once any pattern had appeared.
+		seen := 0
+		pending := map[string]bool{}
+		for _, a := range r.harness.OnboardingDismiss {
+			if a.Required {
+				pending[a.Pattern] = true
+			}
+		}
+		for i := 0; i < 15 || (len(pending) > 0 && i < 30); i++ {
 			out := session.Output()
+			fresh := ""
+			if seen <= len(out) {
+				fresh = out[seen:]
+			}
+			// Handle the earliest dialog in the fresh output, and move the
+			// marker only past its text: agents draw several screens in one
+			// burst (claude: the API-key question and "Press Enter to
+			// continue"), and skipping to the end of the buffer lost the second.
 			dismissed := false
-			for _, action := range r.harness.OnboardingDismiss {
-				if !strings.Contains(out, action.Pattern) {
-					continue
+			pick, at := -1, len(fresh)
+			for k, action := range r.harness.OnboardingDismiss {
+				if idx := strings.Index(fresh, action.Pattern); idx >= 0 && idx < at {
+					pick, at = k, idx
 				}
+			}
+			if pick >= 0 {
+				action := r.harness.OnboardingDismiss[pick]
+				seen += at + len(action.Pattern)
+				delete(pending, action.Pattern)
 				if action.SendUp {
 					session.SendUp()
 					time.Sleep(200 * time.Millisecond)
@@ -907,12 +950,11 @@ func (r *Runner) runInteractive() {
 				session.SendLine("")
 				time.Sleep(2 * time.Second)
 				dismissed = true
-				break
 			}
 			if dismissed {
 				continue
 			}
-			if len(out) > 200 {
+			if len(out) > 200 && len(pending) == 0 {
 				break
 			}
 			time.Sleep(1 * time.Second)
@@ -922,21 +964,37 @@ func (r *Runner) runInteractive() {
 	}
 	r.pass("TUI started")
 
-	if r.harness.InteractivePromptInArgs {
-		session.WaitForAny([]string{"mock", "hello", "Hello", "codename", "server", "build", "Changes", "Duration", "Resume"}, 60*time.Second)
-		time.Sleep(3 * time.Second)
-	} else {
+	answered := answeredAtLaunch
+	if !r.harness.InteractivePromptInArgs {
+		waitScreenQuiet(session, 1500*time.Millisecond, 15*time.Second)
+		answered = r.server.AnswersServed()
 		r.sendLine(session, "What is the project codename? Reply ONLY the codename.")
-		session.WaitForAny([]string{"mock", "hello", "Hello", "codename", "server"}, 30*time.Second)
-		time.Sleep(3 * time.Second)
+	}
+	r.step("waiting for answer > %d (served %d)", answered, r.server.AnswersServed())
+	r.waitTurnSettled(answered, 90*time.Second)
+	r.step("turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
+	if os.Getenv("HARNESS_DEBUG") != "" && r.server.LogCount() == 0 {
+		scr := stripANSI(session.Output())
+		if len(scr) > 1200 {
+			scr = scr[len(scr)-1200:]
+		}
+		fmt.Printf("    [step] no request yet; screen tail:\n%s\n", scr)
 	}
 	if r.harness.CompactCommand != "" {
+		answered = r.server.AnswersServed()
+		r.step("typing second prompt")
 		r.sendLine(session, "Tell me more about the project.")
-		session.WaitForAny([]string{"mock", "hello", "Hello", "server"}, 30*time.Second)
-		time.Sleep(2 * time.Second)
+		r.waitTurnSettled(answered, 60*time.Second)
+		r.step("second turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
 		r.sendLine(session, r.harness.CompactCommand)
 		session.WaitForAny([]string{"compact", "Compact", "compress", "Compress", "summar"}, 15*time.Second)
-		time.Sleep(3 * time.Second)
+		if r.harness.CompactConfirm {
+			if _, ok := session.WaitForAny([]string{"Enter to confirm", "confirm"}, 10*time.Second); ok {
+				session.SendLine("")
+			}
+		}
+		r.waitTurnSettled(-1, 30*time.Second)
+		r.step("compaction settled (requests %d)", r.server.LogCount())
 	}
 	if !r.harness.InteractivePromptInArgs && r.harness.ExitCommand != "" {
 		r.sendLine(session, r.harness.ExitCommand)
@@ -950,6 +1008,9 @@ func (r *Runner) runInteractive() {
 	}
 
 	r.lastOutput = session.Output()
+	if dump := os.Getenv("HARNESS_PTY_DUMP"); dump != "" {
+		os.WriteFile(dump, []byte(stripANSI(r.lastOutput)), 0644)
+	}
 	if os.Getenv("HARNESS_DEBUG") != "" {
 		stripped := stripANSI(r.lastOutput)
 		head := stripped
@@ -998,7 +1059,9 @@ func (r *Runner) runACP() {
 	dir := r.workDir()
 
 	var args []string
-	args = append(args, r.harness.ACPCmd[1:]...)
+	for _, a := range r.harness.ACPCmd[1:] {
+		args = append(args, r.expand(a))
+	}
 	for _, a := range r.harness.ACPArgs {
 		args = append(args, r.expand(a))
 	}
@@ -1334,4 +1397,59 @@ func (r *Runner) reportEvent(phase, label, tag string, fired bool, prefix string
 		return
 	}
 	r.fail(fmt.Sprintf("%s: %s%s hook did not fire", phase, prefix, label))
+}
+
+// requestHooksFor tells the mock which hooks this agent needs its backend to
+// request in this mode (Harness.ServerRequestedHooks), and nothing else.
+func (r *Runner) requestHooksFor(mode string) {
+	if r.server != nil {
+		r.server.SetRequestedHooks(r.harness.ServerRequestedHooks[mode])
+	}
+}
+
+// waitTurnSettled waits for a turn to finish: the mock has served an answer
+// beyond `after` (pass -1 to skip that), and then neither the mock's request
+// log nor the hook event log has changed for a few seconds, so trailing hooks
+// (stop, compaction; belt's take seconds) are done before the session is cut.
+func (r *Runner) waitTurnSettled(after int, timeout time.Duration) {
+	const quiet = 4 * time.Second
+	deadline := time.Now().Add(timeout)
+	for after >= 0 && r.server.AnswersServed() <= after && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
+	fingerprint := func() string {
+		size := int64(0)
+		if fi, err := os.Stat(hookLogPath); err == nil {
+			size = fi.Size()
+		}
+		return fmt.Sprintf("%d/%d", r.server.LogCount(), size)
+	}
+	last, since := fingerprint(), time.Now()
+	for time.Now().Before(deadline) && time.Since(since) < quiet {
+		time.Sleep(250 * time.Millisecond)
+		if fp := fingerprint(); fp != last {
+			last, since = fp, time.Now()
+		}
+	}
+}
+
+// step prints a timestamped runner step when HARNESS_DEBUG is set.
+func (r *Runner) step(format string, a ...any) {
+	if os.Getenv("HARNESS_DEBUG") != "" {
+		fmt.Printf("    [step %s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, a...))
+	}
+}
+
+// waitScreenQuiet waits until the TUI has drawn nothing new for `quiet`, up to
+// `max`: typing into a screen that is still settling (kimi right after its
+// trust dialog) lost the first Enter, so the prompt sat in the composer.
+func waitScreenQuiet(session *PTYSession, quiet, max time.Duration) {
+	deadline := time.Now().Add(max)
+	last, since := len(session.Output()), time.Now()
+	for time.Now().Before(deadline) && time.Since(since) < quiet {
+		time.Sleep(100 * time.Millisecond)
+		if n := len(session.Output()); n != last {
+			last, since = n, time.Now()
+		}
+	}
 }

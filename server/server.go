@@ -71,6 +71,8 @@ type MockServer struct {
 	response       string
 	toolCallMode   bool
 	toolCallServed bool
+	answers        int             // canned text answers served (see AnswersServed)
+	requestedHooks map[string]bool // runner tags the backend must request this phase (cursor)
 	toolName       string
 	toolArgs       string
 	toolCallPath   string
@@ -198,7 +200,19 @@ func New() *MockServer {
 		// CodeWhisperer streaming (LLM call)
 		case "AmazonCodeWhispererStreamingService.GenerateAssistantResponse":
 			body, _ := io.ReadAll(r.Body)
-			s.record(r, body, "kiro-default")
+			// Record the model kiro actually asked for, not a constant: with the
+			// constant, the model check compared "kiro-default" with itself.
+			var kreq struct {
+				ConversationState struct {
+					CurrentMessage struct {
+						UserInputMessage struct {
+							ModelID string `json:"modelId"`
+						} `json:"userInputMessage"`
+					} `json:"currentMessage"`
+				} `json:"conversationState"`
+			}
+			json.Unmarshal(body, &kreq)
+			s.record(r, body, kreq.ConversationState.CurrentMessage.UserInputMessage.ModelID)
 			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 			w.WriteHeader(200)
 			// Tool call round-trip: toolUseEvent carries the input as a JSON
@@ -454,7 +468,19 @@ func (s *MockServer) handleKiroRuntime(w http.ResponseWriter, r *http.Request) {
 func (s *MockServer) getResponse() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.answers++
 	return s.response
+}
+
+// AnswersServed counts canned text answers handed out since the server started.
+// The runner waits on this, not on words scraped from a terminal: the old
+// wait list contained "codename", which is in the prompt itself, and "build",
+// which is in Cursor's empty input box, so it "saw the answer" as soon as the
+// TUI drew and killed the session three seconds later.
+func (s *MockServer) AnswersServed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.answers
 }
 
 func (s *MockServer) getToolCall() (string, string) {
@@ -515,7 +541,7 @@ func (s *MockServer) record(r *http.Request, body []byte, model string) {
 
 	// HARNESS_DUMP=1 prints every recorded request body (for protocol work).
 	if os.Getenv("HARNESS_DUMP") != "" {
-		fmt.Printf("[dump] %s %s (%d bytes)\n%s\n", r.Method, r.URL.Path, len(body), body)
+		fmt.Printf("[dump] %s %s %s (%d bytes)\n%s\n", time.Now().Format("15:04:05.000"), r.Method, r.URL.Path, len(body), body)
 	}
 
 	headers := make(map[string]string)
@@ -672,4 +698,21 @@ func (s *MockServer) bodyOffersTool(body []byte) bool {
 	}
 	walk(doc)
 	return found
+}
+
+// SetRequestedHooks tells the mock which hook events to request from an agent
+// that runs them only on a backend request (see Harness.ServerRequestedHooks).
+func (s *MockServer) SetRequestedHooks(tags []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requestedHooks = map[string]bool{}
+	for _, t := range tags {
+		s.requestedHooks[t] = true
+	}
+}
+
+func (s *MockServer) requestsHook(tag string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requestedHooks[tag]
 }

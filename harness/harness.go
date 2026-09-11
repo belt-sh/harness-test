@@ -109,7 +109,21 @@ type Harness struct {
 	// fails the run. Every entry is a claim about the agent that was verified
 	// in Docker — never a way to quiet a flaky test.
 	KnownIssues map[string]string
-	Events      Events
+
+	// ServerRequestedHooks lists, per mode, the hook events (runner tags such
+	// as "PROMPT", "STOP", "PRE_COMPACT") this agent runs only when its backend
+	// asks for them, so the mock must send the request or the hook can never
+	// fire. Cursor is the only such agent: every hook goes through a backend
+	// request, but its TUI runs the prompt and stop hooks itself as well, so
+	// requesting those in interactive mode would run them twice. Measured in
+	// Docker 2026-09. It says what the agent does when asked; it does not say
+	// whether the vendor's real backend asks.
+	ServerRequestedHooks map[string][]string
+
+	// CompactConfirm: the interactive compact command opens a confirmation
+	// dialog ("Enter to confirm"), so the runner presses Enter after it.
+	CompactConfirm bool
+	Events         Events
 
 	// Mock tool call configuration
 	ToolCallName    string // tool name in mock responses (default: "Read")
@@ -186,6 +200,10 @@ type Harness struct {
 type DismissAction struct {
 	Pattern string
 	SendUp  bool // send Up arrow before Enter (to select a different menu item)
+	// Required: the dialog always appears (e.g. trusting a fresh folder), so
+	// wait for it instead of giving up once the splash screen has drawn;
+	// typing into a startup screen loses the prompt.
+	Required bool
 }
 
 // Events maps belt behaviors to harness-specific event names.

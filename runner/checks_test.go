@@ -26,6 +26,9 @@ func TestChecksFailInsteadOfSkip(t *testing.T) {
 		{"no stream skips with reason", withIssue(harness.All["claude"], "headless:streaming", "x"), []server.LogEntry{entry(`{"stream":false}`)}, func(r *Runner) { r.checkStreamingFormat("headless", r.entries()) }, 0, 1},
 		{"wrong model fails", harness.All["claude"], []server.LogEntry{entry(`{"model":"someone-elses-model"}`)}, func(r *Runner) { r.checkModelSelection("headless", r.entries()) }, 1, 0},
 		{"wrong model skips with reason", withIssue(harness.All["claude"], "headless:model", "x"), []server.LogEntry{entry(`{"model":"someone-elses-model"}`)}, func(r *Runner) { r.checkModelSelection("headless", r.entries()) }, 0, 1},
+		{"model named only in prompt text fails", withModel(harness.All["claude"], "mock-model"), []server.LogEntry{{Path: "/api/llm/o/v1/responses", Model: "gpt-5.6-sol", Body: []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":"-m mock-model"}]}`)}}, func(r *Runner) { r.checkModelSelection("interactive", r.entries()) }, 1, 0},
+		{"model in gemini path passes", withModel(harness.All["gemini"], "gemini-2.5-flash"), []server.LogEntry{{Path: "/v1beta/models/gemini-2.5-flash:streamGenerateContent", Body: []byte(`{}`)}}, func(r *Runner) { r.checkModelSelection("headless", r.entries()) }, 0, 0},
+		{"model as a path prefix of another model fails", withModel(harness.All["gemini"], "gemini-2.5"), []server.LogEntry{{Path: "/v1beta/models/gemini-2.5-flash:streamGenerateContent", Body: []byte(`{}`)}}, func(r *Runner) { r.checkModelSelection("headless", r.entries()) }, 1, 0},
 		{"hook silent fails", harness.All["claude"], nil, func(r *Runner) { r.reportEvent("headless", "prompt", TagPrompt, false, "") }, 1, 0},
 		{"hook silent skips with reason", withIssue(harness.All["claude"], "headless:event:PROMPT", "x"), nil, func(r *Runner) { r.reportEvent("headless", "prompt", TagPrompt, false, "") }, 0, 1},
 	}
@@ -47,5 +50,11 @@ func withIssue(h harness.Harness, key, reason string) harness.Harness {
 	}
 	m[key] = reason
 	h.KnownIssues = m
+	return h
+}
+
+func withModel(h harness.Harness, model string) harness.Harness {
+	h.DefaultModel = model
+	h.AcceptedModels = nil
 	return h
 }

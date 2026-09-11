@@ -152,11 +152,14 @@ func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
 	}
 	fmt.Printf("[check] model selection (%s)\n", phase)
 
+	// Only the request's own model field (as the mock parsed it) or the URL
+	// path (gemini puts the model there) counts. Searching the whole body let
+	// any mention pass: droid's TUI sent "-m mock-model" as the user's prompt
+	// while running Factory's default model, and this check went green.
 	accepted := append([]string{r.harness.DefaultModel}, r.harness.AcceptedModels...)
 	for _, e := range entries {
-		body := string(e.Body)
 		for _, model := range accepted {
-			if strings.Contains(body, model) || strings.Contains(e.Path, model) || e.Model == model {
+			if e.Model == model || pathNamesModel(e.Path, model) {
 				r.pass(fmt.Sprintf("%s: model %s in request", phase, model))
 				return
 			}
@@ -181,4 +184,15 @@ func (r *Runner) promptHookFired() bool {
 		return true
 	}
 	return strings.Contains(stripANSI(r.lastOutput), "hook: "+r.harness.Events.PromptSubmit)
+}
+
+// pathNamesModel reports whether a URL path addresses the model as a path
+// segment (".../models/<model>:generateContent"), not merely contains it.
+func pathNamesModel(path, model string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if seg == model || strings.HasPrefix(seg, model+":") {
+			return true
+		}
+	}
+	return false
 }

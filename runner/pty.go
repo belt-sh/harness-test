@@ -116,3 +116,16 @@ func (s *PTYSession) Wait(timeout time.Duration) error {
 		return fmt.Errorf("timeout after %s", timeout)
 	}
 }
+
+// SendText types text without a trailing carriage return.
+func (s *PTYSession) SendText(text string, charDelay time.Duration) {
+	for _, c := range text {
+		s.ptmx.WriteString(string(c))
+		if charDelay > 0 {
+			time.Sleep(charDelay)
+		}
+	}
+}
+
+// SendRaw writes bytes as they are.
+func (s *PTYSession) SendRaw(b string) { s.ptmx.WriteString(b) }

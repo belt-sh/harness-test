@@ -41,12 +41,14 @@ func tsPluginHarness(name, binary, installPkg, hookDir string) Harness {
 		EnvVars: map[string]string{
 			"OPENAI_BASE_URL": "{{.BaseURL}}/v1",
 		},
-		APIKeyEnvVar:  "OPENAI_API_KEY",
-		DefaultModel:  "openai/gpt-4o-mini",
-		ToolCallName:  "read",
-		ToolCallArgs:  `{"filePath":"README.md"}`,
-		HookFormat:    TSPlugin,
-		HookConfigDir: hookDir,
+		APIKeyEnvVar: "OPENAI_API_KEY",
+		DefaultModel: "openai/gpt-4o-mini",
+		// The CLI takes provider/model; the wire request carries the bare model.
+		AcceptedModels: []string{"gpt-4o-mini"},
+		ToolCallName:   "read",
+		ToolCallArgs:   `{"filePath":"README.md"}`,
+		HookFormat:     TSPlugin,
+		HookConfigDir:  hookDir,
 		Events: Events{
 			PromptSubmit: "experimental.chat.system.transform",
 			PreToolUse:   "tool.execute.before",
@@ -214,11 +216,13 @@ var All = map[string]Harness{
 			"GROK_MANAGED_CONFIG_URL":      "{{.BaseURL}}",
 			"GROK_CONVERSATIONS_BASE_URL":  "{{.BaseURL}}",
 		},
-		APIKeyEnvVar:   "XAI_API_KEY",
-		DefaultModel:   "grok-3-mini",
-		AcceptedModels: []string{"grok-4"},
-		HookFormat:     JSONNested,
-		HookConfigDir:  ".grok/hooks",
+		APIKeyEnvVar: "XAI_API_KEY",
+		// grok takes its model from the backend's /settings default, which the
+		// mock serves as mock-model; "grok-3-mini" was never requested, and
+		// AcceptedModels "grok-4" matched the title side call instead.
+		DefaultModel:  "mock-model",
+		HookFormat:    JSONNested,
+		HookConfigDir: ".grok/hooks",
 		Events: Events{
 			PromptSubmit: "UserPromptSubmit",
 			PreToolUse:   "PreToolUse",
@@ -289,10 +293,11 @@ var All = map[string]Harness{
 			PostToolUse:  "postToolUse",
 			Stop:         "stop",
 		},
-		NeedsIntercept:          true,
-		HeadlessCmd:             []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools"},
-		HooksInHeadless:         false, // agent-config hooks verified silent in --no-interactive (2.21.2)
-		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools"},
+		NeedsIntercept:  true,
+		HeadlessCmd:     []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools"},
+		HooksInHeadless: false, // agent-config hooks verified silent in --no-interactive (2.21.2)
+		// Without --model, kiro sends an empty modelId and the backend picks.
+		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools", "--model", "{{.Model}}"},
 		InteractiveArgs:         []string{"What is the project codename? Reply ONLY the codename."},
 		InteractivePromptInArgs: true,
 		ExitCommand:             "/exit",
@@ -400,9 +405,10 @@ var All = map[string]Harness{
 		InteractiveCmd:     []string{"kimi"},
 		ExitCommand:        "/exit",
 		HooksInInteractive: true,
-		OnboardingDismiss:  []DismissAction{{Pattern: "Don't trust", SendUp: true}},
-		ACPCmd:             []string{"kimi", "acp"},
-		HooksInACP:         true,
+		// "Trust this folder" is preselected; Enter confirms it.
+		OnboardingDismiss: []DismissAction{{Pattern: "Trust this folder?", Required: true}},
+		ACPCmd:            []string{"kimi", "acp"},
+		HooksInACP:        true,
 	},
 	"goose": {
 		Name: "goose", Binary: "goose",
@@ -456,16 +462,15 @@ var All = map[string]Harness{
 			"GEMINI_CLI_TRUST_WORKSPACE": "true",
 			"GEMINI_API_KEY":             "mock-key",
 		},
-		APIKeyEnvVar:   "",
-		DefaultModel:   "gemini-2.5-flash",
-		AcceptedModels: []string{"gemini-3", "gemini-2"},
-		ToolCallName:   "write_file",
-		ToolCallArgs:   `{"file_path":"{{.RepoDir}}/test-output.txt","content":"test"}`,
-		HookFormat:     JSONNested,
-		HookConfigDir:  ".gemini",
-		HookFileName:   "settings.json",
-		HookWrapper:    `{"baseUrl":"{{.BaseURL}}","security":{"auth":{"selectedType":"gemini-api-key","useExternal":true}},"hooks":%s}`,
-		HookTimeoutMs:  true,
+		APIKeyEnvVar:  "",
+		DefaultModel:  "gemini-3.5-flash",
+		ToolCallName:  "write_file",
+		ToolCallArgs:  `{"file_path":"{{.RepoDir}}/test-output.txt","content":"test"}`,
+		HookFormat:    JSONNested,
+		HookConfigDir: ".gemini",
+		HookFileName:  "settings.json",
+		HookWrapper:   `{"baseUrl":"{{.BaseURL}}","security":{"auth":{"selectedType":"gemini-api-key","useExternal":true}},"hooks":%s}`,
+		HookTimeoutMs: true,
 		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
 		// not fire here. A reason marked "observed only" states what happened and
 		// not why; the others cite an investigation.
@@ -482,11 +487,15 @@ var All = map[string]Harness{
 			Stop:         "SessionEnd",
 			PreCompact:   "PreCompress",
 		},
-		NeedsGitRepo:            true,
-		HeadlessCmd:             []string{"gemini", "-p"},
-		HeadlessModelArgs:       []string{"--yolo"},
+		NeedsGitRepo: true,
+		HeadlessCmd:  []string{"gemini", "-p"},
+		// Pin the model in every mode. Unpinned, gemini picked its own (a
+		// flash-lite router plus gemini-3.1-pro-preview), and AcceptedModels
+		// once listed the prefixes "gemini-3"/"gemini-2" so any of them passed.
+		HeadlessModelArgs:       []string{"--yolo", "-m", "gemini-3.5-flash"},
+		ACPArgs:                 []string{"-m", "gemini-3.5-flash"},
 		HooksInHeadless:         true,
-		InteractiveCmd:          []string{"gemini", "--yolo", "-m", "gemini-2.5-flash", "-i", "What is the project codename? Reply ONLY the codename."},
+		InteractiveCmd:          []string{"gemini", "--yolo", "-m", "gemini-3.5-flash", "-i", "What is the project codename? Reply ONLY the codename."},
 		InteractivePromptInArgs: true,
 		SlowInput:               true,
 		ExitCommand:             "/exit",
@@ -545,7 +554,6 @@ var All = map[string]Harness{
 		},
 		APIKeyEnvVar:   "",
 		DefaultModel:   "mock-model",
-		AcceptedModels: []string{"claude-"},
 		ToolCallName:   "Read",
 		ToolCallArgs:   `{"file_path":"{{.RepoDir}}/README.md"}`,
 		HookFormat:     JSONNested,
@@ -557,25 +565,34 @@ var All = map[string]Harness{
 		// not fire here. A reason marked "observed only" states what happened and
 		// not why; the others cite an investigation.
 		KnownIssues: map[string]string{
-			"acp:event:PRE_COMPACT":         "ACP mode is droid exec, which treats /compact as a user message and never auto-compacts (same investigation as headless)",
-			"acp:event:PROMPT":              "observed only; no prompt hook over ACP, cause not established",
-			"headless:event:PRE_COMPACT":    "exec treats /compact as a user message and never auto-compacts",
-			"interactive:event:PRE_COMPACT": "/compress needs context accounting the mock model lacks",
+			"acp:event:PRE_COMPACT":      "ACP mode is droid exec; PreCompact fires only from the TUI's manual compaction (droid 0.217 source)",
+			"acp:event:PROMPT":           "observed only; no prompt hook over ACP, cause not established",
+			"headless:event:PRE_COMPACT": "PreCompact fires only from the TUI's manual compaction; exec never compacts (droid 0.217 source)",
 		},
 		Events: standardEvents,
 		ConfigFiles: []ConfigFile{
-			{Path: ".factory/settings.json", Content: `{"customModels":[{"model":"mock-model","displayName":"Mock","baseUrl":"{{.BaseURL}}/v1","apiKey":"mock-key","provider":"openai","maxOutputTokens":4096}]}`},
+			{Path: ".factory/settings.json", Content: `{"customModels":[{"model":"mock-model","displayName":"Mock","baseUrl":"{{.BaseURL}}/v1","apiKey":"mock-key","provider":"openai","maxOutputTokens":4096,"maxContextLimit":128000}],"sessionDefaultSettings":{"model":"custom:mock-model"}}`},
 		},
-		SkillsDir:          ".factory/skills",
-		NeedsGitRepo:       true,
-		HeadlessCmd:        []string{"droid", "exec"},
-		HeadlessModelArgs:  []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
-		PostHeadlessCmd:    [][]string{{"exec", "--session-id", "{{.SessionID}}", "--auto", "high", "-m", "{{.Model}}", "/compact"}},
-		HooksInHeadless:    true,
-		InteractiveCmd:     []string{"droid"},
-		InteractiveArgs:    []string{"--auto", "high", "-m", "{{.Model}}"},
-		ExitCommand:        "/exit",
-		CompactCommand:     "/compact",
+		SkillsDir:         ".factory/skills",
+		NeedsGitRepo:      true,
+		HeadlessCmd:       []string{"droid", "exec"},
+		HeadlessModelArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
+		PostHeadlessCmd:   [][]string{{"exec", "--session-id", "{{.SessionID}}", "--auto", "high", "-m", "{{.Model}}", "/compact"}},
+		HooksInHeadless:   true,
+		InteractiveCmd:    []string{"droid"},
+		// The TUI has no -m flag: "-m mock-model" became the prompt text and the
+		// session ran Factory's default model. It takes the model from
+		// sessionDefaultSettings (settings.json above) instead.
+		InteractiveArgs: []string{"--auto", "high"},
+		// droid 0.217 asks to trust the project folder before the first turn;
+		// "1. Trust this folder" is preselected. A prompt typed into the dialog
+		// was swallowed and its Enter confirmed the trust instead.
+		OnboardingDismiss: []DismissAction{{Pattern: "Trust this folder", Required: true}},
+		ExitCommand:       "/exit",
+		// /compact opens the Context Usage panel in droid 0.217; /compress
+		// compacts, after a "Confirm /compress" dialog.
+		CompactCommand:     "/compress",
+		CompactConfirm:     true,
 		HooksInInteractive: true,
 		ACPCmd:             []string{"droid", "exec", "--output-format", "acp"},
 		ACPArgs:            []string{"--auto", "high", "-m", "{{.Model}}"},
@@ -599,23 +616,18 @@ var All = map[string]Harness{
 		EnvVars: map[string]string{
 			"CURSOR_API_ENDPOINT": "{{.BaseURL}}",
 		},
-		APIKeyEnvVar:  "CURSOR_API_KEY",
-		DefaultModel:  "gpt-4o-mini",
-		ToolCallName:  "read",
-		ToolCallArgs:  `{"path":"README.md"}`,
-		HookFormat:    JSONFlat,
+		APIKeyEnvVar: "CURSOR_API_KEY",
+		DefaultModel: "gpt-4o-mini",
+		ToolCallName: "read",
+		ToolCallArgs: `{"path":"README.md"}`,
+		HookFormat:   JSONFlat,
+		ServerRequestedHooks: map[string][]string{
+			"headless":    {"PROMPT", "STOP", "PRE_COMPACT"},
+			"interactive": {"PRE_COMPACT"},
+		},
 		HookConfigDir: ".cursor",
 		HookFileName:  "hooks.json",
 		HookWrapper:   `{"version":1,"hooks":%s}`,
-		// Measured in Docker 2026-09 (mock and belt hooks agreed): these events do
-		// not fire here. A reason marked "observed only" states what happened and
-		// not why; the others cite an investigation.
-		KnownIssues: map[string]string{
-			"headless:event:PRE_COMPACT":    "Cursor compaction is backend-initiated (preCompact is a server request) and this mock never compacts; says nothing about Cursor",
-			"headless:event:PROMPT":         "observed only; Cursor hooks run on backend request and this mock sends none, cause not established",
-			"headless:event:STOP":           "observed only; Cursor hooks run on backend request and this mock sends none, cause not established",
-			"interactive:event:PRE_COMPACT": "Cursor compaction is backend-initiated (preCompact is a server request) and this mock never compacts; says nothing about Cursor",
-		},
 		Events: Events{
 			SessionStart: "sessionStart",
 			PromptSubmit: "beforeSubmitPrompt",

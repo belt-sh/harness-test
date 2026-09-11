@@ -293,6 +293,7 @@ type cursorSession struct {
 	prompt   string
 	model    string
 	execID   uint64
+	pending  uint64 // exec id whose reply advances the current stage
 	lastSeen time.Time
 }
 
@@ -414,10 +415,13 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 			cs.model = string(m)
 			model = cs.model
 		}
-	case "2": // exec_client_message: tool / context result
+	case "2": // exec_client_message: tool / context / hook result
 		entry["exec_result"] = true
 		if ctx, ok := pbPath(msg, 2, 10); ok {
 			entry["request_context"] = pbToJSON(ctx, 0)
+		}
+		if hook, ok := pbPath(msg, 2, 27); ok {
+			entry["hook_result"] = pbToJSON(hook, 0)
 		}
 	case "5": // exec_client_control_message: heartbeat / stream_close / throw
 		entry["exec_control"] = true
@@ -429,22 +433,54 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 
 	switch kind {
 	case "1":
-		// Ask the client for its request context first: rules (AGENTS.md,
-		// .cursor/rules), env, repo info. That reply is what carries the
-		// instruction-file content into the log.
-		cs.stage = "context"
-		cs.execID++
-		cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)), pbMsg(10)))
-		go s.cursorFallback(cs, "context")
+		// The backend asks the client to run its prompt hook before the model
+		// sees the turn; the reply's additional_context is recorded in the log,
+		// the way the real backend would hand it to the model.
+		if s.requestsHook("PROMPT") {
+			s.cursorHook(cs, "hook:prompt", cursorHookBeforeSubmitPrompt,
+				pbMsg(cursorHookBeforeSubmitPrompt, pbString(1, cs.prompt), pbString(3, "agent"), pbString(4, reqID), pbString(6, cs.model)))
+		} else {
+			cs.stage = "hook:prompt"
+			s.cursorAdvance(cs)
+		}
 	case "2":
-		s.cursorAdvance(cs)
+		id := uint64(0)
+		if inner, ok := pbPath(msg, 2); ok {
+			if fields, ok := pbDecode(inner); ok {
+				if f, ok := pbGet(fields, 1); ok {
+					id = f.Num
+				}
+			}
+		}
+		s.mu.Lock()
+		current := cs.pending != 0 && id == cs.pending
+		if current {
+			cs.pending = 0
+		}
+		s.mu.Unlock()
+		if current {
+			s.cursorAdvance(cs)
+		}
 	}
 }
 
 // cursorFallback moves on if the client never answers an exec request.
+// cursorFallback advances a stage whose reply never came. It must not fire
+// once the reply has been handled, and a reply that arrives after the fallback
+// must not advance the next stage: slow hooks (belt's take seconds) made a late
+// tool reply skip the compaction step entirely.
 func (s *MockServer) cursorFallback(cs *cursorSession, stage string) {
+	s.mu.Lock()
+	waitingOn := cs.pending
+	s.mu.Unlock()
 	time.Sleep(4 * time.Second)
-	if cs.stage == stage {
+	s.mu.Lock()
+	stale := cs.stage != stage || cs.pending != waitingOn
+	if !stale {
+		cs.pending = 0
+	}
+	s.mu.Unlock()
+	if !stale {
 		s.cursorAdvance(cs)
 	}
 }
@@ -454,10 +490,32 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 	stage := cs.stage
 	s.mu.Unlock()
 	switch stage {
+	case "hook:prompt":
+		// Then ask for the request context: rules (AGENTS.md, .cursor/rules),
+		// env, repo info. That reply carries the instruction-file content.
+		cs.stage = "context"
+		cs.execID++
+		cs.pending = cs.execID
+		cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)), pbMsg(10)))
+		go s.cursorFallback(cs, "context")
+	case "hook:compact":
+		cs.send(pbMsg(1, pbMsg(1, pbString(1, s.getResponse())))) // interaction_update.text_delta
+		if s.requestsHook("STOP") {
+			s.cursorHook(cs, "hook:stop", cursorHookStop,
+				pbMsg(cursorHookStop, pbString(1, "completed"), pbUint(2, 0), pbString(3, cs.convID())))
+			return
+		}
+		cs.stage = "hook:stop"
+		s.cursorAdvance(cs)
+	case "hook:stop":
+		cs.stage = "done"
+		cs.send(pbMsg(1, pbMsg(14, pbUint(1, 10), pbUint(2, 5)))) // interaction_update.turn_ended
+		cs.close()
 	case "context":
 		if s.shouldToolCall(true, "/agent.v1.AgentService/RunSSE") {
 			cs.stage = "tool"
 			cs.execID++
+			cs.pending = cs.execID
 			_, args := s.getToolCall()
 			path := "README.md"
 			var a struct {
@@ -477,10 +535,42 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 	}
 }
 
+// Cursor runs every hook on a backend request: ExecServerMessage field 27
+// execute_hook_args { request = 1: ExecuteHookRequest }, whose oneof names the
+// hook, and the client answers with ExecClientMessage field 27
+// execute_hook_result (agent.v1 schema, Cursor CLI 2026.09). A mock that never
+// asks can never see prompt, stop or compaction hooks, which is why those
+// were once recorded as things Cursor "does not do" in headless mode.
+const (
+	cursorHookPreCompact         = 1
+	cursorHookBeforeSubmitPrompt = 7
+	cursorHookStop               = 11
+)
+
+// cursorHook sends one hook request and moves the session to stage; the
+// client's execute_hook_result (or the fallback timer) advances it.
+func (s *MockServer) cursorHook(cs *cursorSession, stage string, _ int, query []byte) {
+	cs.stage = stage
+	cs.execID++
+	cs.pending = cs.execID
+	cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)),
+		pbBool(55, true), // accept_hook_additional_contexts
+		pbMsg(27, pbMsg(1, query))))
+	go s.cursorFallback(cs, stage)
+}
+
+func (cs *cursorSession) convID() string { return "mock-conversation" }
+
+// cursorFinish ends the turn the way the backend does: it compacts (the mock
+// always does once, standing in for a full context window, so the client's
+// preCompact hook is exercised), streams the answer, runs the stop hook, and
+// only then ends the turn.
 func (s *MockServer) cursorFinish(cs *cursorSession) {
-	cs.stage = "done"
-	text := s.getResponse()
-	cs.send(pbMsg(1, pbMsg(1, pbString(1, text))))            // interaction_update.text_delta
-	cs.send(pbMsg(1, pbMsg(14, pbUint(1, 10), pbUint(2, 5)))) // interaction_update.turn_ended
-	cs.close()
+	if s.requestsHook("PRE_COMPACT") {
+		s.cursorHook(cs, "hook:compact", cursorHookPreCompact,
+			pbMsg(cursorHookPreCompact, pbString(1, "auto"), pbBool(7, true), pbString(8, cs.convID()), pbString(10, cs.model)))
+		return
+	}
+	cs.stage = "hook:compact"
+	s.cursorAdvance(cs)
 }
