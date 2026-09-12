@@ -37,7 +37,7 @@ jobs:
           - harness: opencode
             modes: headless,acp
           - harness: kiro
-            modes: interactive
+            modes: headless,interactive,acp
           - harness: omp
             modes: headless,acp,sdk
           - harness: pi
