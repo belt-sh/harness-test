@@ -1,2 +1,6 @@
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
+github.com/inference-sh/agentprotocol v0.2.0 h1:3u4GlWO5tQ3OUyALFUF4HRggQTMhTI3qxxOUoDkbmQs=
+github.com/inference-sh/agentprotocol v0.2.0/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
+github.com/inference-sh/agentprotocol v0.2.1 h1:ffg5pxMUQp7ERTieWD+5D8uhbe1zdWCbUNZ2VNa991E=
+github.com/inference-sh/agentprotocol v0.2.1/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=

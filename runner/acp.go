@@ -1,127 +1,210 @@
 package runner
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/inference-sh/agentprotocol/acp"
 )
 
-// ACPDriver communicates with an agent via the Agent Client Protocol (JSON-RPC over stdio).
-// Implements the Driver interface and the ACP v1 spec: https://agentclientprotocol.com
+// ACPDriver drives an agent over the Agent Client Protocol.
+//
+// The transport — framing, the handshake, request routing, answering
+// agent-initiated requests — belongs to github.com/inference-sh/agentprotocol/acp,
+// which belt's runner mode uses too. What stays here is this suite's policy:
+// approve everything, serve files, and accumulate updates into the polling
+// model the checks are written against (Output/WaitForResponse/WaitIdle).
+// Quirks found against a real agent belong in the library, not here, so belt
+// inherits them; see the note on promptErr for the one asymmetry worth
+// watching.
 type ACPDriver struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser
-	scanner *bufio.Scanner
+	binary  string
+	args    []string
 	workDir string
+	env     []string
 
-	sessionID string
-	output    strings.Builder
-	mu        sync.Mutex
+	proc *acp.Process
 
-	nextID    int
-	responses map[int]chan json.RawMessage
-	respMu    sync.Mutex
+	mu         sync.Mutex
+	output     strings.Builder
+	lastUpdate time.Time
 
-	updates    chan sessionUpdate
-	handlers   map[string]notificationHandler
-	done       chan struct{}
-	turnDone   chan struct{} // signaled when the agent finishes a turn
-	lastUpdate time.Time     // timestamp of last session/update
-}
+	updates  chan acp.SessionUpdate
+	turnDone chan struct{}
 
-type notificationHandler func(msg rpcMessage)
-
-var acpTurnDoneSignals = map[string]bool{
-	"turn_complete": true,
-	"end_turn":      true,
-	"completed":     true,
-	"idle":          true,
+	// promptDone carries the result of the session/prompt call. The spec says
+	// prompt is a request that returns a stopReason, so its return is the
+	// authoritative end of a turn; the update-borne signals are kept because
+	// this suite predates the library and thirteen agents were measured
+	// against them. An agent that ends its turn without answering the call is
+	// a library bug worth reporting, so both are recorded.
+	promptDone chan error
+	promptErr  error
+	turnEnded  bool // a turn-done update arrived before the prompt call returned
 }
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
-	cmd := exec.Command(binary, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stderr = os.Stderr
-
-	d := &ACPDriver{
-		cmd:       cmd,
-		workDir:   dir,
-		responses: make(map[int]chan json.RawMessage),
-		updates:   make(chan sessionUpdate, 64),
-		done:      make(chan struct{}),
-		turnDone:  make(chan struct{}, 1),
+	return &ACPDriver{
+		binary:     binary,
+		args:       args,
+		workDir:    dir,
+		env:        env,
+		updates:    make(chan acp.SessionUpdate, 64),
+		turnDone:   make(chan struct{}, 1),
+		promptDone: make(chan error, 1),
 	}
-	d.handlers = map[string]notificationHandler{
-		"session/update":             d.handleUpdate,
-		"session/request_permission": d.handlePermission,
-		"fs/write_text_file":         d.handleFsWrite,
-		"fs/read_text_file":          d.handleFsRead,
-		"elicitation/create":         d.handleElicitation,
-	}
-	return d
 }
 
 func (d *ACPDriver) Start() error {
-	var err error
-	if d.stdin, err = d.cmd.StdinPipe(); err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
-	}
-	if d.stdout, err = d.cmd.StdoutPipe(); err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := d.cmd.Start(); err != nil {
-		return fmt.Errorf("start agent: %w", err)
-	}
-
-	d.scanner = bufio.NewScanner(d.stdout)
-	d.scanner.Buffer(make([]byte, 1<<20), 1<<20)
-	go d.readLoop()
-
-	initResult, err := d.call("initialize", map[string]any{
-		"protocolVersion": 1,
-		"clientInfo":      map[string]string{"name": "harness-test", "version": "1.0.0"},
-		"capabilities":    map[string]any{"permissionRequests": true},
-	})
+	proc, err := acp.Spawn(context.Background(), acp.ProcessConfig{
+		Command: d.binary,
+		Args:    d.args,
+		Dir:     d.workDir,
+		Env:     d.env,
+		Stderr:  os.Stderr,
+	}, acp.ClientInfo{Name: "harness-test", Version: "1.0.0"}, d.handler())
 	if err != nil {
-		return fmt.Errorf("initialize: %w", err)
+		return err
 	}
-	d.appendOutput(fmt.Sprintf("[acp] initialized: %s\n", truncate(string(initResult), 100)))
+	d.proc = proc
+	d.appendOutput("[acp] initialized\n")
 
 	cwd, _ := filepath.Abs(d.workDir)
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	sessResult, err := d.call("session/new", map[string]any{
-		"cwd":        cwd,
-		"mcpServers": []any{},
-	})
+	sessionID, err := d.proc.NewSession(context.Background(), cwd, nil)
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
-	var sess struct {
-		SessionID string `json:"sessionId"`
-	}
-	json.Unmarshal(sessResult, &sess)
-	d.sessionID = sess.SessionID
-	d.appendOutput(fmt.Sprintf("[acp] session: %s\n", d.sessionID))
-
+	d.appendOutput(fmt.Sprintf("[acp] session: %s\n", sessionID))
 	return nil
 }
 
+// handler is everything this suite decides for itself: it approves, it serves
+// the repo's files, and it feeds updates to the waiters.
+func (d *ACPDriver) handler() acp.Handler {
+	return acp.Handler{
+		OnUpdate: func(n acp.UpdateNotification) {
+			d.noteUpdate(n.Update)
+		},
+
+		// Auto-approve so a turn runs unattended. PickOption matches the
+		// agent's own option IDs by kind and reports false rather than
+		// guessing, so an agent offering nothing recognisable is cancelled
+		// instead of silently authorised.
+		OnPermission: func(_ context.Context, r acp.PermissionRequest) (acp.PermissionResponse, error) {
+			if id, ok := r.PickOption(acp.OptionKindAllowOnce, acp.OptionKindAllowAlways); ok {
+				d.appendOutput("[acp] approved permission (" + id + ")\n")
+				return acp.Selected(id), nil
+			}
+			if len(r.Options) > 0 {
+				id := r.Options[0].OptionID
+				d.appendOutput("[acp] approved permission, first option (" + id + ")\n")
+				return acp.Selected(id), nil
+			}
+			d.appendOutput("[acp] permission request offered no options; cancelled\n")
+			return acp.Cancelled(), nil
+		},
+
+		OnReadTextFile: func(_ context.Context, p acp.ReadTextFileParams) (acp.ReadTextFileResult, error) {
+			content, err := os.ReadFile(p.Path)
+			if err != nil {
+				d.appendOutput("[acp] fs/read " + p.Path + ": " + err.Error() + "\n")
+				return acp.ReadTextFileResult{}, err
+			}
+			d.appendOutput("[acp] fs/read " + p.Path + "\n")
+			return acp.ReadTextFileResult{Content: string(content)}, nil
+		},
+
+		OnWriteTextFile: func(_ context.Context, p acp.WriteTextFileParams) error {
+			if p.Path == "" {
+				return nil
+			}
+			os.MkdirAll(filepath.Dir(p.Path), 0755)
+			return os.WriteFile(p.Path, []byte(p.Content), 0644)
+		},
+
+		OnElicitation: func(context.Context, acp.ElicitationParams) (acp.ElicitationResponse, error) {
+			d.appendOutput("[acp] auto-confirmed elicitation\n")
+			return acp.ElicitationResponse{Action: acp.ElicitationConfirm}, nil
+		},
+
+		// grok asks x.ai/hooks/run, which nothing here implements. The library
+		// answers method-not-found either way; logging it keeps a record of
+		// what an agent expected of its client.
+		OnUnhandled: func(method string, _ json.RawMessage) {
+			d.appendOutput("[acp] unhandled request: " + method + "\n")
+		},
+
+		// An error the agent reports without attributing it to a request. kiro
+		// answers the session/close notification with one ("Method not found"),
+		// which is a trait of the agent worth seeing rather than noise: the
+		// same line crashed the client until agentprotocol v0.2.1, precisely
+		// because nobody was looking at it.
+		OnPeerError: func(e *acp.Error) {
+			d.appendOutput(fmt.Sprintf("[acp] agent reported an unattributed error: %d %s %s\n", e.Code, e.Message, string(e.Data)))
+		},
+	}
+}
+
+func (d *ACPDriver) noteUpdate(u acp.SessionUpdate) {
+	d.mu.Lock()
+	d.lastUpdate = time.Now()
+	d.mu.Unlock()
+
+	if os.Getenv("HARNESS_DEBUG") != "" {
+		d.appendOutput(fmt.Sprintf("[acp] update %s %s\n", u.Kind, u.Status))
+	}
+
+	select {
+	case d.updates <- u:
+	default: // a full buffer must not stall the library's read loop
+	}
+
+	if acp.IsTurnDone(u) {
+		d.mu.Lock()
+		d.turnEnded = true
+		d.mu.Unlock()
+		select {
+		case d.turnDone <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// SendPrompt returns as soon as the prompt is on the wire, because the Driver
+// interface is send-then-wait for every mode. The call itself runs in the
+// background and its result lands in promptDone, where WaitForResponse picks
+// it up as the end of the turn.
 func (d *ACPDriver) SendPrompt(prompt string) error {
-	return d.send("session/prompt", map[string]any{
-		"sessionId": d.sessionID,
-		"prompt":    []map[string]any{{"type": "text", "text": prompt}},
-	})
+	d.mu.Lock()
+	d.turnEnded = false
+	d.mu.Unlock()
+
+	go func() {
+		_, err := d.proc.Prompt(context.Background(), prompt)
+		d.mu.Lock()
+		d.promptErr = err
+		ended := d.turnEnded
+		d.mu.Unlock()
+		if err != nil {
+			d.appendOutput("[acp] prompt call failed: " + err.Error() + "\n")
+		} else if !ended {
+			d.appendOutput("[acp] prompt call returned before any turn-done update\n")
+		}
+		select {
+		case d.promptDone <- err:
+		default:
+		}
+	}()
+	return nil
 }
 
 func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (string, error) {
@@ -130,7 +213,7 @@ func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (s
 	for {
 		select {
 		case upd := <-d.updates:
-			if text := d.extractText(upd); text != "" {
+			if text := upd.Text(); text != "" {
 				d.appendOutput(text)
 			}
 			if !matched {
@@ -145,12 +228,16 @@ func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (s
 			if matched {
 				return d.Output(), nil
 			}
+		case <-d.promptDone:
+			if matched {
+				return d.Output(), nil
+			}
 		case <-deadline:
 			if matched {
 				return d.Output(), nil
 			}
 			return d.Output(), fmt.Errorf("timeout waiting for response")
-		case <-d.done:
+		case <-d.proc.Done():
 			return d.Output(), nil
 		}
 	}
@@ -181,7 +268,7 @@ func (d *ACPDriver) WaitIdle(quiet time.Duration) {
 			}
 		case <-deadline:
 			return
-		case <-d.done:
+		case <-d.proc.Done():
 			return
 		}
 	}
@@ -197,20 +284,15 @@ func (d *ACPDriver) Output() string {
 	return d.output.String()
 }
 
+// Close hands shutdown to the library: since v0.2.1 Wait sends session/close
+// and waits out ShutdownGrace itself, which is what this suite needs — Stop
+// hooks fire after session/close, and closing stdin at once cut them off.
 func (d *ACPDriver) Close() error {
-	if d.sessionID != "" {
-		d.send("session/close", map[string]any{"sessionId": d.sessionID})
-		// Give the agent time to process close and fire Stop hooks
-		select {
-		case <-d.done:
-		case <-time.After(5 * time.Second):
-		}
+	if d.proc == nil {
+		return nil
 	}
-	d.stdin.Close()
-	return d.cmd.Wait()
+	return d.proc.Wait()
 }
-
-// --- internal ---
 
 func (d *ACPDriver) appendOutput(s string) {
 	d.mu.Lock()
@@ -218,254 +300,7 @@ func (d *ACPDriver) appendOutput(s string) {
 	d.mu.Unlock()
 }
 
-func (d *ACPDriver) send(method string, params any) error {
-	d.mu.Lock()
-	d.nextID++
-	id := d.nextID
-	d.mu.Unlock()
-
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
-	data, _ := json.Marshal(req)
-	data = append(data, '\n')
-	_, err := d.stdin.Write(data)
-	return err
-}
-
-func (d *ACPDriver) call(method string, params any) (json.RawMessage, error) {
-	d.mu.Lock()
-	d.nextID++
-	id := d.nextID
-	d.mu.Unlock()
-
-	ch := make(chan json.RawMessage, 1)
-	d.respMu.Lock()
-	d.responses[id] = ch
-	d.respMu.Unlock()
-	defer func() {
-		d.respMu.Lock()
-		delete(d.responses, id)
-		d.respMu.Unlock()
-	}()
-
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
-	data, _ := json.Marshal(req)
-	data = append(data, '\n')
-	if _, err := d.stdin.Write(data); err != nil {
-		return nil, err
-	}
-
-	timer := time.NewTimer(60 * time.Second)
-	defer timer.Stop()
-	select {
-	case result := <-ch:
-		return result, nil
-	case <-timer.C:
-		return nil, fmt.Errorf("timeout waiting for %s response", method)
-	case <-d.done:
-		return nil, fmt.Errorf("agent exited during %s", method)
-	}
-}
-
-func (d *ACPDriver) readLoop() {
-	defer close(d.done)
-	for d.scanner.Scan() {
-		line := d.scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var msg rpcMessage
-		if json.Unmarshal(line, &msg) != nil {
-			continue
-		}
-
-		// Response to a call we made
-		if msg.ID != nil && msg.Method == "" {
-			d.routeResponse(msg)
-			continue
-		}
-
-		// Server-initiated notification or request
-		if handler, ok := d.handlers[msg.Method]; ok {
-			handler(msg)
-			continue
-		}
-		if msg.ID != nil {
-			// Answer unknown requests at once; a silent drop leaves the agent
-			// waiting on its own timeout (grok's x.ai/hooks/run, for one).
-			p := string(msg.Params)
-			d.appendOutput("[acp] unhandled request " + msg.Method + " " + truncate(p, 300) + "\n")
-			d.respondError(*msg.ID, -32601, "method not found: "+msg.Method)
-		}
-	}
-}
-
-func (d *ACPDriver) routeResponse(msg rpcMessage) {
-	d.respMu.Lock()
-	defer d.respMu.Unlock()
-	ch, ok := d.responses[*msg.ID]
-	if !ok {
-		return
-	}
-	if msg.Error != nil {
-		d.appendOutput(fmt.Sprintf("[acp] error on request %d: %s\n", *msg.ID, msg.Error.Message))
-	}
-	ch <- msg.Result
-}
-
-func (d *ACPDriver) handleUpdate(msg rpcMessage) {
-	var notif sessionUpdateNotification
-	if json.Unmarshal(msg.Params, &notif) == nil {
-		d.mu.Lock()
-		d.lastUpdate = time.Now()
-		d.mu.Unlock()
-		if os.Getenv("HARNESS_DEBUG") != "" {
-			d.appendOutput(fmt.Sprintf("[acp] update %s %s %s\n", notif.Update.Kind, notif.Update.Status, truncate(string(msg.Params), 160)))
-		}
-
-		d.updates <- notif.Update
-
-		if acpTurnDoneSignals[notif.Update.Kind] || acpTurnDoneSignals[notif.Update.Status] {
-			select {
-			case d.turnDone <- struct{}{}:
-			default:
-			}
-		}
-	}
-}
-
-// handlePermission answers session/request_permission per the ACP spec:
-// {"outcome":{"outcome":"selected","optionId":<one of the offered options>}}.
-// It used to send {"outcome":"approved"}, which is not a valid response;
-// lenient agents let it through, but gemini validates it with a schema, threw,
-// and failed every tool call before it ran, so no tool hook could fire and the
-// registry recorded "gemini runs no tool hooks over ACP" as an agent trait.
-func (d *ACPDriver) handlePermission(msg rpcMessage) {
-	if msg.ID == nil {
-		return
-	}
-	var req struct {
-		Options []struct {
-			OptionID string `json:"optionId"`
-			Kind     string `json:"kind"`
-		} `json:"options"`
-	}
-	json.Unmarshal(msg.Params, &req)
-	chosen := ""
-	for _, pref := range []string{"allow_once", "allow_always"} {
-		for _, o := range req.Options {
-			if o.Kind == pref {
-				chosen = o.OptionID
-				break
-			}
-		}
-		if chosen != "" {
-			break
-		}
-	}
-	if chosen == "" {
-		for _, o := range req.Options {
-			if strings.HasPrefix(o.Kind, "allow") {
-				chosen = o.OptionID
-				break
-			}
-		}
-	}
-	if chosen == "" && len(req.Options) > 0 {
-		chosen = req.Options[0].OptionID
-	}
-	if chosen == "" {
-		d.respond(*msg.ID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}})
-		d.appendOutput("[acp] permission request offered no options; cancelled\n")
-		return
-	}
-	d.respond(*msg.ID, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": chosen}})
-	d.appendOutput("[acp] approved permission (" + chosen + ")\n")
-}
-
-func (d *ACPDriver) handleFsWrite(msg rpcMessage) {
-	if msg.ID == nil {
-		return
-	}
-	var req fsWriteRequest
-	json.Unmarshal(msg.Params, &req)
-	if req.Path != "" {
-		os.MkdirAll(filepath.Dir(req.Path), 0755)
-		os.WriteFile(req.Path, []byte(req.Content), 0644)
-	}
-	d.respond(*msg.ID, map[string]any{})
-}
-
-func (d *ACPDriver) handleFsRead(msg rpcMessage) {
-	if msg.ID == nil {
-		return
-	}
-	var req fsReadRequest
-	json.Unmarshal(msg.Params, &req)
-	content, err := os.ReadFile(req.Path)
-	if err != nil {
-		d.appendOutput("[acp] fs/read " + req.Path + ": " + err.Error() + "\n")
-		d.respondError(*msg.ID, -32600, err.Error())
-		return
-	}
-	d.appendOutput("[acp] fs/read " + req.Path + "\n")
-	d.respond(*msg.ID, map[string]any{"content": string(content)})
-}
-
-func (d *ACPDriver) handleElicitation(msg rpcMessage) {
-	if msg.ID == nil {
-		return
-	}
-	d.respond(*msg.ID, map[string]any{"action": "confirm"})
-	d.appendOutput("[acp] auto-confirmed elicitation\n")
-}
-
-func (d *ACPDriver) respond(id int, result any) {
-	resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
-	data, _ := json.Marshal(resp)
-	data = append(data, '\n')
-	d.stdin.Write(data)
-}
-
-func (d *ACPDriver) respondError(id int, code int, message string) {
-	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error":   map[string]any{"code": code, "message": message},
-	}
-	data, _ := json.Marshal(resp)
-	data = append(data, '\n')
-	d.stdin.Write(data)
-}
-
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-func (d *ACPDriver) extractText(upd sessionUpdate) string {
-	if len(upd.Content) == 0 {
-		return ""
-	}
-	if upd.Content[0] == '[' {
-		var blocks []contentBlock
-		if json.Unmarshal(upd.Content, &blocks) == nil {
-			var parts []string
-			for _, b := range blocks {
-				if b.Text != "" {
-					parts = append(parts, b.Text)
-				}
-			}
-			return strings.Join(parts, "")
-		}
-	} else {
-		var block contentBlock
-		if json.Unmarshal(upd.Content, &block) == nil && block.Text != "" {
-			return block.Text
-		}
-	}
-	return ""
-}
-
+// truncate shortens a value for a log line.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
