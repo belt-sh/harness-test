@@ -1,11 +1,13 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +84,10 @@ func (r *TestRunner) entries() []server.LogEntry {
 }
 
 const hookLogPath = "/tmp/belt-hook-events.log"
+
+// promptText is the one question every mode asks; the answer is the codename
+// the mock returns, so a check can tell a real turn from an empty one.
+const promptText = "What is the project codename? Reply ONLY the codename."
 
 // promptPayload is what the mock prompt hook prints, in the shape the
 // agent's context channel expects (harness.HookStdout). Empty when the
@@ -620,6 +626,10 @@ func (r *TestRunner) writeHooks() {
 func (r *TestRunner) writeBeltHooks() {
 	fmt.Println("[phase 3] hooks (belt)")
 
+	// The released binary re-execs into a newer one mid-run if it finds an
+	// update, so --hooks belt would be testing a version this suite never
+	// fetched, and the re-exec sometimes swallowed the hook's own output.
+	os.Setenv("INFSH_NO_AUTOUPDATE", "1")
 	os.Setenv("BELT_HOOK_DEBUG", "1")
 	os.Setenv("BELT_HOOK_DEBUG_LOG", hookLogPath)
 	os.Setenv("BELT_NO_HOOKS", "0")
@@ -649,6 +659,8 @@ func (r *TestRunner) writeBeltHooks() {
 	} else {
 		r.pass(fmt.Sprintf("belt hooks created at %s", result.HooksPath))
 	}
+
+	r.probeBeltPromptOutput()
 
 	if r.harness.NeedsGitRepo {
 		repoDir := r.ensureGitRepo()
@@ -778,7 +790,7 @@ func (r *TestRunner) workDir() string {
 
 func (r *TestRunner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	dir := r.workDir()
-	prompt := "What is the project codename? Reply ONLY the codename."
+	prompt := promptText
 
 	var args []string
 	for _, a := range cmdSlice[1:] {
@@ -977,7 +989,7 @@ func (r *TestRunner) runInteractive() {
 	if !r.harness.InteractivePromptInArgs {
 		waitScreenQuiet(session, 1500*time.Millisecond, 15*time.Second)
 		answered = r.server.AnswersServed()
-		r.sendLine(session, "What is the project codename? Reply ONLY the codename.")
+		r.sendLine(session, promptText)
 	}
 	r.step("waiting for answer > %d (served %d)", answered, r.server.AnswersServed())
 	r.waitTurnSettled(answered, 90*time.Second)
@@ -1090,7 +1102,7 @@ func (r *TestRunner) runACP() {
 	// at once can run the hook without its output being attached (grok).
 	time.Sleep(2 * time.Second)
 
-	prompt := "What is the project codename? Reply ONLY the codename."
+	prompt := promptText
 	if err := driver.SendPrompt(prompt); err != nil {
 		r.fail("ACP prompt: " + err.Error())
 		return
@@ -1459,6 +1471,126 @@ func waitScreenQuiet(session *PTYSession, quiet, max time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 		if n := len(session.Output()); n != last {
 			last, since = n, time.Now()
+		}
+	}
+}
+
+// probeBeltPromptOutput runs belt's own prompt hook once, with the prompt the
+// agent will be given, and keeps a line of what it printed.
+//
+// Without this, belt runs verified only that the hooks fired: whether belt's
+// suggestions actually reached the model was checked in mock mode alone, on a
+// codename this suite made up. The text below is belt's, and finding it in a
+// request is the property users depend on. A line of belt's output is compared
+// against the agent's request, so nothing here confirms itself.
+func (r *TestRunner) probeBeltPromptOutput() {
+	// A prompt belt reliably matches. The codename question the agents are
+	// asked matches nothing, so probing with it proves only that belt is
+	// quiet — which is not what this check is about.
+	input := fmt.Sprintf(`{"prompt":%q,"session_id":"probe","cwd":%q,"hook_event_name":"UserPromptSubmit"}`,
+		"debug a go test", r.workDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "belt", "plugin", "hook", "user-prompt-submit")
+	// The probe must not write to the log the event checks read: its own
+	// entry made a silent prompt hook look like it had fired, and droid's
+	// missing hook then reported as a failed injection instead of a skip.
+	cmd.Env = append(r.envIn(r.workDir()), "BELT_HOOK_DEBUG_LOG="+filepath.Join(r.home, "belt-probe.log"))
+	cmd.Dir = r.workDir()
+	cmd.Stdin = strings.NewReader(input)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output() // stdout is the hook channel; stderr carries notices
+	if err != nil {
+		r.skip("belt prompt hook produced no output to inject: " + err.Error() + " " + truncate(strings.TrimSpace(stderr.String()), 120))
+		return
+	}
+
+	// belt shapes its output for the agent it runs under, so the probe has to
+	// read every shape the registry records: claude's nested envelope,
+	// copilot's top-level field, cursor's snake_case, hermes's "context", and
+	// plain stdout for the rest. Matching only the first shape made copilot
+	// look like it dropped belt's context when it had injected it fine.
+	text := beltContextText(out)
+	if os.Getenv("HARNESS_DEBUG") != "" {
+		fmt.Printf("    [debug] belt probe stdout: %q\n    [debug] belt context: %q\n", truncate(string(out), 200), truncate(text, 120))
+	}
+
+	if strings.TrimSpace(text) == "" {
+		r.skip("belt had no suggestions for the probe prompt, so there is nothing to inject")
+		return
+	}
+	r.checkBeltHookShape(out, text)
+}
+
+// checkBeltHookShape verifies belt hands the agent the shape that agent's
+// channel takes, and hands it text rather than another envelope.
+//
+// `belt suggest --json` prints a hook envelope and belt's hook shaped one
+// again around it, so every JSON-channel agent received an additionalContext
+// whose value was a second envelope, and the plain-stdout agents (kimi, kiro)
+// were given raw JSON as their context. Both agents still "passed" every hook
+// check, because a hook firing says nothing about what it handed over.
+func (r *TestRunner) checkBeltHookShape(out []byte, text string) {
+	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
+	trimmed := strings.TrimSpace(stripANSI(string(out)))
+
+	if strings.Contains(text, "hookSpecificOutput") || strings.Contains(text, "additionalContext") {
+		r.fail(fmt.Sprintf("belt wrapped the context twice for %s (%s): the text it handed over is itself an envelope: %s",
+			r.harness.Name, channel, truncate(text, 100)))
+		return
+	}
+	if channel == harness.ContextPlainText && strings.HasPrefix(trimmed, "{") {
+		r.fail(fmt.Sprintf("belt printed JSON for %s, whose hook channel is plain stdout: %s",
+			r.harness.Name, truncate(trimmed, 100)))
+		return
+	}
+	r.pass(fmt.Sprintf("belt prompt hook output is shaped for %s (%s)", r.harness.Name, channel))
+}
+
+// beltContextText pulls the text belt asked the agent to inject, whatever
+// envelope that agent takes. Plain stdout is returned as is.
+func beltContextText(out []byte) string {
+	// belt prints coloured progress lines alongside the envelope and may
+	// indent the JSON across lines, so neither "stdout is the envelope" nor
+	// "one line is the envelope" holds. Decode the first JSON value after the
+	// first brace and let the decoder stop where it likes.
+	clean := stripANSI(string(out))
+	if i := strings.Index(clean, "{"); i >= 0 {
+		if text := beltEnvelopeText(strings.NewReader(clean[i:])); text != "" {
+			return text
+		}
+	}
+	return clean
+}
+
+func beltEnvelopeText(r io.Reader) string {
+	// belt may print more than one JSON value: a log line of its own first,
+	// the hook envelope after. Reading only the first left the context empty
+	// and the marker fell back to the raw line, which no request can contain.
+	dec := json.NewDecoder(r)
+	for {
+		var env struct {
+			HookSpecificOutput struct {
+				AdditionalContext string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+			AdditionalContext string `json:"additionalContext"`
+			AdditionalSnake   string `json:"additional_context"`
+			Context           string `json:"context"`
+		}
+		if err := dec.Decode(&env); err != nil {
+			return ""
+		}
+		for _, s := range []string{
+			env.HookSpecificOutput.AdditionalContext,
+			env.AdditionalContext,
+			env.AdditionalSnake,
+			env.Context,
+		} {
+			if strings.TrimSpace(s) != "" {
+				return s
+			}
 		}
 	}
 }

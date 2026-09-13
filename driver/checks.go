@@ -22,11 +22,19 @@ func (r *TestRunner) runChecks(phase string) {
 	r.checkHookInjection(phase, entries)
 }
 
-// checkHookInjection verifies the codename the prompt hook emitted reached
-// the model, i.e. the agent turns hook stdout into context. Agents without
-// a context channel on that event skip rather than fail.
+// checkHookInjection verifies the text the prompt hook emitted reached the
+// model, i.e. the agent turns hook stdout into context. In mock mode that is
+// the codename this suite made up; in belt mode it is a line belt itself
+// printed, captured before the run. Agents without a context channel on that
+// event skip rather than fail.
 func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry) {
-	if r.injectCode == "" || r.hookSource != HooksMock {
+	// Mock mode only: the codename is emitted by the same hook run the agent
+	// makes, so finding it proves the round trip. belt's own suggestions
+	// depend on the prompt matching its corpus, and the codename question
+	// matches nothing, so belt mode checks the shape of belt's output
+	// instead — see checkBeltHookShape.
+	want := r.injectCode
+	if want == "" || r.hookSource != HooksMock {
 		return
 	}
 	fmt.Printf("[check] hook injection (%s)\n", phase)
@@ -35,7 +43,7 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 		return
 	}
 	for _, e := range entries {
-		if strings.Contains(string(e.Body), r.injectCode) {
+		if strings.Contains(string(e.Body), want) {
 			r.pass(fmt.Sprintf("%s: prompt hook context reached the model", phase))
 			return
 		}
@@ -49,7 +57,8 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 		r.skip(fmt.Sprintf("%s: prompt hook context not found in any request — known issue: %s", phase, note))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
+	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase,
+		harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
 }
 
 // checkInstructions verifies that the codename from each instruction file
@@ -180,10 +189,23 @@ func (r *TestRunner) checkModelSelection(phase string, entries []server.LogEntry
 
 // promptHookFired reports whether the mock prompt hook ran in this phase.
 func (r *TestRunner) promptHookFired() bool {
-	if data, err := os.ReadFile(hookLogPath); err == nil && strings.Contains(string(data), TagPrompt) {
-		return true
+	// The two hook sources write different things: the mock's script echoes
+	// the tag, belt's own hook logs its event name. Matching only the tag made
+	// belt runs report "nothing to inject" for a hook that had just fired.
+	marks := []string{TagPrompt}
+	if r.hookSource == HooksBelt {
+		marks = []string{"[" + beltEventNames[TagPrompt] + "]"}
 	}
-	return strings.Contains(stripANSI(r.lastOutput), "hook: "+r.harness.Events.PromptSubmit)
+	if data, err := os.ReadFile(hookLogPath); err == nil {
+		for _, m := range marks {
+			if strings.Contains(string(data), m) {
+				return true
+			}
+		}
+	}
+	out := stripANSI(r.lastOutput)
+	return strings.Contains(out, "hook: "+r.harness.Events.PromptSubmit) ||
+		strings.Contains(out, "[belt:hook] "+beltEventNames[TagPrompt]+" done")
 }
 
 // pathNamesModel reports whether a URL path addresses the model as a path

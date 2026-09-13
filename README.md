@@ -152,7 +152,7 @@ Each check writes a distinct codename into the model's context and looks for it 
 
 ### Real belt hooks (`--hooks belt`)
 
-`--hooks belt` installs belt's actual hook commands through `harness.Install` and checks the events belt logs. `tests/fetch-belt.sh` downloads the released CLI from `dist.inference.sh` into `tests/belt` (`BELT_VERSION=vX.Y.Z` pins one); the Docker build copies it in. CI runs every harness in both mock and belt mode on push and nightly. Run all agents non-root (Claude Code refuses to skip permissions as root) and kiro separately with `--user root --intercept`.
+`--hooks belt` installs belt's actual hook commands through `harness.Install`, checks the events belt logs, and checks the shape of what belt's prompt hook prints: the text must not be another envelope, and JSON must not go to an agent whose channel is plain stdout. Every hook check passed while belt handed copilot a JSON blob and kimi raw JSON, because a hook firing says nothing about what it hands over (fixed in belt 1.18.32). The suite also sets `INFSH_NO_AUTOUPDATE`, since the released binary otherwise re-execs into a newer one mid-run. `tests/fetch-belt.sh` downloads the released CLI from `dist.inference.sh` into `tests/belt` (`BELT_VERSION=vX.Y.Z` pins one); the Docker build copies it in. CI runs every harness in both mock and belt mode on push and nightly. Run all agents non-root (Claude Code refuses to skip permissions as root) and kiro separately with `--user root --intercept`.
 
 `Harness.KnownIssues` records agent defects the runner cannot work around, keyed by `<mode>:<check>`; a failing check with a known issue reports as a skip that carries the note. None recorded today.
 
