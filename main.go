@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/belt-sh/harness-test/driver"
 	"github.com/belt-sh/harness-test/harness"
-	"github.com/belt-sh/harness-test/runner"
 	"github.com/belt-sh/harness-test/server"
 )
 
@@ -205,7 +205,7 @@ func main() {
 
 	totalPassed, totalFailed, totalSkipped := 0, 0, 0
 	var failed []string
-	var results []runner.Result
+	var results []driver.Result
 
 	for _, name := range targets {
 		h := harness.All[name]
@@ -213,14 +213,14 @@ func main() {
 			// Only a typed skip: "cannot be tested" is not a failure, and the
 			// summary says why. Explicitly named harnesses still skip, loudly.
 			fmt.Printf("=== %s ===\n  ○ skipped [%s]: %s\n\n", name, reason, detail)
-			results = append(results, runner.SkippedResult(h, reason, detail))
+			results = append(results, driver.SkippedResult(h, reason, detail))
 			continue
 		}
 		srv.ClearLog()
-		r := runner.New(h, srv, baseURL)
+		r := driver.New(h, srv, baseURL)
 		r.SetMode(*mode)
 		if *hooks == "belt" {
-			r.SetHookSource(runner.HooksBelt)
+			r.SetHookSource(driver.HooksBelt)
 		}
 		if *intercept {
 			r.SetIntercept(true)
@@ -259,4 +259,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

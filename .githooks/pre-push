@@ -3,4 +3,4 @@
 #   git config core.hooksPath .githooks
 set -e
 cd "$(git rev-parse --show-toplevel)"
-go build ./... && go vet ./... && go test ./harness ./runner ./server >/dev/null
+go build ./... && go vet ./... && go test ./... >/dev/null

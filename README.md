@@ -293,11 +293,10 @@ harness-test
 │   ├── registry.go   13 agent configs (pure data)
 │   ├── detect.go     5-probe detection
 │   └── install.go    Hook config generation
-├── runner/
+├── driver/
 │   ├── runner.go     Test orchestrator (install → config → hooks → run → verify)
 │   ├── driver.go     Driver interface
-│   ├── acp.go        ACP driver (JSON-RPC, handler registry)
-│   ├── protocol.go   JSON-RPC + ACP message types
+│   ├── acp.go        ACP policy over github.com/inference-sh/agentprotocol/acp
 │   ├── pty.go        PTY driver (terminal sessions)
 │   └── checks.go     Verification checks
 └── server/
