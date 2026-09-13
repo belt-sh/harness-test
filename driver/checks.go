@@ -12,7 +12,7 @@ import (
 )
 
 // runChecks runs all verification checks for a phase.
-func (r *Runner) runChecks(phase string) {
+func (r *TestRunner) runChecks(phase string) {
 	r.checkHookEvents(phase)
 	entries := r.server.Log()
 	r.checkAPIRequests(phase, entries)
@@ -25,7 +25,7 @@ func (r *Runner) runChecks(phase string) {
 // checkHookInjection verifies the codename the prompt hook emitted reached
 // the model, i.e. the agent turns hook stdout into context. Agents without
 // a context channel on that event skip rather than fail.
-func (r *Runner) checkHookInjection(phase string, entries []server.LogEntry) {
+func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry) {
 	if r.injectCode == "" || r.hookSource != HooksMock {
 		return
 	}
@@ -55,7 +55,7 @@ func (r *Runner) checkHookInjection(phase string, entries []server.LogEntry) {
 // checkInstructions verifies that the codename from each instruction file
 // made it into a request to the model, i.e. the agent loaded that file into
 // its system prompt at that scope. One check per file.
-func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
+func (r *TestRunner) checkInstructions(phase string, entries []server.LogEntry) {
 	if len(r.instructionCodes) == 0 {
 		return
 	}
@@ -94,7 +94,7 @@ func (r *Runner) checkInstructions(phase string, entries []server.LogEntry) {
 	}
 }
 
-func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {
+func (r *TestRunner) checkAPIRequests(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] API requests (%s)\n", phase)
 
 	// No requests at all means the agent never reached the mock, so nothing
@@ -106,7 +106,7 @@ func (r *Runner) checkAPIRequests(phase string, entries []server.LogEntry) {
 	}
 }
 
-func (r *Runner) checkStreamingFormat(phase string, entries []server.LogEntry) {
+func (r *TestRunner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] streaming (%s)\n", phase)
 
 	for _, e := range entries {
@@ -146,7 +146,7 @@ func (r *Runner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 	r.fail(fmt.Sprintf("%s: no streaming requests observed", phase))
 }
 
-func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
+func (r *TestRunner) checkModelSelection(phase string, entries []server.LogEntry) {
 	if r.harness.DefaultModel == "" {
 		return
 	}
@@ -179,7 +179,7 @@ func (r *Runner) checkModelSelection(phase string, entries []server.LogEntry) {
 }
 
 // promptHookFired reports whether the mock prompt hook ran in this phase.
-func (r *Runner) promptHookFired() bool {
+func (r *TestRunner) promptHookFired() bool {
 	if data, err := os.ReadFile(hookLogPath); err == nil && strings.Contains(string(data), TagPrompt) {
 		return true
 	}

@@ -51,7 +51,7 @@ const (
 	HooksBelt                   // real belt hooks via Install(), with logging shim
 )
 
-type Runner struct {
+type TestRunner struct {
 	harness          harness.Harness
 	server           *server.MockServer
 	baseURL          string
@@ -74,7 +74,7 @@ type Runner struct {
 	testEntries      []server.LogEntry // checks read these when set (unit tests)
 }
 
-func (r *Runner) entries() []server.LogEntry {
+func (r *TestRunner) entries() []server.LogEntry {
 	if r.testEntries != nil || r.server == nil {
 		return r.testEntries
 	}
@@ -86,7 +86,7 @@ const hookLogPath = "/tmp/belt-hook-events.log"
 // promptPayload is what the mock prompt hook prints, in the shape the
 // agent's context channel expects (harness.HookStdout). Empty when the
 // agent has no stdout channel for that event.
-func (r *Runner) promptPayload() string {
+func (r *TestRunner) promptPayload() string {
 	payload, ok := harness.HookStdout(r.harness.Name, "user-prompt-submit", "The project codename is "+r.injectCode+".")
 	if !ok {
 		return ""
@@ -101,7 +101,7 @@ func shellPrint(payload string) string {
 }
 
 // promptEcho is the "&& print" suffix for the prompt hook command, or "".
-func (r *Runner) promptEcho() string {
+func (r *TestRunner) promptEcho() string {
 	p := r.promptPayload()
 	if p == "" {
 		return ""
@@ -126,8 +126,8 @@ const (
 
 var originalHome = os.Getenv("HOME")
 
-func New(h harness.Harness, srv *server.MockServer, baseURL string) *Runner {
-	return &Runner{
+func New(h harness.Harness, srv *server.MockServer, baseURL string) *TestRunner {
+	return &TestRunner{
 		harness:    h,
 		server:     srv,
 		baseURL:    baseURL,
@@ -137,15 +137,15 @@ func New(h harness.Harness, srv *server.MockServer, baseURL string) *Runner {
 	}
 }
 
-func (r *Runner) SetHookSource(s HookSource) {
+func (r *TestRunner) SetHookSource(s HookSource) {
 	r.hookSource = s
 }
 
-func (r *Runner) SetIntercept(on bool) {
+func (r *TestRunner) SetIntercept(on bool) {
 	r.intercept = on
 }
 
-func (r *Runner) SetMode(m string) {
+func (r *TestRunner) SetMode(m string) {
 	switch m {
 	case "headless":
 		r.mode = ModeHeadless
@@ -160,23 +160,23 @@ func (r *Runner) SetMode(m string) {
 	}
 }
 
-func (r *Runner) pass(msg string) {
+func (r *TestRunner) pass(msg string) {
 	r.result.Passed++
 	fmt.Printf("  ✓ %s\n", msg)
 }
 
-func (r *Runner) fail(msg string) {
+func (r *TestRunner) fail(msg string) {
 	r.result.Failed++
 	r.failed = true
 	fmt.Fprintf(os.Stderr, "  ✗ %s\n", msg)
 }
 
-func (r *Runner) skip(msg string) {
+func (r *TestRunner) skip(msg string) {
 	r.result.Skipped++
 	fmt.Printf("  ○ %s\n", msg)
 }
 
-func (r *Runner) Run() Result {
+func (r *TestRunner) Run() Result {
 	r.startTime = time.Now()
 	r.savedEnv = os.Environ()
 	fmt.Printf("=== %s ===\n", r.harness.Name)
@@ -232,14 +232,14 @@ func (r *Runner) Run() Result {
 	return r.finish()
 }
 
-func (r *Runner) resetPhase() {
+func (r *TestRunner) resetPhase() {
 	os.Remove(hookLogPath)
 	os.Remove(hookLogPath + ".stdin")
 	r.server.ClearLog()
 	r.prepareToolCall(false)
 }
 
-func (r *Runner) prepareToolCall(headless bool) {
+func (r *TestRunner) prepareToolCall(headless bool) {
 	hasToolHooks := r.harness.Events.PreToolUse != "" || r.harness.Events.PostToolUse != ""
 	if r.server != nil && hasToolHooks {
 		name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
@@ -255,7 +255,7 @@ func (r *Runner) prepareToolCall(headless bool) {
 	}
 }
 
-func (r *Runner) finish() Result {
+func (r *TestRunner) finish() Result {
 	for i := len(r.cleanups) - 1; i >= 0; i-- {
 		r.cleanups[i]()
 	}
@@ -271,7 +271,7 @@ func (r *Runner) finish() Result {
 	return r.result
 }
 
-func (r *Runner) setupIntercept() {
+func (r *TestRunner) setupIntercept() {
 	// DNS interception: map LLM domains to 127.0.0.1
 	entries := server.HostsEntries()
 	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0644)
@@ -326,7 +326,7 @@ func (r *Runner) setupIntercept() {
 	fmt.Printf("  → intercept: CA installed (%s)\n", caFile)
 }
 
-func (r *Runner) setupHome() {
+func (r *TestRunner) setupHome() {
 	if r.harness.PreserveHome {
 		r.home = originalHome
 		os.Setenv("HOME", originalHome)
@@ -341,7 +341,7 @@ func (r *Runner) setupHome() {
 	os.Setenv("HOME", dir)
 }
 
-func (r *Runner) checkBinary() {
+func (r *TestRunner) checkBinary() {
 	fmt.Println("[phase 1] prerequisites")
 	if _, err := exec.LookPath(r.harness.Binary); err != nil {
 		if len(r.harness.InstallCmd) == 0 {
@@ -379,7 +379,7 @@ func (r *Runner) checkBinary() {
 	r.detectVersion()
 }
 
-func (r *Runner) detectVersion() {
+func (r *TestRunner) detectVersion() {
 	for _, flag := range []string{"--version", "-v", "version"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, r.harness.Binary, flag)
@@ -397,7 +397,7 @@ func (r *Runner) detectVersion() {
 	}
 }
 
-func (r *Runner) setupEndpoint() {
+func (r *TestRunner) setupEndpoint() {
 	fmt.Println("[phase 2] endpoint")
 	keys := make([]string, 0, len(r.harness.EnvVars))
 	for k := range r.harness.EnvVars {
@@ -416,7 +416,7 @@ func (r *Runner) setupEndpoint() {
 	r.server.ClearLog()
 }
 
-func (r *Runner) writeToHome(relPath string, content string) {
+func (r *TestRunner) writeToHome(relPath string, content string) {
 	path := filepath.Join(r.home, relPath)
 	os.MkdirAll(filepath.Dir(path), 0755)
 	os.WriteFile(path, []byte(content), 0644)
@@ -427,7 +427,7 @@ func (r *Runner) writeToHome(relPath string, content string) {
 	}
 }
 
-func (r *Runner) writeConfigFiles() {
+func (r *TestRunner) writeConfigFiles() {
 	if len(r.harness.ConfigFiles) == 0 {
 		return
 	}
@@ -436,7 +436,7 @@ func (r *Runner) writeConfigFiles() {
 	}
 }
 
-func (r *Runner) writeHooks() {
+func (r *TestRunner) writeHooks() {
 	fmt.Println("[phase 3] hooks")
 
 	hookDir := filepath.Join(r.home, r.harness.HookConfigDir)
@@ -617,7 +617,7 @@ func (r *Runner) writeHooks() {
 	r.pass(fmt.Sprintf("hooks configured (code: %s)", r.injectCode))
 }
 
-func (r *Runner) writeBeltHooks() {
+func (r *TestRunner) writeBeltHooks() {
 	fmt.Println("[phase 3] hooks (belt)")
 
 	os.Setenv("BELT_HOOK_DEBUG", "1")
@@ -670,7 +670,7 @@ func (r *Runner) writeBeltHooks() {
 // seedWrapperConfig writes the non-hook fields from HookWrapper so that
 // Install()'s merge adds hooks into a file that already has the correct
 // endpoint/permissions config.
-func (r *Runner) seedWrapperConfig() {
+func (r *TestRunner) seedWrapperConfig() {
 	wrapper := r.expand(r.harness.HookWrapper)
 	// The wrapper is a format string like `{"permissions":...,"hooks":%s}`.
 	// Replace the %s with an empty hooks object to get the base config.
@@ -680,7 +680,7 @@ func (r *Runner) seedWrapperConfig() {
 	os.WriteFile(path, []byte(base), 0644)
 }
 
-func (r *Runner) setupSkills() {
+func (r *TestRunner) setupSkills() {
 	if r.harness.SkillsDir == "" {
 		return
 	}
@@ -698,7 +698,7 @@ const (
 // (CLAUDE.md, AGENTS.md, ...) so the checks can tell that the file, not just
 // the hooks, reached the model. The block is marker-wrapped and removed in
 // finish() so a preserved HOME is left as it was.
-func (r *Runner) writeInstructions() {
+func (r *TestRunner) writeInstructions() {
 	h := r.harness
 	if h.InstructionFile == "" && h.ProjectInstructionFile == "" {
 		return
@@ -733,7 +733,7 @@ func (r *Runner) writeInstructions() {
 	}
 }
 
-func (r *Runner) appendInstructionBlock(path, block string) {
+func (r *TestRunner) appendInstructionBlock(path, block string) {
 	existing, err := os.ReadFile(path)
 	existed := err == nil
 	os.MkdirAll(filepath.Dir(path), 0755)
@@ -754,7 +754,7 @@ func (r *Runner) appendInstructionBlock(path, block string) {
 	})
 }
 
-func (r *Runner) ensureGitRepo() string {
+func (r *TestRunner) ensureGitRepo() string {
 	if r.repoDir != "" {
 		return r.repoDir
 	}
@@ -769,14 +769,14 @@ func (r *Runner) ensureGitRepo() string {
 	return r.repoDir
 }
 
-func (r *Runner) workDir() string {
+func (r *TestRunner) workDir() string {
 	if r.harness.NeedsGitRepo {
 		return r.ensureGitRepo()
 	}
 	return r.home
 }
 
-func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
+func (r *TestRunner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	dir := r.workDir()
 	prompt := "What is the project codename? Reply ONLY the codename."
 
@@ -823,7 +823,7 @@ func (r *Runner) runOneShot(label string, cmdSlice, extraArgs []string) []byte {
 	return out
 }
 
-func (r *Runner) runHeadless() {
+func (r *TestRunner) runHeadless() {
 	if len(r.harness.HeadlessCmd) == 0 {
 		r.skip("no headless command configured")
 		return
@@ -849,7 +849,7 @@ func (r *Runner) runHeadless() {
 	}
 }
 
-func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
+func (r *TestRunner) runPostHeadless(dir string, rawArgs []string) {
 	var args []string
 	for _, a := range rawArgs {
 		expanded := r.expand(a)
@@ -875,7 +875,7 @@ func (r *Runner) runPostHeadless(dir string, rawArgs []string) {
 	time.Sleep(2 * time.Second)
 }
 
-func (r *Runner) sendLine(session *PTYSession, text string) {
+func (r *TestRunner) sendLine(session *PTYSession, text string) {
 	delay := time.Duration(0)
 	if r.harness.SlowInput {
 		delay = 5 * time.Millisecond
@@ -889,7 +889,7 @@ func (r *Runner) sendLine(session *PTYSession, text string) {
 	session.SendRaw("\r")
 }
 
-func (r *Runner) runInteractive() {
+func (r *TestRunner) runInteractive() {
 	if len(r.harness.InteractiveCmd) == 0 {
 		r.skip(r.harness.Name + " has no interactive mode")
 		return
@@ -1036,7 +1036,7 @@ func (r *Runner) runInteractive() {
 	r.pass("interactive session completed")
 }
 
-func (r *Runner) writeACPConfig() {
+func (r *TestRunner) writeACPConfig() {
 	if r.harness.ACPNeedsTempHome {
 		tmpHome, _ := os.MkdirTemp("", "acp-"+r.harness.Name+"-")
 		// The user-scope artifacts written in earlier phases (hooks or belt
@@ -1057,7 +1057,7 @@ func (r *Runner) writeACPConfig() {
 	}
 }
 
-func (r *Runner) runACP() {
+func (r *TestRunner) runACP() {
 	if len(r.harness.ACPCmd) == 0 {
 		r.skip(r.harness.Name + " does not support ACP mode")
 		return
@@ -1122,7 +1122,7 @@ func (r *Runner) runACP() {
 	r.pass("ACP session completed")
 }
 
-func (r *Runner) runSDK() {
+func (r *TestRunner) runSDK() {
 	if len(r.harness.SDKCmd) == 0 {
 		r.skip(r.harness.Name + " does not support SDK mode")
 		return
@@ -1138,7 +1138,7 @@ func (r *Runner) runSDK() {
 	}
 }
 
-func (r *Runner) checkHookEvents(phase string) {
+func (r *TestRunner) checkHookEvents(phase string) {
 	fmt.Printf("[phase] hook events (%s)\n", phase)
 
 	r.dumpHookLogs(phase)
@@ -1176,7 +1176,7 @@ var beltEventNames = map[string]string{
 	TagPreCompact:   "pre-compact",
 }
 
-func (r *Runner) dumpHookLogs(phase string) {
+func (r *TestRunner) dumpHookLogs(phase string) {
 	if os.Getenv("HARNESS_DEBUG") == "" {
 		return
 	}
@@ -1187,7 +1187,7 @@ func (r *Runner) dumpHookLogs(phase string) {
 	}
 }
 
-func (r *Runner) checkBeltHookEvents(phase string) {
+func (r *TestRunner) checkBeltHookEvents(phase string) {
 	beltLog := ""
 	if data, err := os.ReadFile(filepath.Join(r.home, ".belt", "hooks.log")); err == nil {
 		beltLog = string(data)
@@ -1223,7 +1223,7 @@ type eventEntry struct {
 	Tag   string
 }
 
-func (r *Runner) eventEntries() []eventEntry {
+func (r *TestRunner) eventEntries() []eventEntry {
 	evts := r.harness.Events
 	all := []eventEntry{
 		{evts.SessionStart, TagSessionStart},
@@ -1242,7 +1242,7 @@ func (r *Runner) eventEntries() []eventEntry {
 	return result
 }
 
-func (r *Runner) toolMatcher() string {
+func (r *TestRunner) toolMatcher() string {
 	if r.harness.HookToolMatcher != "" {
 		return r.harness.HookToolMatcher
 	}
@@ -1252,7 +1252,7 @@ func (r *Runner) toolMatcher() string {
 	return server.DefaultToolName
 }
 
-func (r *Runner) buildNestedHooksJSON(logPath string) string {
+func (r *TestRunner) buildNestedHooksJSON(logPath string) string {
 	entries := r.eventEntries()
 	parts := []string{}
 	for _, e := range entries {
@@ -1280,7 +1280,7 @@ func (r *Runner) buildNestedHooksJSON(logPath string) string {
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
-func (r *Runner) expand(tmpl string) string {
+func (r *TestRunner) expand(tmpl string) string {
 	s := strings.ReplaceAll(tmpl, "{{.BaseURL}}", r.baseURL)
 	s = strings.ReplaceAll(s, "{{.Model}}", r.harness.DefaultModel)
 	s = strings.ReplaceAll(s, "{{.APIKey}}", "mock-key")
@@ -1302,7 +1302,7 @@ func (r *Runner) expand(tmpl string) string {
 	return s
 }
 
-func (r *Runner) findLatestSessionID(cwd string) string {
+func (r *TestRunner) findLatestSessionID(cwd string) string {
 	mangled := strings.ReplaceAll(cwd, "/", "-")
 	sessDir := filepath.Join(r.home, ".factory", "sessions", mangled)
 	entries, err := os.ReadDir(sessDir)
@@ -1338,7 +1338,7 @@ func stripANSI(s string) string {
 // not touch PWD, and Bun-based agents (opencode, kilo, omp) take their
 // working directory from it, so without this they resolve the project root
 // to wherever harness-test itself was started.
-func (r *Runner) envIn(dir string) []string {
+func (r *TestRunner) envIn(dir string) []string {
 	env := r.agentEnv()
 	out := env[:0:0]
 	for _, kv := range env {
@@ -1349,7 +1349,7 @@ func (r *Runner) envIn(dir string) []string {
 	return append(out, "PWD="+dir)
 }
 
-func (r *Runner) agentEnv() []string {
+func (r *TestRunner) agentEnv() []string {
 	env := os.Environ()
 	if r.proxyURL == "" {
 		return env
@@ -1392,7 +1392,7 @@ func copyTree(src, dst string) {
 // does not fire is a skip only when the registry says this agent cannot fire
 // it in this mode; otherwise it fails, so a hook that silently stops firing
 // cannot pass as a skip.
-func (r *Runner) reportEvent(phase, label, tag string, fired bool, prefix string) {
+func (r *TestRunner) reportEvent(phase, label, tag string, fired bool, prefix string) {
 	if fired {
 		r.pass(fmt.Sprintf("%s: %s%s hook fired", phase, prefix, label))
 		return
@@ -1410,7 +1410,7 @@ func (r *Runner) reportEvent(phase, label, tag string, fired bool, prefix string
 
 // requestHooksFor tells the mock which hooks this agent needs its backend to
 // request in this mode (Harness.ServerRequestedHooks), and nothing else.
-func (r *Runner) requestHooksFor(mode string) {
+func (r *TestRunner) requestHooksFor(mode string) {
 	if r.server != nil {
 		r.server.SetRequestedHooks(r.harness.ServerRequestedHooks[mode])
 	}
@@ -1420,7 +1420,7 @@ func (r *Runner) requestHooksFor(mode string) {
 // beyond `after` (pass -1 to skip that), and then neither the mock's request
 // log nor the hook event log has changed for a few seconds, so trailing hooks
 // (stop, compaction; belt's take seconds) are done before the session is cut.
-func (r *Runner) waitTurnSettled(after int, timeout time.Duration) {
+func (r *TestRunner) waitTurnSettled(after int, timeout time.Duration) {
 	const quiet = 4 * time.Second
 	deadline := time.Now().Add(timeout)
 	for after >= 0 && r.server.AnswersServed() <= after && time.Now().Before(deadline) {
@@ -1443,7 +1443,7 @@ func (r *Runner) waitTurnSettled(after int, timeout time.Duration) {
 }
 
 // step prints a timestamped runner step when HARNESS_DEBUG is set.
-func (r *Runner) step(format string, a ...any) {
+func (r *TestRunner) step(format string, a ...any) {
 	if os.Getenv("HARNESS_DEBUG") != "" {
 		fmt.Printf("    [step %s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, a...))
 	}

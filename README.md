@@ -294,7 +294,7 @@ harness-test
 │   ├── detect.go     5-probe detection
 │   └── install.go    Hook config generation
 ├── driver/
-│   ├── runner.go     Test orchestrator (install → config → hooks → run → verify)
+│   ├── testrunner.go Test orchestrator (install → config → hooks → run → verify)
 │   ├── driver.go     Driver interface
 │   ├── acp.go        ACP policy over github.com/inference-sh/agentprotocol/acp
 │   ├── pty.go        PTY driver (terminal sessions)
