@@ -65,6 +65,12 @@ func (f HookFormat) String() string {
 	}
 }
 
+// ToolCall is the tool the mock offers the agent, and the arguments it sends.
+type ToolCall struct {
+	Name string
+	Args string
+}
+
 // ConfigFile is a file to write relative to $HOME before running the harness.
 // Content supports {{.BaseURL}}, {{.Model}}, {{.RepoDir}}, {{.APIKey}} placeholders.
 type ConfigFile struct {
@@ -130,10 +136,11 @@ type Harness struct {
 	ToolCallArgs    string // JSON args for mock tool call (default: {"file_path":"README.md"})
 	ToolCallPath    string // only fire tool calls on requests to this path suffix
 	HookToolMatcher string // hook matcher name if different from ToolCallName (e.g. codex: "Bash" matches exec_command)
-	// HeadlessToolCallName/Args replace ToolCallName/Args in headless mode, for
-	// an agent whose headless engine names its tools differently (kiro V1).
-	HeadlessToolCallName string
-	HeadlessToolCallArgs string
+	// ToolCallByMode overrides ToolCallName/Args for one mode, for an agent
+	// whose engine there names its tools differently (kiro's V1 engine, which
+	// headless pins, calls the read tool fs_read where V2 calls it read).
+	// Keyed like KnownIssues: "headless", "interactive", "acp", "sdk".
+	ToolCallByMode map[string]ToolCall
 
 	// Pre-flight config files (auth, trust, provider config, permissions)
 	ConfigFiles    []ConfigFile

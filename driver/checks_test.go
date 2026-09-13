@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/belt-sh/harness-test/harness"
@@ -58,53 +57,4 @@ func withModel(h harness.Harness, model string) harness.Harness {
 	h.DefaultModel = model
 	h.AcceptedModels = nil
 	return h
-}
-
-// belt writes its context into whichever envelope the agent takes. Reading
-// only claude's nested shape made copilot's run report that belt's context
-// never reached the model, when the agent had injected it correctly.
-func TestBeltContextTextReadsEveryEnvelope(t *testing.T) {
-	for _, c := range []struct{ name, out, want string }{
-		{"claude nested", `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"suggestions"}}`, "suggestions"},
-		{"copilot top level", `{"additionalContext":"suggestions"}`, "suggestions"},
-		{"cursor snake case", `{"additional_context":"suggestions"}`, "suggestions"},
-		{"hermes context", `{"context":"suggestions"}`, "suggestions"},
-		{"plain stdout", "suggestions", "suggestions"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := strings.TrimSpace(beltContextText([]byte(c.out))); got != c.want {
-				t.Errorf("got %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-// belt writes progress lines to stdout alongside the envelope, so the JSON is
-// not always the whole of stdout. Reading only a clean body made copilot's
-// marker the raw line, which no request could ever contain.
-func TestBeltContextTextIgnoresProgressLines(t *testing.T) {
-	// belt colours its progress lines, so the envelope is neither the first
-	// line nor free of escape codes.
-	out := "\x1b[2m[belt:hook] user-prompt-submit start\x1b[0m\n{\"hookSpecificOutput\":{\"additionalContext\":\"suggestions\"}}\n"
-	if got := strings.TrimSpace(beltContextText([]byte(out))); got != "suggestions" {
-		t.Errorf("got %q, want %q", got, "suggestions")
-	}
-}
-
-// copilot's belt output arrives as indented JSON after a progress line, so
-// neither the whole of stdout nor any single line parses on its own.
-func TestBeltContextTextReadsIndentedEnvelope(t *testing.T) {
-	out := "[belt:hook] start\n{\n  \"hookSpecificOutput\": {\n    \"additionalContext\": \"suggestions\"\n  }\n}\n"
-	if got := strings.TrimSpace(beltContextText([]byte(out))); got != "suggestions" {
-		t.Errorf("got %q, want %q", got, "suggestions")
-	}
-}
-
-// belt prints a log line of its own before the envelope, so the first JSON
-// value in stdout is not the one carrying the context.
-func TestBeltContextTextSkipsLeadingJSONLogLine(t *testing.T) {
-	out := `{"level":"info","msg":"hook start"}` + "\n" + `{"hookSpecificOutput":{"additionalContext":"suggestions"}}` + "\n"
-	if got := strings.TrimSpace(beltContextText([]byte(out))); got != "suggestions" {
-		t.Errorf("got %q, want %q", got, "suggestions")
-	}
 }

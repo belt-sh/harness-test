@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,6 +21,8 @@ func (r *TestRunner) runChecks(phase string) {
 	r.checkModelSelection(phase, entries)
 	r.checkInstructions(phase, entries)
 	r.checkHookInjection(phase, entries)
+	// Belt runs only: reports once, on the first phase that reaches it.
+	r.checkBeltHookShape()
 }
 
 // checkHookInjection verifies the text the prompt hook emitted reached the
@@ -42,23 +45,23 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 		r.skip(fmt.Sprintf("%s: prompt hook did not fire, nothing to inject", phase))
 		return
 	}
+	wantBytes := []byte(want)
 	for _, e := range entries {
-		if strings.Contains(string(e.Body), want) {
+		if bytes.Contains(e.Body, wantBytes) {
 			r.pass(fmt.Sprintf("%s: prompt hook context reached the model", phase))
 			return
 		}
 	}
-	if harness.ContextChannelFor(r.harness.Name, "user-prompt-submit") == harness.ContextNone ||
-		harness.ContextChannelFor(r.harness.Name, "user-prompt-submit") == harness.ContextPlugin {
-		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
+	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
+	if channel == harness.ContextNone || channel == harness.ContextPlugin {
+		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, channel))
 		return
 	}
 	if note := r.harness.KnownIssues[phase+":prompt-context"]; note != "" {
 		r.skip(fmt.Sprintf("%s: prompt hook context not found in any request — known issue: %s", phase, note))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase,
-		harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")))
+	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, channel))
 }
 
 // checkInstructions verifies that the codename from each instruction file
@@ -80,10 +83,10 @@ func (r *TestRunner) checkInstructions(phase string, entries []server.LogEntry) 
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		code := r.instructionCodes[name]
+		code := []byte(r.instructionCodes[name])
 		found := false
 		for _, e := range entries {
-			if strings.Contains(string(e.Body), code) {
+			if bytes.Contains(e.Body, code) {
 				found = true
 				break
 			}
@@ -118,13 +121,18 @@ func (r *TestRunner) checkAPIRequests(phase string, entries []server.LogEntry) {
 func (r *TestRunner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] streaming (%s)\n", phase)
 
+	streamKey := []byte(`"stream"`)
 	for _, e := range entries {
-		// OpenAI/Anthropic: "stream": true in body
-		var req map[string]any
-		if json.Unmarshal(e.Body, &req) == nil {
-			if stream, ok := req["stream"].(bool); ok && stream {
-				r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
-				return
+		// OpenAI/Anthropic: "stream": true in body. Parsing every body means
+		// parsing whole system prompts; only the ones naming the field can
+		// answer this.
+		if bytes.Contains(e.Body, streamKey) {
+			var req map[string]any
+			if json.Unmarshal(e.Body, &req) == nil {
+				if stream, ok := req["stream"].(bool); ok && stream {
+					r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
+					return
+				}
 			}
 		}
 		// Cursor: connect server-stream
@@ -187,25 +195,14 @@ func (r *TestRunner) checkModelSelection(phase string, entries []server.LogEntry
 	r.fail(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
 }
 
-// promptHookFired reports whether the mock prompt hook ran in this phase.
+// promptHookFired reports whether the mock prompt hook ran in this phase. Its
+// only caller is the injection check, which is mock-only, so it matches what
+// the mock's script writes.
 func (r *TestRunner) promptHookFired() bool {
-	// The two hook sources write different things: the mock's script echoes
-	// the tag, belt's own hook logs its event name. Matching only the tag made
-	// belt runs report "nothing to inject" for a hook that had just fired.
-	marks := []string{TagPrompt}
-	if r.hookSource == HooksBelt {
-		marks = []string{"[" + beltEventNames[TagPrompt] + "]"}
+	if data, err := os.ReadFile(hookLogPath); err == nil && strings.Contains(string(data), TagPrompt) {
+		return true
 	}
-	if data, err := os.ReadFile(hookLogPath); err == nil {
-		for _, m := range marks {
-			if strings.Contains(string(data), m) {
-				return true
-			}
-		}
-	}
-	out := stripANSI(r.lastOutput)
-	return strings.Contains(out, "hook: "+r.harness.Events.PromptSubmit) ||
-		strings.Contains(out, "[belt:hook] "+beltEventNames[TagPrompt]+" done")
+	return strings.Contains(r.strippedOutput(), "hook: "+r.harness.Events.PromptSubmit)
 }
 
 // pathNamesModel reports whether a URL path addresses the model as a path
@@ -217,4 +214,44 @@ func pathNamesModel(path, model string) bool {
 		}
 	}
 	return false
+}
+
+// checkBeltHookShape verifies belt hands the agent the shape that agent's
+// channel takes, and hands it text rather than another envelope.
+//
+// `belt suggest --json` printed a hook envelope and belt's hook shaped one
+// again around it, so every JSON-channel agent received an additionalContext
+// whose value was a second envelope, and the plain-stdout agents (kimi, kiro)
+// were given raw JSON as their context. Both still passed every hook check,
+// because a hook firing says nothing about what it hands over.
+func (r *TestRunner) checkBeltHookShape() {
+	if r.beltProbe == nil {
+		return
+	}
+	probe := <-r.beltProbe
+	r.beltProbe = nil
+
+	fmt.Println("[check] belt hook output")
+	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
+	switch {
+	case probe.err != nil:
+		r.skip("belt prompt hook produced no output to inspect: " + probe.err.Error() + " " + probe.stderr)
+		return
+	case strings.TrimSpace(probe.stdout) == "":
+		r.skip("belt had no suggestions for the probe prompt, so there is nothing to inspect " + probe.stderr)
+		return
+	}
+
+	text, ok := harness.HookContextText(r.harness.Name, "user-prompt-submit", probe.stdout)
+	if !ok {
+		r.fail(fmt.Sprintf("belt did not print %s's hook shape (%s): %s",
+			r.harness.Name, channel, truncate(strings.TrimSpace(probe.stdout), 100)))
+		return
+	}
+	if _, wrapped := harness.AnyHookContext(text); wrapped {
+		r.fail(fmt.Sprintf("belt wrapped the context twice for %s (%s): the text it handed over is itself an envelope: %s",
+			r.harness.Name, channel, truncate(text, 100)))
+		return
+	}
+	r.pass(fmt.Sprintf("belt prompt hook output is shaped for %s (%s)", r.harness.Name, channel))
 }

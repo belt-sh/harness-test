@@ -183,11 +183,11 @@ func TestKiroProjectInstall(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cwd, ".kiro", "agents", "belt.json")); err != nil {
 		t.Errorf("project agent: %v", err)
 	}
-	if got := kiroDefaultAgentAt(cwd); got != KiroBeltAgentName {
+	if got := KiroActiveAgent(home, cwd); got != KiroBeltAgentName {
 		t.Errorf("workspace chat.defaultAgent = %q", got)
 	}
-	if got := kiroDefaultAgentAt(home); got != "" {
-		t.Errorf("project install wrote the global setting: %q", got)
+	if obj, _ := readKiroSettings(home); obj["chat.defaultAgent"] != nil {
+		t.Errorf("project install wrote the global setting: %v", obj["chat.defaultAgent"])
 	}
 }
 

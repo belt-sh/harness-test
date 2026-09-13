@@ -27,7 +27,9 @@ func TestPermissionReplyFollowsSpec(t *testing.T) {
 		{"prefers allow_once", `[{"optionId":"no","kind":"reject_once"},{"optionId":"always","kind":"allow_always"},{"optionId":"once","kind":"allow_once"}]`, "once"},
 		{"falls back to allow_always", `[{"optionId":"no","kind":"reject_once"},{"optionId":"always","kind":"allow_always"}]`, "always"},
 		{"gemini's proceed_once", `[{"optionId":"proceed_once","kind":"allow_once"},{"optionId":"cancel","kind":"reject_once"}]`, "proceed_once"},
-		{"unknown kinds take the first option", `[{"optionId":"yes","kind":"weird_kind"}]`, "yes"},
+		{"unknown kinds are approved", `[{"optionId":"yes","kind":"weird_kind"}]`, "yes"},
+		{"an unknown kind that reads as a refusal is passed over", `[{"optionId":"no","kind":"weird_reject"},{"optionId":"yes","kind":"weird_kind"}]`, "yes"},
+		{"only refusals cancels rather than guessing", `[{"optionId":"no","kind":"weird_decline"}]`, ""},
 		{"no options cancels", `[]`, ""},
 	}
 	for _, c := range cases {

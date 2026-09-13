@@ -283,9 +283,10 @@ var All = map[string]Harness{
 		// either. Headless pins V1, the one most scripted runs get; the
 		// TUI and ACP run V2. V2's non-interactive client also drops --model
 		// ("failed to set model 'kiro-default': Method not found", 2.21.3).
-		HeadlessCmd:          []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools", "--agent-engine", "v1", "--model", "{{.Model}}"},
-		HeadlessToolCallName: "fs_read",
-		HeadlessToolCallArgs: `{"operations":[{"mode":"Line","path":"README.md"}]}`,
+		HeadlessCmd: []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools", "--agent-engine", "v1", "--model", "{{.Model}}"},
+		ToolCallByMode: map[string]ToolCall{
+			"headless": {Name: "fs_read", Args: `{"operations":[{"mode":"Line","path":"README.md"}]}`},
+		},
 		// Without --model, kiro sends an empty modelId and the backend picks.
 		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools", "--model", "{{.Model}}"},
 		InteractiveArgs:         []string{"What is the project codename? Reply ONLY the codename."},
@@ -573,7 +574,6 @@ var All = map[string]Harness{
 		// without this nothing exercised the path that works.
 		SDKCmd:  []string{"droid", "exec"},
 		SDKArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
-
 		ACPCmd:  []string{"droid", "exec", "--output-format", "acp"},
 		ACPArgs: []string{"--auto", "high", "-m", "{{.Model}}"},
 	},

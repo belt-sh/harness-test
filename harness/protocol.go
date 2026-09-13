@@ -122,6 +122,70 @@ func HookStdout(name, beltEvent, text string) (payload string, ok bool) {
 	return "", false
 }
 
+// HookContextText is the inverse of HookStdout: it reads back the text an
+// agent's hook channel carries. ok is false when payload is not that channel's
+// shape, which is how a caller tells "belt printed the wrong envelope" from
+// "belt printed nothing".
+//
+// It lives next to HookStdout so the shapes are written once. A second copy in
+// the test runner only knew four of them and silently ignored the rest.
+func HookContextText(name, beltEvent, payload string) (string, bool) {
+	switch ContextChannelFor(name, beltEvent) {
+	case ContextPlainText:
+		return payload, !strings.HasPrefix(strings.TrimSpace(payload), "{")
+	case ContextHookSpecific:
+		return jsonField(payload, "hookSpecificOutput", "additionalContext")
+	case ContextAdditionalCamel:
+		return jsonField(payload, "", "additionalContext")
+	case ContextAdditionalSnake:
+		return jsonField(payload, "", "additional_context")
+	case ContextKey:
+		return jsonField(payload, "", "context")
+	}
+	return "", false
+}
+
+// AnyHookContext reads the text out of any agent's envelope shape. A caller
+// uses it to notice that text meant for the model is itself an envelope.
+func AnyHookContext(payload string) (string, bool) {
+	for _, try := range []struct{ outer, inner string }{
+		{"hookSpecificOutput", "additionalContext"},
+		{"", "additionalContext"},
+		{"", "additional_context"},
+		{"", "context"},
+	} {
+		if text, ok := jsonField(payload, try.outer, try.inner); ok {
+			return text, true
+		}
+	}
+	return "", false
+}
+
+// jsonField decodes the first JSON value in payload and returns a string
+// field, optionally nested one level. Agents print progress lines and log
+// lines around the envelope, so decoding stops at the first value that has
+// the field rather than insisting the whole of stdout is JSON.
+func jsonField(payload, outer, inner string) (string, bool) {
+	i := strings.Index(payload, "{")
+	if i < 0 {
+		return "", false
+	}
+	dec := json.NewDecoder(strings.NewReader(payload[i:]))
+	for {
+		var obj map[string]any
+		if dec.Decode(&obj) != nil {
+			return "", false
+		}
+		if outer != "" {
+			nested, _ := obj[outer].(map[string]any)
+			obj = nested
+		}
+		if text, _ := obj[inner].(string); text != "" {
+			return text, true
+		}
+	}
+}
+
 func jsonObj(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)

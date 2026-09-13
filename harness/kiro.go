@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 )
@@ -28,38 +27,21 @@ func kiroSettingsPath(root string) string {
 // built-in default. belt's hooks run only when this is KiroBeltAgentName.
 func KiroActiveAgent(home, cwd string) string {
 	for _, root := range []string{cwd, home} {
-		if name := kiroDefaultAgentAt(root); name != "" {
+		obj, _ := readKiroSettings(root)
+		if name, _ := obj["chat.defaultAgent"].(string); name != "" {
 			return name
 		}
 	}
 	return ""
 }
 
-func kiroDefaultAgentAt(root string) string {
-	obj, _ := readKiroSettings(root)
-	name, _ := obj["chat.defaultAgent"].(string)
-	return name
-}
-
 func readKiroSettings(root string) (map[string]any, error) {
-	data, err := os.ReadFile(kiroSettingsPath(root))
-	if err != nil {
-		return map[string]any{}, err
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
-		return map[string]any{}, err
-	}
-	return obj, nil
+	return readJSONObject(kiroSettingsPath(root))
 }
 
+// writeKiroSettings keeps kiro-cli's own 0600 on the settings file.
 func writeKiroSettings(root string, obj map[string]any) error {
-	path := kiroSettingsPath(root)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	out, _ := json.MarshalIndent(obj, "", "  ")
-	return os.WriteFile(path, append(out, '\n'), 0600)
+	return writeJSONObject(kiroSettingsPath(root), obj, 0600)
 }
 
 // KiroSelectBeltAgent makes belt's agent the default in root's kiro settings

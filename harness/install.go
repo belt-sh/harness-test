@@ -27,6 +27,11 @@ type InstallResult struct {
 	Created   bool
 	Merged    bool
 	Error     error
+
+	// Inactive names the agent the user selected instead of belt's, when an
+	// install writes hooks the agent will not read. Discovered here, so
+	// doctor and the test suite report it rather than each re-deriving it.
+	Inactive string
 }
 
 // KnownAgentNames is an alias for KnownNames (CLI compatibility).
@@ -92,10 +97,12 @@ func Install(name string, scope InstallScope) InstallResult {
 		result.Merged = true
 		err = mergeKiroAgentHooks(hooksPath, content)
 		if err == nil {
-			// Earlier belt versions merged into a kiro_default.json override.
+			// Migration, added 2026-09 in belt 1.18.32: earlier versions
+			// merged into a kiro_default.json override. Removable once no
+			// install predating that version is in use.
 			removeMergedHooks(filepath.Join(root, h.HookConfigDir, KiroDefaultAgentName+".json"), JSONKiro)
-			// A user-chosen default agent is left alone; doctor reports it.
-			_, err = KiroSelectBeltAgent(root)
+			// A user-chosen default agent is left alone and reported.
+			result.Inactive, err = KiroSelectBeltAgent(root)
 		}
 	case TOML:
 		result.Merged = true
@@ -623,4 +630,29 @@ func mergeYAMLHooks(path, yamlContent string) error {
 		content = strings.Replace(content, "hooks: {}", "", 1)
 	}
 	return os.WriteFile(path, []byte(content+"\n"+yamlContent), 0644)
+}
+
+// readJSONObject reads a JSON object from path. A missing or unparseable file
+// yields an empty object and the error, so a caller can tell "nothing there"
+// from "do not touch this".
+func readJSONObject(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]any{}, err
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
+		return map[string]any{}, err
+	}
+	return obj, nil
+}
+
+// writeJSONObject writes obj to path, creating the directory, with the file
+// mode the owning tool uses.
+func writeJSONObject(path string, obj map[string]any, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	out, _ := json.MarshalIndent(obj, "", "  ")
+	return os.WriteFile(path, append(out, '\n'), perm)
 }

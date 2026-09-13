@@ -21,7 +21,7 @@ import (
 // approve everything, serve files, and accumulate updates into the polling
 // model the checks are written against (Output/WaitForResponse/WaitIdle).
 // Quirks found against a real agent belong in the library, not here, so belt
-// inherits them; see the note on promptErr for the one asymmetry worth
+// inherits them; see the note on turnOver for the one asymmetry worth
 // watching.
 type ACPDriver struct {
 	binary  string
@@ -35,29 +35,28 @@ type ACPDriver struct {
 	output     strings.Builder
 	lastUpdate time.Time
 
-	updates  chan acp.SessionUpdate
-	turnDone chan struct{}
+	// updates wakes a waiter; the text itself is appended as it arrives, so a
+	// dropped wakeup costs nothing.
+	updates chan struct{}
 
-	// promptDone carries the result of the session/prompt call. The spec says
-	// prompt is a request that returns a stopReason, so its return is the
-	// authoritative end of a turn; the update-borne signals are kept because
-	// this suite predates the library and thirteen agents were measured
-	// against them. An agent that ends its turn without answering the call is
-	// a library bug worth reporting, so both are recorded.
-	promptDone chan error
-	promptErr  error
-	turnEnded  bool // a turn-done update arrived before the prompt call returned
+	// turnOver is signalled by whichever end-of-turn arrives first. The spec
+	// says session/prompt returns a stopReason, so its return is the
+	// authoritative end; the update-borne signals are kept because this suite
+	// predates the library and thirteen agents were measured against them. An
+	// agent that ends its turn without answering the call is a library bug
+	// worth reporting, so the asymmetry is logged.
+	turnOver  chan struct{}
+	turnEnded bool // a turn-done update arrived before the prompt call returned
 }
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
 	return &ACPDriver{
-		binary:     binary,
-		args:       args,
-		workDir:    dir,
-		env:        env,
-		updates:    make(chan acp.SessionUpdate, 64),
-		turnDone:   make(chan struct{}, 1),
-		promptDone: make(chan error, 1),
+		binary:   binary,
+		args:     args,
+		workDir:  dir,
+		env:      env,
+		updates:  make(chan struct{}, 1),
+		turnOver: make(chan struct{}, 1),
 	}
 }
 
@@ -104,10 +103,15 @@ func (d *ACPDriver) handler() acp.Handler {
 				d.appendOutput("[acp] approved permission (" + id + ")\n")
 				return acp.Selected(id), nil
 			}
-			if len(r.Options) > 0 {
-				id := r.Options[0].OptionID
-				d.appendOutput("[acp] approved permission, first option (" + id + ")\n")
-				return acp.Selected(id), nil
+			// An agent whose option kinds the library does not recognise still
+			// has to be answered, but picking blind can select a refusal, so
+			// anything that reads like one is passed over.
+			for _, o := range r.Options {
+				if looksLikeRefusal(o.Kind) || looksLikeRefusal(o.Name) {
+					continue
+				}
+				d.appendOutput("[acp] approved permission, unrecognised kind (" + o.OptionID + ")\n")
+				return acp.Selected(o.OptionID), nil
 			}
 			d.appendOutput("[acp] permission request offered no options; cancelled\n")
 			return acp.Cancelled(), nil
@@ -163,26 +167,27 @@ func (d *ACPDriver) noteUpdate(u acp.SessionUpdate) {
 		d.appendOutput(fmt.Sprintf("[acp] update %s %s\n", u.Kind, u.Status))
 	}
 
-	select {
-	case d.updates <- u:
-	default: // a full buffer must not stall the library's read loop
+	// Append here, where every update passes exactly once. Appending in the
+	// waiter instead meant text arriving while nothing waited — during an
+	// idle wait, or after the buffer filled — was dropped and never reached
+	// the transcript the checks read.
+	if text := u.Text(); text != "" {
+		d.appendOutput(text)
 	}
+	d.wake(d.updates)
 
 	if acp.IsTurnDone(u) {
 		d.mu.Lock()
 		d.turnEnded = true
 		d.mu.Unlock()
-		select {
-		case d.turnDone <- struct{}{}:
-		default:
-		}
+		d.wake(d.turnOver)
 	}
 }
 
 // SendPrompt returns as soon as the prompt is on the wire, because the Driver
 // interface is send-then-wait for every mode. The call itself runs in the
-// background and its result lands in promptDone, where WaitForResponse picks
-// it up as the end of the turn.
+// background and its return signals turnOver, which is what WaitForResponse
+// waits on.
 func (d *ACPDriver) SendPrompt(prompt string) error {
 	d.mu.Lock()
 	d.turnEnded = false
@@ -191,7 +196,6 @@ func (d *ACPDriver) SendPrompt(prompt string) error {
 	go func() {
 		_, err := d.proc.Prompt(context.Background(), prompt)
 		d.mu.Lock()
-		d.promptErr = err
 		ended := d.turnEnded
 		d.mu.Unlock()
 		if err != nil {
@@ -199,10 +203,7 @@ func (d *ACPDriver) SendPrompt(prompt string) error {
 		} else if !ended {
 			d.appendOutput("[acp] prompt call returned before any turn-done update\n")
 		}
-		select {
-		case d.promptDone <- err:
-		default:
-		}
+		d.wake(d.turnOver)
 	}()
 	return nil
 }
@@ -212,10 +213,7 @@ func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (s
 	matched := false
 	for {
 		select {
-		case upd := <-d.updates:
-			if text := upd.Text(); text != "" {
-				d.appendOutput(text)
-			}
+		case <-d.updates:
 			if !matched {
 				for _, p := range patterns {
 					if strings.Contains(d.Output(), p) {
@@ -224,11 +222,7 @@ func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (s
 					}
 				}
 			}
-		case <-d.turnDone:
-			if matched {
-				return d.Output(), nil
-			}
-		case <-d.promptDone:
+		case <-d.turnOver:
 			if matched {
 				return d.Output(), nil
 			}
@@ -306,4 +300,23 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// wake signals a one-slot channel without blocking: the waiter only needs to
+// know that something happened, not how many times.
+func (d *ACPDriver) wake(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func looksLikeRefusal(s string) bool {
+	s = strings.ToLower(s)
+	for _, word := range []string{"reject", "deny", "decline", "refuse", "cancel", "abort"} {
+		if strings.Contains(s, word) {
+			return true
+		}
+	}
+	return false
 }

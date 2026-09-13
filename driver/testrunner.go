@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +59,9 @@ type TestRunner struct {
 	home             string
 	repoDir          string
 	injectCode       string
+	stripped         string
+	strippedFor      int
+	beltProbe        chan beltProbeResult
 	instructionCodes map[string]string // instruction file → codename written into it
 	cleanups         []func()          // undo steps for files written into a preserved HOME
 	tokenHash16      string
@@ -208,7 +210,7 @@ func (r *TestRunner) Run() Result {
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		if len(r.harness.HeadlessCmd) > 0 {
-			r.prepareToolCall(true)
+			r.prepareToolCall("headless")
 			r.requestHooksFor("headless")
 			r.runHeadless()
 			r.runChecks("headless")
@@ -217,19 +219,19 @@ func (r *TestRunner) Run() Result {
 		}
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
-		r.resetPhase()
+		r.resetPhase("interactive")
 		r.requestHooksFor("interactive")
 		r.runInteractive()
 		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
-		r.resetPhase()
+		r.resetPhase("acp")
 		r.requestHooksFor("acp")
 		r.runACP()
 		r.runChecks("acp")
 	}
 	if r.mode == ModeSDK {
-		r.resetPhase()
+		r.resetPhase("sdk")
 		r.requestHooksFor("sdk")
 		r.runSDK()
 		r.runChecks("sdk")
@@ -238,19 +240,19 @@ func (r *TestRunner) Run() Result {
 	return r.finish()
 }
 
-func (r *TestRunner) resetPhase() {
+func (r *TestRunner) resetPhase(mode string) {
 	os.Remove(hookLogPath)
 	os.Remove(hookLogPath + ".stdin")
 	r.server.ClearLog()
-	r.prepareToolCall(false)
+	r.prepareToolCall(mode)
 }
 
-func (r *TestRunner) prepareToolCall(headless bool) {
+func (r *TestRunner) prepareToolCall(mode string) {
 	hasToolHooks := r.harness.Events.PreToolUse != "" || r.harness.Events.PostToolUse != ""
 	if r.server != nil && hasToolHooks {
 		name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
-		if headless && r.harness.HeadlessToolCallName != "" {
-			name, args = r.harness.HeadlessToolCallName, r.harness.HeadlessToolCallArgs
+		if o, ok := r.harness.ToolCallByMode[mode]; ok {
+			name, args = o.Name, o.Args
 		}
 		r.server.PrepareToolCall(name, r.expand(args), r.harness.ToolCallPath)
 		// The mocked tool call reads README.md relative to the agent's cwd.
@@ -502,7 +504,13 @@ func (r *TestRunner) writeHooks() {
 			}
 			hooks = append(hooks, fmt.Sprintf(`"%s":[{"command":"%s","timeout_ms":5000}]`, e.Event, jsonStr(cmd)))
 		}
-		content = fmt.Sprintf(`{"name":"%s","description":"harness test agent","tools":["*"],"hooks":{%s}}`, strings.TrimSuffix(filename, ".json"), strings.Join(hooks, ","))
+		// Same name and the same load-bearing fields as harness.Install
+		// writes, so the mock exercises the agent belt actually selects:
+		// tools ["*"] or the agent has no tools at all, and includeMcpJson
+		// keeps its MCP servers.
+		filename = harness.KiroBeltAgentName + ".json"
+		content = fmt.Sprintf(`{"name":"%s","description":"harness test agent","tools":["*"],"includeMcpJson":true,"hooks":{%s}}`,
+			harness.KiroBeltAgentName, strings.Join(hooks, ","))
 		if other, err := harness.KiroSelectBeltAgent(r.home); err != nil || other != "" {
 			r.fail(fmt.Sprintf("kiro default agent not selected (other=%q, err=%v)", other, err))
 		}
@@ -835,20 +843,25 @@ func (r *TestRunner) runOneShot(label string, cmdSlice, extraArgs []string) []by
 	return out
 }
 
-func (r *TestRunner) runHeadless() {
-	if len(r.harness.HeadlessCmd) == 0 {
-		r.skip("no headless command configured")
-		return
-	}
+// runOneShotPhase runs a mode that is one command and one prompt, then drives
+// the post-run steps a harness declares — compaction, which needs the session
+// the turn created. Headless and SDK differ only in which command they run.
+func (r *TestRunner) runOneShotPhase(banner, label string, cmd, args []string) {
+	fmt.Println(banner)
+	out := r.runOneShot(label, cmd, args)
 
-	fmt.Println("[phase 5] headless prompt")
-	out := r.runOneShot("headless", r.harness.HeadlessCmd, r.harness.HeadlessModelArgs)
-
+	// The compaction step addresses a session by id. SDK mode used to leave it
+	// unset, and the step then expanded to nothing and failed as a
+	// configuration error rather than testing compaction.
 	r.resolveSessionID(out)
-
 	for _, step := range r.harness.PostHeadlessCmd {
 		r.runPostHeadless(r.workDir(), step)
 	}
+}
+
+// Run already skips the phase when there is no headless command.
+func (r *TestRunner) runHeadless() {
+	r.runOneShotPhase("[phase 5] headless prompt", "headless", r.harness.HeadlessCmd, r.harness.HeadlessModelArgs)
 }
 
 func (r *TestRunner) runPostHeadless(dir string, rawArgs []string) {
@@ -1020,10 +1033,10 @@ func (r *TestRunner) runInteractive() {
 
 	r.lastOutput = session.Output()
 	if dump := os.Getenv("HARNESS_PTY_DUMP"); dump != "" {
-		os.WriteFile(dump, []byte(stripANSI(r.lastOutput)), 0644)
+		os.WriteFile(dump, []byte(r.strippedOutput()), 0644)
 	}
 	if os.Getenv("HARNESS_DEBUG") != "" {
-		stripped := stripANSI(r.lastOutput)
+		stripped := r.strippedOutput()
 		head := stripped
 		if len(head) > 1500 {
 			head = head[:1500]
@@ -1130,18 +1143,7 @@ func (r *TestRunner) runSDK() {
 		return
 	}
 
-	fmt.Println("[phase 8] SDK (stream-json over stdio)")
-	out := r.runOneShot("SDK", r.harness.SDKCmd, r.harness.SDKArgs)
-	// The compaction step below addresses a session by id, and SDK mode used
-	// to leave it unset: the step then expanded to nothing and failed as a
-	// configuration error rather than testing compaction.
-	r.resolveSessionID(out)
-	// Drive compaction the same way headless does (a --continue turn that
-	// sends the compact command); without this the runner never asked, and
-	// "the SDK session never compacts" was a statement about the runner.
-	for _, step := range r.harness.PostHeadlessCmd {
-		r.runPostHeadless(r.workDir(), step)
-	}
+	r.runOneShotPhase("[phase 8] SDK (stream-json over stdio)", "SDK", r.harness.SDKCmd, r.harness.SDKArgs)
 }
 
 func (r *TestRunner) checkHookEvents(phase string) {
@@ -1158,7 +1160,7 @@ func (r *TestRunner) checkHookEvents(phase string) {
 		logContent = string(data)
 	}
 
-	ptyContent := stripANSI(r.lastOutput)
+	ptyContent := r.strippedOutput()
 
 	for _, e := range r.eventEntries() {
 		label := strings.ToLower(strings.ReplaceAll(e.Tag, "_", "-"))
@@ -1202,7 +1204,7 @@ func (r *TestRunner) checkBeltHookEvents(phase string) {
 		beltLog += string(data)
 	}
 
-	ptyContent := stripANSI(r.lastOutput)
+	ptyContent := r.strippedOutput()
 
 	for _, e := range r.eventEntries() {
 		label := strings.ToLower(strings.ReplaceAll(e.Tag, "_", "-"))
@@ -1469,126 +1471,6 @@ func waitScreenQuiet(session *PTYSession, quiet, max time.Duration) {
 	}
 }
 
-// probeBeltPromptOutput runs belt's own prompt hook once, with the prompt the
-// agent will be given, and keeps a line of what it printed.
-//
-// Without this, belt runs verified only that the hooks fired: whether belt's
-// suggestions actually reached the model was checked in mock mode alone, on a
-// codename this suite made up. The text below is belt's, and finding it in a
-// request is the property users depend on. A line of belt's output is compared
-// against the agent's request, so nothing here confirms itself.
-func (r *TestRunner) probeBeltPromptOutput() {
-	// A prompt belt reliably matches. The codename question the agents are
-	// asked matches nothing, so probing with it proves only that belt is
-	// quiet — which is not what this check is about.
-	input := fmt.Sprintf(`{"prompt":%q,"session_id":"probe","cwd":%q,"hook_event_name":"UserPromptSubmit"}`,
-		"debug a go test", r.workDir())
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "belt", "plugin", "hook", "user-prompt-submit")
-	// The probe must not write to the log the event checks read: its own
-	// entry made a silent prompt hook look like it had fired, and droid's
-	// missing hook then reported as a failed injection instead of a skip.
-	cmd.Env = append(r.envIn(r.workDir()), "BELT_HOOK_DEBUG_LOG="+filepath.Join(r.home, "belt-probe.log"))
-	cmd.Dir = r.workDir()
-	cmd.Stdin = strings.NewReader(input)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output() // stdout is the hook channel; stderr carries notices
-	if err != nil {
-		r.skip("belt prompt hook produced no output to inject: " + err.Error() + " " + truncate(strings.TrimSpace(stderr.String()), 120))
-		return
-	}
-
-	// belt shapes its output for the agent it runs under, so the probe has to
-	// read every shape the registry records: claude's nested envelope,
-	// copilot's top-level field, cursor's snake_case, hermes's "context", and
-	// plain stdout for the rest. Matching only the first shape made copilot
-	// look like it dropped belt's context when it had injected it fine.
-	text := beltContextText(out)
-	if os.Getenv("HARNESS_DEBUG") != "" {
-		fmt.Printf("    [debug] belt probe stdout: %q\n    [debug] belt context: %q\n", truncate(string(out), 200), truncate(text, 120))
-	}
-
-	if strings.TrimSpace(text) == "" {
-		r.skip("belt had no suggestions for the probe prompt, so there is nothing to inject")
-		return
-	}
-	r.checkBeltHookShape(out, text)
-}
-
-// checkBeltHookShape verifies belt hands the agent the shape that agent's
-// channel takes, and hands it text rather than another envelope.
-//
-// `belt suggest --json` prints a hook envelope and belt's hook shaped one
-// again around it, so every JSON-channel agent received an additionalContext
-// whose value was a second envelope, and the plain-stdout agents (kimi, kiro)
-// were given raw JSON as their context. Both agents still "passed" every hook
-// check, because a hook firing says nothing about what it handed over.
-func (r *TestRunner) checkBeltHookShape(out []byte, text string) {
-	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
-	trimmed := strings.TrimSpace(stripANSI(string(out)))
-
-	if strings.Contains(text, "hookSpecificOutput") || strings.Contains(text, "additionalContext") {
-		r.fail(fmt.Sprintf("belt wrapped the context twice for %s (%s): the text it handed over is itself an envelope: %s",
-			r.harness.Name, channel, truncate(text, 100)))
-		return
-	}
-	if channel == harness.ContextPlainText && strings.HasPrefix(trimmed, "{") {
-		r.fail(fmt.Sprintf("belt printed JSON for %s, whose hook channel is plain stdout: %s",
-			r.harness.Name, truncate(trimmed, 100)))
-		return
-	}
-	r.pass(fmt.Sprintf("belt prompt hook output is shaped for %s (%s)", r.harness.Name, channel))
-}
-
-// beltContextText pulls the text belt asked the agent to inject, whatever
-// envelope that agent takes. Plain stdout is returned as is.
-func beltContextText(out []byte) string {
-	// belt prints coloured progress lines alongside the envelope and may
-	// indent the JSON across lines, so neither "stdout is the envelope" nor
-	// "one line is the envelope" holds. Decode the first JSON value after the
-	// first brace and let the decoder stop where it likes.
-	clean := stripANSI(string(out))
-	if i := strings.Index(clean, "{"); i >= 0 {
-		if text := beltEnvelopeText(strings.NewReader(clean[i:])); text != "" {
-			return text
-		}
-	}
-	return clean
-}
-
-func beltEnvelopeText(r io.Reader) string {
-	// belt may print more than one JSON value: a log line of its own first,
-	// the hook envelope after. Reading only the first left the context empty
-	// and the marker fell back to the raw line, which no request can contain.
-	dec := json.NewDecoder(r)
-	for {
-		var env struct {
-			HookSpecificOutput struct {
-				AdditionalContext string `json:"additionalContext"`
-			} `json:"hookSpecificOutput"`
-			AdditionalContext string `json:"additionalContext"`
-			AdditionalSnake   string `json:"additional_context"`
-			Context           string `json:"context"`
-		}
-		if err := dec.Decode(&env); err != nil {
-			return ""
-		}
-		for _, s := range []string{
-			env.HookSpecificOutput.AdditionalContext,
-			env.AdditionalContext,
-			env.AdditionalSnake,
-			env.Context,
-		} {
-			if strings.TrimSpace(s) != "" {
-				return s
-			}
-		}
-	}
-}
-
 // resolveSessionID finds the session a follow-up command should address:
 // the id the agent reported, else the newest session on disk. Only needed
 // when a harness has a post-run step.
@@ -1606,4 +1488,69 @@ func (r *TestRunner) resolveSessionID(out []byte) {
 	if r.sessionID == "" {
 		r.sessionID = r.findLatestSessionID(r.workDir())
 	}
+}
+
+// probeBeltPromptOutput asks belt's own prompt hook what it would print, so a
+// check can compare that against the shape this agent's channel takes.
+//
+// It runs in the background: the answer depends on belt and the agent name,
+// not on the run, and a suggestion lookup is a network round trip that would
+// otherwise sit in front of every belt-mode run.
+func (r *TestRunner) probeBeltPromptOutput() {
+	r.beltProbe = make(chan beltProbeResult, 1)
+	// belt shapes its output for the agent it detects from the environment,
+	// and a probe the harness runs itself looks like no agent at all — belt
+	// then prints plain text and the shape check has nothing to judge.
+	// AI_AGENT is belt's own explicit declaration for exactly this case.
+	env := append(r.envIn(r.workDir()),
+		"BELT_HOOK_DEBUG_LOG="+filepath.Join(r.home, "belt-probe.log"),
+		"AI_AGENT="+r.harness.Name)
+	dir, event := r.workDir(), r.harness.Events.PromptSubmit
+
+	go func() {
+		// A prompt belt reliably matches. The codename question the agents are
+		// asked matches nothing, so probing with it proves only that belt is
+		// quiet — which is not what this check is about.
+		input, _ := json.Marshal(map[string]any{
+			"prompt":          "debug a go test",
+			"session_id":      "probe",
+			"cwd":             dir,
+			"hook_event_name": event,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "belt", "plugin", "hook", "user-prompt-submit")
+		// The probe must not write to the log the event checks read: its own
+		// entry made a silent prompt hook look like it had fired.
+		cmd.Env = env
+		cmd.Dir = dir
+		cmd.Stdin = bytes.NewReader(input)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output() // stdout is the hook channel; stderr carries notices
+		r.beltProbe <- beltProbeResult{
+			stdout: stripANSI(string(out)),
+			stderr: truncate(strings.TrimSpace(stderr.String()), 120),
+			err:    err,
+		}
+	}()
+}
+
+// beltProbeResult is what belt's prompt hook printed when asked directly.
+type beltProbeResult struct {
+	stdout string
+	stderr string
+	err    error
+}
+
+// strippedOutput is lastOutput with escape sequences removed, computed once
+// per captured output. An interactive phase leaves megabytes of TUI dump here
+// and several checks read it, each paying a full regexp pass.
+func (r *TestRunner) strippedOutput() string {
+	if r.stripped == "" || r.strippedFor != len(r.lastOutput) {
+		r.stripped = stripANSI(r.lastOutput)
+		r.strippedFor = len(r.lastOutput)
+	}
+	return r.stripped
 }
