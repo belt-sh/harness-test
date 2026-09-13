@@ -130,6 +130,29 @@ Two ways a mock quietly changes what it is measuring, both found on gemini in 20
 - **Answering a request that cannot use the answer.** One turn is routed across models with different toolsets, so the prepared tool call is served only to a request that declares that tool. Served to gemini's small flash toolset it came back "Tool `write_file` not found", nothing ran, and both tool hooks were reported missing.
 - **Answering a routing question badly.** Agents ask the model to score a request and pick a tier. `synthFromSchema` answers `responseJsonSchema` requests, and numbers come back at the top of the range, because a low score routes the turn to a cheaper model and a smaller toolset.
 
+### Resuming a session: 11 of 12 agents do it
+
+`HARNESS_ACP_LOAD=1` adds a probe to the ACP phase: run a turn, then attach to
+that same session from a second process with `session/load`. That is what
+reconnecting to a conversation requires — the agent rebuilds its state and
+replays the thread back as `session/update` notifications — and whether an
+agent implements it is not something a spec can answer.
+
+Measured 2026-09 in Docker, one probe per agent:
+
+| Result | Agents |
+|--------|--------|
+| resumed, replayed the conversation | copilot, droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen |
+| refused | gemini (`session/load: Internal error`) |
+
+Replay counts ran 2-6 updates. Two things the probe has to get right, both
+learned from T3 Code's implementation: `session/load` does not reliably
+return — some agents answer only after the replay finishes, some never answer
+while streaming it — so the call races a replay-idle timer and a deadline; and
+replayed updates arrive on the same channel as live progress, so they are
+counted as history until the load settles. A client that misses the second one
+re-raises every historical tool call as a new approval request.
+
 ### Cursor hooks are requested by the backend
 
 The Cursor CLI runs every hook through one dispatcher that answers a backend request: `ExecServerMessage` field 27 `execute_hook_args { request: ExecuteHookRequest }`, whose oneof names the hook (`pre_compact` 1, `pre_tool_use` 4, `post_tool_use` 5, `before_submit_prompt` 7, `stop` 11), answered by `ExecClientMessage` field 27 `execute_hook_result` (agent.v1 schema, Cursor CLI 2026.09). The mock sends those requests, listed per mode in `Harness.ServerRequestedHooks`: the TUI runs the prompt and stop hooks itself as well, so in interactive mode the mock requests only compaction, while in headless it requests all three. Before this, the mock requested none, and "Cursor never runs the prompt or stop hook in headless" sat in the known-issue table.

@@ -34,6 +34,7 @@ type ACPDriver struct {
 	mu         sync.Mutex
 	output     strings.Builder
 	lastUpdate time.Time
+	loading    bool // a session/load is replaying; updates are history
 
 	// updates wakes a waiter; the text itself is appended as it arrives, so a
 	// dropped wakeup costs nothing.
@@ -47,6 +48,11 @@ type ACPDriver struct {
 	// worth reporting, so the asymmetry is logged.
 	turnOver  chan struct{}
 	turnEnded bool // a turn-done update arrived before the prompt call returned
+
+	// ResumeSessionID makes Start attach to an existing session with
+	// session/load instead of opening a new one. Set before Start.
+	ResumeSessionID string
+	replayed        int // session/update notifications seen during a load
 }
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
@@ -78,12 +84,88 @@ func (d *ACPDriver) Start() error {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
+	if d.ResumeSessionID != "" {
+		return d.loadSession(cwd)
+	}
+
 	sessionID, err := d.proc.NewSession(context.Background(), cwd, nil)
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
 	d.appendOutput(fmt.Sprintf("[acp] session: %s\n", sessionID))
 	return nil
+}
+
+// SessionID is the session this driver is attached to, for a later resume.
+func (d *ACPDriver) SessionID() string { return d.proc.SessionID() }
+
+// ReplayedUpdates counts the session/update notifications an agent sent while
+// loading a session. An agent that replays the conversation sends many; one
+// that answers the call and says nothing sends none.
+func (d *ACPDriver) ReplayedUpdates() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.replayed
+}
+
+// loadSession attaches to an existing session.
+//
+// session/load does not reliably return: some agents answer only once the
+// replay finishes, some never answer while streaming it. So the call races a
+// replay-idle timer — updates having gone quiet — and an overall deadline,
+// and whichever lands first decides. Until it settles, updates are counted as
+// replay rather than treated as live progress, because they arrive on the
+// same channel as a running turn's.
+func (d *ACPDriver) loadSession(cwd string) error {
+	d.mu.Lock()
+	d.loading = true
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.loading = false
+		d.mu.Unlock()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.proc.Call(context.Background(), acp.MethodSessionLoad, map[string]any{
+			"sessionId":  d.ResumeSessionID,
+			"cwd":        cwd,
+			"mcpServers": []any{},
+		})
+		done <- err
+	}()
+
+	start := time.Now()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(60 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				return fmt.Errorf("session/load: %w", err)
+			}
+			d.appendOutput(fmt.Sprintf("[acp] session/load returned after %s, %d replayed update(s)\n",
+				time.Since(start).Round(time.Millisecond), d.ReplayedUpdates()))
+			return nil
+		case <-ticker.C:
+			// Replay finished without the call returning: the agent is
+			// attached even though the RPC has not answered.
+			d.mu.Lock()
+			quiet := d.replayed > 0 && time.Since(d.lastUpdate) >= 3*time.Second
+			d.mu.Unlock()
+			if quiet {
+				d.appendOutput(fmt.Sprintf("[acp] session/load replayed %d update(s) and went quiet without answering\n",
+					d.ReplayedUpdates()))
+				return nil
+			}
+		case <-deadline:
+			return fmt.Errorf("session/load: no answer and no replay after 60s")
+		case <-d.proc.Done():
+			return fmt.Errorf("session/load: agent exited")
+		}
+	}
 }
 
 // handler is everything this suite decides for itself: it approves, it serves
@@ -161,6 +243,12 @@ func (d *ACPDriver) handler() acp.Handler {
 func (d *ACPDriver) noteUpdate(u acp.SessionUpdate) {
 	d.mu.Lock()
 	d.lastUpdate = time.Now()
+	if d.loading {
+		// Replay, not live progress: the distinction matters to any client
+		// that acts on updates, which would otherwise re-raise last week's
+		// tool approvals as new ones.
+		d.replayed++
+	}
 	d.mu.Unlock()
 
 	if os.Getenv("HARNESS_DEBUG") != "" {

@@ -1135,6 +1135,40 @@ func (r *TestRunner) runACP() {
 	}
 
 	r.pass("ACP session completed")
+
+	if os.Getenv("HARNESS_ACP_LOAD") != "" {
+		sessionID := driver.SessionID()
+		driver.Close()
+		r.probeSessionLoad(sessionID, r.harness.ACPCmd[0], args, dir)
+	}
+}
+
+// probeSessionLoad answers one question per agent: can a second process
+// attach to a session the first one created?
+//
+// That is what resuming a conversation requires — the agent rebuilds its
+// state and replays the thread — and it is the difference between reconnecting
+// to work and starting over. Whether each agent implements session/load is not
+// something a spec can answer, so this asks them. Opt-in via HARNESS_ACP_LOAD
+// because it doubles the ACP phase.
+func (r *TestRunner) probeSessionLoad(sessionID, bin string, args []string, dir string) {
+	fmt.Println("[probe] session/load (resume in a new process)")
+	if sessionID == "" {
+		r.skip("session/load: the agent reported no session id to resume")
+		return
+	}
+
+	resumed := NewACPDriver(bin, args, dir, r.envIn(dir))
+	resumed.ResumeSessionID = sessionID
+	err := resumed.Start()
+	defer resumed.Close()
+	if err != nil {
+		// Not a failure of this suite or of belt: it is the answer.
+		r.skip(fmt.Sprintf("session/load: %s does not resume (%v)", r.harness.Name, err))
+		return
+	}
+	r.pass(fmt.Sprintf("session/load: %s resumed session %s, %d update(s) replayed",
+		r.harness.Name, truncate(sessionID, 24), resumed.ReplayedUpdates()))
 }
 
 func (r *TestRunner) runSDK() {
