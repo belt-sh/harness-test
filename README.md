@@ -142,23 +142,39 @@ Measured 2026-09 in Docker, both paths:
 | Path | Resumed the conversation | Did not |
 |------|--------------------------|---------|
 | first process closed its session | all 12 | — |
-| first process killed | 11 | gemini |
+| first process killed | 11 | gemini, most of the time |
 
 Every resume replayed the user's own turn and carried the earlier turn to the
 model. Loads took 15ms to 1.8s, and every session was loadable the instant its
 process ended.
 
-**gemini persists at `session/close` and not before.** Killed, it answers
-`session/load` with `Internal error` at 0s, 2s, 5s, 10s and 20s after the
-process ended. Closed, it resumes at 0s. For a runner that is the whole
-question: a client that crashes loses a gemini session and keeps everyone
-else's.
+**gemini does not reliably survive a kill: it resumed once in five runs.**
+Closed, it resumes every time at 0s. Killed, it usually answers `session/load`
+with `Internal error` at 0s, 2s, 5s, 10s and 20s — and the retries cannot help,
+because the problem is not that the session has not been written yet but that
+it never will be. The error carries the reason in its `data`, which is worth
+reading rather than reporting the bare `Internal error`:
+
+```
+Invalid session identifier "<uuid>".
+  Searched for sessions in <home>/.gemini/tmp/<project>/chats.
+```
+
+**A session file on disk is not evidence the session is recoverable.** After a
+failed load there is often a `.jsonl` in that directory whose first line
+carries the very id the load asked for, and gemini's own `--list-sessions`
+does not offer it — while it does list the session the same run closed
+cleanly. Two files can carry the same session id. Checking for the file is
+what this suite tried first, and it pointed the wrong way.
+
+For a runner: a gemini session that ends in a crash is usually gone, you cannot
+tell by looking for its file, and the remaining eleven agents are unaffected.
 
 **An agent's own claim is not an answer.** All twelve declare `loadSession` at
 initialize, gemini included, on both paths. The claim is worth showing a
 person; it is not worth gating on.
 
-#### What this probe got wrong twice
+#### What this probe got wrong three times
 
 Both corrections were the harness, and both came from the probe borrowing the
 phase's session instead of running its own.
@@ -178,6 +194,12 @@ phase's session instead of running its own.
 That case is worth keeping for what it shows: a replay can be genuine at the
 protocol level while the model receives a summary instead of the original
 wording. A resume that works is not the same as no context being lost.
+
+- **gemini's kill-path failure was reported as a clean property** — persists at
+  close, never before — from a single run of each path. It is intermittent:
+  one resume in five. A result measured once is a result measured under
+  whatever the timing happened to be that time, and that applies to a pass as
+  much as to a failure.
 
 #### Counting replayed notifications proves nothing
 
