@@ -139,16 +139,20 @@ instead of closing its session, which is what a closed laptop does.
 
 Measured 2026-09 in Docker, both paths:
 
-| Path | Resumed the conversation | Did not |
-|------|--------------------------|---------|
-| first process closed its session | all 12 | — |
-| first process killed | 11 | gemini, most of the time |
+| Path | Resumed the conversation | Did not | Passes |
+|------|--------------------------|---------|--------|
+| first process closed its session | all 12 | — | 1 |
+| first process killed | 11, every pass | gemini, 7 times in 8 | 3 |
 
 Every resume replayed the user's own turn and carried the earlier turn to the
 model. Loads took 15ms to 1.8s, and every session was loadable the instant its
 process ended.
 
-**gemini does not reliably survive a kill: it resumed once in five runs.**
+The kill path was run three times end to end because one run cannot tell a
+property from a coincidence, and the eleven agree with themselves across all
+three. The clean-close pass has been run once and its table is one sample.
+
+**gemini does not reliably survive a kill: it resumed once in eight runs.**
 Closed, it resumes every time at 0s. Killed, it usually answers `session/load`
 with `Internal error` at 0s, 2s, 5s, 10s and 20s — and the retries cannot help,
 because the problem is not that the session has not been written yet but that
@@ -197,9 +201,10 @@ wording. A resume that works is not the same as no context being lost.
 
 - **gemini's kill-path failure was reported as a clean property** — persists at
   close, never before — from a single run of each path. It is intermittent:
-  one resume in five. A result measured once is a result measured under
+  one resume in eight. A result measured once is a result measured under
   whatever the timing happened to be that time, and that applies to a pass as
-  much as to a failure.
+  much as to a failure, which is why the kill path now has three passes behind
+  it and the table says how many.
 
 #### Counting replayed notifications proves nothing
 
