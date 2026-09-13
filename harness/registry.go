@@ -538,6 +538,7 @@ var All = map[string]Harness{
 			"acp:event:PRE_COMPACT":      "ACP mode is droid exec; PreCompact fires only from the TUI's manual compaction (droid 0.217 source)",
 			"acp:event:PROMPT":           "the ACP agent (exec --output-format acp, also each acp-daemon child) calls the turn runner directly; UserPromptSubmit runs only in the JSON-RPC processUserMessage path (droid 0.217 source)",
 			"headless:event:PRE_COMPACT": "PreCompact fires only from the TUI's manual compaction; exec never compacts (droid 0.217 source)",
+			"sdk:event:PRE_COMPACT":      "SDK mode is droid exec -o stream-jsonrpc; PreCompact still fires only from the TUI's manual compaction (same investigation as headless)",
 			"headless:event:PROMPT":      "plain exec (-o text/json/stream-json) runs the turn through kDA, which never calls executeUserPromptSubmitHooks; only -o stream-jsonrpc goes through the JSON-RPC processUserMessage path (droid 0.217 source)",
 		},
 		Events: standardEvents,
@@ -566,8 +567,15 @@ var All = map[string]Harness{
 		// compacts, after a "Confirm /compress" dialog.
 		CompactCommand: "/compress",
 		CompactConfirm: true,
-		ACPCmd:         []string{"droid", "exec", "--output-format", "acp"},
-		ACPArgs:        []string{"--auto", "high", "-m", "{{.Model}}"},
+		// SDK mode covers the other exec path: -o stream-jsonrpc runs the turn
+		// through the JSON-RPC worker the TUI drives, the only exec mode that
+		// runs the prompt hook. Headless deliberately tests plain exec, so
+		// without this nothing exercised the path that works.
+		SDKCmd:  []string{"droid", "exec"},
+		SDKArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
+
+		ACPCmd:  []string{"droid", "exec", "--output-format", "acp"},
+		ACPArgs: []string{"--auto", "high", "-m", "{{.Model}}"},
 	},
 
 	// IDE-only agents: detection and hook install only, no test support.

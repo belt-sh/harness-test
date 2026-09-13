@@ -36,7 +36,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | ✅² | JSONNested | Responses |
 | [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | OpenAI |
 | [Cursor](https://cursor.com/docs/cli) | 2026.09 | ✅ | ✅ | — | — | JSONFlat | Cursor⁵ |
-| [Droid](https://docs.factory.ai/cli) | 0.208.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
+| [Droid](https://docs.factory.ai/cli) | 0.217.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | OpenAI |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | Gemini |
 | [Goose](https://github.com/block/goose) | 1.50.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
 | [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | — | JSONNested | Responses |
@@ -55,6 +55,8 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 ² `codex exec --experimental-json` — JSONL event stream over stdout.
 ³ `pi --mode json` — structured JSONL output (provider URL not overridable).
 ⁴ `omp --mode json` — Oh My Pi is a Pi fork (bun runtime) with native ACP, plugins, and multi-model roles.
+
+⁵ `droid exec -o stream-jsonrpc` — the JSON-RPC worker the TUI drives, and the only exec path that runs the prompt hook. Headless tests plain `exec`, which does not, so both are covered.
 ⁵ Cursor's `agent` CLI has no BYOK endpoint: the mock speaks its Connect-protobuf `agent.v1.AgentService` (RunSSE + BidiAppend, schemas read out of the CLI bundle). Server config pins the stream to HTTP/1.1. Headless fires sessionStart and the tool hooks; the TUI also fires beforeSubmitPrompt and stop.
 
 ### Instruction files
@@ -115,7 +117,7 @@ The same rule covers the rest of a phase: no requests reaching the mock is alway
 
 Until 2026-09 every event was a skip, so hooks that stopped firing entirely still passed; that is how kiro sat broken for weeks. Each of the 14 entries was measured in Docker in both hook sources, mock and belt, which agreed on every one.
 
-The measurement and the explanation are different claims, so the table says which it is: a reason that begins `observed only` states what happened and not why. All 9 entries now cite a cause: codex runs `exec`, where `/compact` is only a user message (headless and SDK); droid fires PreCompact only from its TUI's manual compaction and never in `exec` (headless and ACP, droid 0.217 source); droid runs `UserPromptSubmit` only in its JSON-RPC `processUserMessage` path, which the TUI's worker and `exec -o stream-jsonrpc` use, while plain `exec` (text, json, stream-json) and the ACP agent call the turn runner directly (headless and ACP, droid 0.217 source; headless used `-o stream-jsonrpc` until 2026-09, which hid the plain-exec case); and gemini's ACP agent runs tools with `invocation.execute()` directly and fires `SessionStart` only in its non-interactive `main()` (gemini-cli 0.59 source).
+The measurement and the explanation are different claims, so the table says which it is: a reason that begins `observed only` states what happened and not why. All 10 entries now cite a cause: codex runs `exec`, where `/compact` is only a user message (headless and SDK); droid fires PreCompact only from its TUI's manual compaction and never in `exec` (headless and ACP, droid 0.217 source); droid runs `UserPromptSubmit` only in its JSON-RPC `processUserMessage` path, which the TUI's worker and `exec -o stream-jsonrpc` use, while plain `exec` (text, json, stream-json) and the ACP agent call the turn runner directly (headless and ACP, droid 0.217 source; headless used `-o stream-jsonrpc` until 2026-09, which hid the plain-exec case — SDK mode now covers that path deliberately); and gemini's ACP agent runs tools with `invocation.execute()` directly and fires `SessionStart` only in its non-interactive `main()` (gemini-cli 0.59 source).
 
 Revisiting the table in 2026-09 took it from 14 entries to 8, and every removal was a fault in this harness, not the agent: claude's SDK compaction needed the runner to send `/compact`; gemini's ACP tool calls failed on this driver's invalid permission reply (`{"outcome":"approved"}` instead of `{"outcome":{"outcome":"selected","optionId":...}}`), which hid that gemini's ACP path bypasses tool hooks altogether; Cursor's prompt, stop and compaction hooks need a backend request the mock never sent; and droid's TUI compaction needed a context window on the custom model, the right command (`/compress`, confirmed), the trust dialog out of the way, and the model actually selected. Treat `observed only` as an open question.
 

@@ -844,17 +844,7 @@ func (r *TestRunner) runHeadless() {
 	fmt.Println("[phase 5] headless prompt")
 	out := r.runOneShot("headless", r.harness.HeadlessCmd, r.harness.HeadlessModelArgs)
 
-	if len(r.harness.PostHeadlessCmd) > 0 {
-		var parsed struct {
-			SessionID string `json:"session_id"`
-		}
-		if json.Unmarshal(out, &parsed) == nil && parsed.SessionID != "" {
-			r.sessionID = parsed.SessionID
-		}
-		if r.sessionID == "" {
-			r.sessionID = r.findLatestSessionID(r.workDir())
-		}
-	}
+	r.resolveSessionID(out)
 
 	for _, step := range r.harness.PostHeadlessCmd {
 		r.runPostHeadless(r.workDir(), step)
@@ -1141,7 +1131,11 @@ func (r *TestRunner) runSDK() {
 	}
 
 	fmt.Println("[phase 8] SDK (stream-json over stdio)")
-	r.runOneShot("SDK", r.harness.SDKCmd, r.harness.SDKArgs)
+	out := r.runOneShot("SDK", r.harness.SDKCmd, r.harness.SDKArgs)
+	// The compaction step below addresses a session by id, and SDK mode used
+	// to leave it unset: the step then expanded to nothing and failed as a
+	// configuration error rather than testing compaction.
+	r.resolveSessionID(out)
 	// Drive compaction the same way headless does (a --continue turn that
 	// sends the compact command); without this the runner never asked, and
 	// "the SDK session never compacts" was a statement about the runner.
@@ -1592,5 +1586,24 @@ func beltEnvelopeText(r io.Reader) string {
 				return s
 			}
 		}
+	}
+}
+
+// resolveSessionID finds the session a follow-up command should address:
+// the id the agent reported, else the newest session on disk. Only needed
+// when a harness has a post-run step.
+func (r *TestRunner) resolveSessionID(out []byte) {
+	if len(r.harness.PostHeadlessCmd) == 0 {
+		return
+	}
+	var parsed struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(out, &parsed) == nil && parsed.SessionID != "" {
+		r.sessionID = parsed.SessionID
+		return
+	}
+	if r.sessionID == "" {
+		r.sessionID = r.findLatestSessionID(r.workDir())
 	}
 }
