@@ -12,6 +12,8 @@ github.com/inference-sh/agentprotocol v0.4.0 h1:5i/uS9plBmz91CsGUf/d80onYryDNMrT
 github.com/inference-sh/agentprotocol v0.4.0/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
 github.com/inference-sh/agentprotocol v0.4.1 h1:77gDs1q4B7zrjYMqaHUFxm09+3M4LbBEVNNQM4A+M2I=
 github.com/inference-sh/agentprotocol v0.4.1/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
+github.com/inference-sh/agentprotocol v0.4.3 h1:C6+qphd9e7NMJJ9NcprgcJ921HkeW1h5jPz3qsvFB8A=
+github.com/inference-sh/agentprotocol v0.4.3/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
