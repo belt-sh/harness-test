@@ -11,4 +11,4 @@ jobs:
     uses: ./.github/workflows/test-harness.yml
     with:
       harness: droid
-      modes: '["headless","acp"]'
+      modes: '["headless","acp","sdk"]'

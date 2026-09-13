@@ -21,7 +21,7 @@ jobs:
           - harness: cursor
             modes: headless,interactive
           - harness: droid
-            modes: headless,acp
+            modes: headless,acp,sdk
           - harness: gemini
             modes: headless,acp
           - harness: goose
