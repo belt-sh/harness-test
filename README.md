@@ -130,36 +130,116 @@ Two ways a mock quietly changes what it is measuring, both found on gemini in 20
 - **Answering a request that cannot use the answer.** One turn is routed across models with different toolsets, so the prepared tool call is served only to a request that declares that tool. Served to gemini's small flash toolset it came back "Tool `write_file` not found", nothing ran, and both tool hooks were reported missing.
 - **Answering a routing question badly.** Agents ask the model to score a request and pick a tier. `synthFromSchema` answers `responseJsonSchema` requests, and numbers come back at the top of the range, because a low score routes the turn to a cheaper model and a smaller toolset.
 
-### Resuming a session: 11 of 12 agents do it
+### Resuming a session: all 12 after a clean close, 11 after a kill
 
-`HARNESS_ACP_LOAD=1` adds a probe to the ACP phase: run a turn, then attach to
-that same session from a second process with `session/load`. That is what
-reconnecting to a conversation requires — the agent rebuilds its state and
-replays the thread back as `session/update` notifications — and whether an
-agent implements it is not something a spec can answer.
+`HARNESS_ACP_LOAD=1` adds a probe to the ACP phase: run a turn, end the
+process, then attach to that same session from a second process with
+`session/load`. `HARNESS_ACP_LOAD=kill` ends the first process outright
+instead of closing its session, which is what a closed laptop does.
 
-Measured 2026-09 in Docker, one probe per agent, and again with
-`HARNESS_ACP_LOAD=kill`, which ends the first process outright instead of
-closing its session:
+Measured 2026-09 in Docker, both paths:
 
-| Result | Agents |
-|--------|--------|
-| resumed, replayed the conversation | copilot, droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen |
-| refused | gemini (`session/load: Internal error`) |
+| Path | Resumed the conversation | Did not |
+|------|--------------------------|---------|
+| first process closed its session | all 12 | — |
+| first process killed | 11 | gemini |
 
-Killing the first process changed nothing: the same eleven resumed, and
-gemini refused the same way. Replay ran 2-6 updates, every agent answered the
-call, and loads took 12ms to 1.8s.
+Every resume replayed the user's own turn and carried the earlier turn to the
+model. Loads took 15ms to 1.8s, and every session was loadable the instant its
+process ended.
 
-**An agent's own claim is not an answer.** Every one of the twelve declares
-`loadSession` at initialize, gemini included — and gemini is the one that
-refuses. The claim is worth showing a person; it is not worth gating on.
+**gemini persists at `session/close` and not before.** Killed, it answers
+`session/load` with `Internal error` at 0s, 2s, 5s, 10s and 20s after the
+process ended. Closed, it resumes at 0s. For a runner that is the whole
+question: a client that crashes loses a gemini session and keeps everyone
+else's.
 
-The race and the replay marking live in `agentprotocol/acp` (`LoadSession`),
-not here, so every client gets them: `session/load` does not reliably return —
-some agents answer only after the replay finishes — and replayed updates
-arrive on the same channel as live progress. A client that conflates the two
-re-raises every historical tool call as a new approval request.
+**An agent's own claim is not an answer.** All twelve declare `loadSession` at
+initialize, gemini included, on both paths. The claim is worth showing a
+person; it is not worth gating on.
+
+#### What this probe got wrong twice
+
+Both corrections were the harness, and both came from the probe borrowing the
+phase's session instead of running its own.
+
+- **gemini was recorded as refusing `session/load` for weeks.** It refuses
+  after a kill and resumes after a clean close, and the old probe ran at
+  whatever moment the phase reached it. One attempt cannot tell "will not
+  resume" from "has not finished writing", so the probe now retries at 0s, 2s,
+  5s, 10s and 20s and reports how long the session took to become loadable.
+- **qwen was recorded as accepting the load and attaching to nothing** — a
+  full-looking replay, three model requests, and the earlier turn in none of
+  them. The ACP phase sends qwen `/compress` before the probe ran, so the
+  history had been compacted into a summary and the verbatim turn was
+  correctly absent. The check was right about the session; the session was the
+  wrong one to ask.
+
+That case is worth keeping for what it shows: a replay can be genuine at the
+protocol level while the model receives a summary instead of the original
+wording. A resume that works is not the same as no context being lost.
+
+#### Counting replayed notifications proves nothing
+
+An agent that accepts the call, ignores the id, opens a blank session and sends
+its usual openers produces exactly what a short replay produces. Two to six
+notifications is what openers alone produce, and two to six is what every agent
+replied with, so the earlier "11 of 12 replayed the conversation" was never
+evidence for the claim it was making.
+
+What settles it is asking the resumed session a follow-up question and reading
+what reached the mock. If the request carries the earlier turn, the session came
+back. `LoadResult.RestoredConversation` from `agentprotocol/acp` is the cheap
+corroborator — a fresh session cannot replay the user's own turn, because on a
+fresh session the user has not spoken — and the probe also compares the replayed
+update kinds against the kinds that same agent sends on a session with no
+history.
+
+A negative carries its evidence: when no request holds the earlier turn, the
+probe describes the requests that were sent, so the claim cannot be read without
+the thing that would falsify it.
+
+The race and the replay marking live in `agentprotocol/acp` (`LoadSession`), not
+here, so every client gets them: `session/load` does not reliably return — some
+agents answer only after the replay finishes — and replayed updates arrive on
+the same channel as live progress. A client that conflates the two re-raises
+every historical tool call as a new approval request.
+
+### A tool call in flight, and who asks permission at all
+
+`HARNESS_ACP_INFLIGHT=1` parks a permission request and never answers it, kills
+the client while the tool call is still waiting, then resumes the session from a
+new process and records whether the agent raises the approval again, with what
+`toolCallId`, and whether answering it leads anywhere. `=cancel` refuses the
+re-raised request instead of approving it; `=hold` answers nothing on the
+resumed session either, to see whether an agent waits forever or gives up.
+
+It has had almost nothing to park, and the reason matters more than the result.
+
+**Agents do not gate reads.** Every agent in this registry except gemini is
+offered a tool call that reads `README.md`, and reading is something agents run
+without consulting their client: droid, goose, grok, hermes, kilo, kimi, kiro,
+opencode and qwen all ran it without asking, kiro and droid included with their
+auto-approval flags stripped. gemini's mocked tool call writes a file, and
+gemini asks. So every line of this probe names the tool, because "never asked"
+is a fact about the tool and not about the agent.
+
+Getting a trustworthy number for gated operations means giving each agent a
+write or a shell command it actually declares — twelve pieces of per-agent
+knowledge the registry does not have yet.
+
+The probe strips the registry's own auto-approval flags (`--trust-all-tools`,
+`--yolo`, `--auto high`) and says which it dropped, so a "never asked" result is
+not this harness's configuration reported as an agent trait. Blanket approval
+granted by a config file rather than a flag — kimi's `permissions` block — is
+not something it can see.
+
+Holding an approval used to hold the whole connection: agentprotocol answered
+agent-initiated requests on its read loop, so a blocked handler stopped every
+update and every pending reply behind it, which is what a human taking a minute
+over an approval would have done to a real client. Fixed in v0.4.0, and pinned
+here from the client's side.
+
 
 ### Cursor hooks are requested by the backend
 

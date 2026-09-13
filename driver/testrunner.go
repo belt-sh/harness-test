@@ -1279,9 +1279,21 @@ func (r *TestRunner) reportResumedContext(resumed *ACPDriver) {
 		}
 	}
 	// The load returned without an error, the notifications arrived, and the
-	// conversation is still gone.
-	r.skip(fmt.Sprintf("session/load: %s sent %d request(s) after the resume and none carried the earlier turn, so it attached to nothing",
-		r.harness.Name, len(after)-before))
+	// conversation is still gone. A negative about an agent has to carry its
+	// evidence, so the requests it did send are described: one message is the
+	// new prompt alone, and several would mean it carries something this
+	// check does not recognise.
+	var detail []string
+	for _, e := range after[before:] {
+		body := string(e.Body)
+		note := ""
+		if strings.Contains(body, resumeFollowUp) {
+			note = ", holds the new prompt"
+		}
+		detail = append(detail, fmt.Sprintf("%s with %d message(s)%s", e.Path, strings.Count(body, `"role"`), note))
+	}
+	r.skip(fmt.Sprintf("session/load: %s sent %d request(s) after the resume and none carried the earlier turn — %s",
+		r.harness.Name, len(after)-before, strings.Join(detail, "; ")))
 }
 
 // sameKinds reports whether two update-kind sequences are identical.
