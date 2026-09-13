@@ -17,6 +17,7 @@ import (
 
 	"github.com/belt-sh/harness-test/harness"
 	"github.com/belt-sh/harness-test/server"
+	"github.com/inference-sh/agentprotocol/acp"
 )
 
 type Result struct {
@@ -76,6 +77,7 @@ type TestRunner struct {
 	lastOutput       string
 	proxyURL         string            // HTTPS_PROXY value, set only during agent execution
 	testEntries      []server.LogEntry // checks read these when set (unit tests)
+
 }
 
 func (r *TestRunner) entries() []server.LogEntry {
@@ -229,6 +231,16 @@ func (r *TestRunner) Run() Result {
 		r.requestHooksFor("acp")
 		r.runACP()
 		r.runChecks("acp")
+		// After the checks, because the probes run turns of their own and the
+		// checks read the same mock log and hook log.
+		if os.Getenv("HARNESS_ACP_LOAD") != "" {
+			r.resetPhase("acp")
+			r.probeSessionLoad()
+		}
+		if os.Getenv("HARNESS_ACP_INFLIGHT") != "" {
+			r.resetPhase("acp")
+			r.probeToolCallInFlight()
+		}
 	}
 	if r.mode == ModeSDK {
 		r.resetPhase("sdk")
@@ -248,19 +260,34 @@ func (r *TestRunner) resetPhase(mode string) {
 }
 
 func (r *TestRunner) prepareToolCall(mode string) {
-	hasToolHooks := r.harness.Events.PreToolUse != "" || r.harness.Events.PostToolUse != ""
-	if r.server != nil && hasToolHooks {
-		name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
-		if o, ok := r.harness.ToolCallByMode[mode]; ok {
-			name, args = o.Name, o.Args
-		}
-		r.server.PrepareToolCall(name, r.expand(args), r.harness.ToolCallPath)
-		// The mocked tool call reads README.md relative to the agent's cwd.
-		readme := filepath.Join(r.workDir(), "README.md")
-		if _, err := os.Stat(readme); err != nil {
-			os.WriteFile(readme, []byte("test"), 0644)
-		}
+	if r.harness.Events.PreToolUse == "" && r.harness.Events.PostToolUse == "" {
+		return
 	}
+	r.armToolCall(mode)
+}
+
+// armToolCall points the mock at the tool this agent calls in this mode and
+// reports whether the agent has one at all. Tool hooks are the usual reason to
+// serve a tool call, but not the only one: the in-flight probe needs a tool
+// call to have something to ask permission for.
+func (r *TestRunner) armToolCall(mode string) bool {
+	if r.server == nil {
+		return false
+	}
+	name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
+	if o, ok := r.harness.ToolCallByMode[mode]; ok {
+		name, args = o.Name, o.Args
+	}
+	if name == "" {
+		return false
+	}
+	r.server.PrepareToolCall(name, r.expand(args), r.harness.ToolCallPath)
+	// The mocked tool call reads README.md relative to the agent's cwd.
+	readme := filepath.Join(r.workDir(), "README.md")
+	if _, err := os.Stat(readme); err != nil {
+		os.WriteFile(readme, []byte("test"), 0644)
+	}
+	return true
 }
 
 func (r *TestRunner) finish() Result {
@@ -997,20 +1024,12 @@ func (r *TestRunner) runACP() {
 
 	fmt.Println("[phase 7] ACP (JSON-RPC over stdio)")
 
-	dir := r.workDir()
-
-	var args []string
-	for _, a := range r.harness.ACPCmd[1:] {
-		args = append(args, r.expand(a))
-	}
-	for _, a := range r.harness.ACPArgs {
-		args = append(args, r.expand(a))
-	}
+	bin, args, dir := r.acpInvocation()
 
 	// Write ACP-specific config files (some agents need config in the project dir)
 	r.writeACPConfig()
 
-	driver := NewACPDriver(r.harness.ACPCmd[0], args, dir, r.envIn(dir))
+	driver := NewACPDriver(bin, args, dir, r.envIn(dir))
 	if err := driver.Start(); err != nil {
 		r.fail("ACP start: " + err.Error())
 		return
@@ -1053,58 +1072,470 @@ func (r *TestRunner) runACP() {
 
 	r.pass("ACP session completed")
 
-	if os.Getenv("HARNESS_ACP_LOAD") != "" {
-		sessionID := driver.SessionID()
-		// HARNESS_ACP_LOAD=kill ends the first process the way a closed laptop
-		// does, so the resume meets whatever state the agent left on disk
-		// rather than the tidy state session/close leaves.
-		how := "closed"
-		if os.Getenv("HARNESS_ACP_LOAD") == "kill" {
-			how = "killed"
-			driver.Kill()
-		} else {
-			driver.Close()
-		}
-		r.probeSessionLoad(sessionID, r.harness.ACPCmd[0], args, dir, how)
-	}
 }
 
-// probeSessionLoad answers one question per agent: can a second process
-// attach to a session the first one created?
+// acpInvocation is the command that starts this agent in ACP mode, expanded.
+func (r *TestRunner) acpInvocation() (bin string, args []string, dir string) {
+	for _, a := range r.harness.ACPCmd[1:] {
+		args = append(args, r.expand(a))
+	}
+	for _, a := range r.harness.ACPArgs {
+		args = append(args, r.expand(a))
+	}
+	return r.harness.ACPCmd[0], args, r.workDir()
+}
+
+// resumeAttemptDelays are how long after the first process ended each attempt
+// at session/load is made.
 //
-// That is what resuming a conversation requires — the agent rebuilds its
-// state and replays the thread — and it is the difference between reconnecting
-// to work and starting over. Whether each agent implements session/load is not
-// something a spec can answer, so this asks them. Opt-in via HARNESS_ACP_LOAD
-// because it doubles the ACP phase.
-func (r *TestRunner) probeSessionLoad(sessionID, bin string, args []string, dir, how string) {
+// A probe that attempts the load once, at whatever moment the phase happens to
+// reach it, cannot tell "this agent does not resume" from "this agent had not
+// finished writing yet". That is not hypothetical: gemini was recorded as
+// refusing session/load for weeks, and the refusal disappeared when the probe
+// moved later in the phase for an unrelated reason. So the wait is a measured
+// quantity now, reported with the result, instead of whatever the preceding
+// checks happened to cost.
+var resumeAttemptDelays = []time.Duration{0, 2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second}
+
+// probeSessionLoad answers one question per agent: can a second process pick
+// up the conversation the first one was having?
+//
+// Accepting session/load is not that question, and for a while this probe
+// conflated them. An agent that takes the call, ignores the id, opens an empty
+// session and sends its usual openers produces exactly what a short replay
+// produces: a handful of notifications and no error. Counting notifications
+// cannot tell those apart, so the probe no longer tries. It asks the agent a
+// follow-up question and reads what the model was sent: if the earlier turn is
+// in that request, the session came back; if the request holds only the new
+// prompt, the agent attached to nothing.
+//
+// The probe runs its own session from start to finish. Sharing the phase's
+// session made the answer depend on where the probe sat, which is how the
+// gemini result went wrong.
+//
+// Opt-in via HARNESS_ACP_LOAD; =kill ends the first process outright, the way
+// a closed laptop does, instead of closing its session.
+func (r *TestRunner) probeSessionLoad() {
+	if len(r.harness.ACPCmd) == 0 {
+		return
+	}
+	kill := os.Getenv("HARNESS_ACP_LOAD") == "kill"
+	how := "closed"
+	if kill {
+		how = "killed"
+	}
 	fmt.Printf("[probe] session/load (resume after the first process was %s)\n", how)
+
+	bin, args, dir := r.acpInvocation()
+	r.armToolCall("acp")
+
+	first := NewACPDriver(bin, args, dir, r.envIn(dir))
+	if err := first.Start(); err != nil {
+		r.skip("session/load: ACP start: " + err.Error())
+		return
+	}
+	time.Sleep(2 * time.Second)
+
+	// What this agent sends on a session that has no history at all, recorded
+	// from the same process that is about to have some: the yardstick a replay
+	// has to beat.
+	var openers []string
+	for _, n := range first.Updates() {
+		openers = append(openers, n.Kind)
+	}
+
+	if err := first.SendPrompt(promptText); err != nil {
+		first.Kill()
+		r.skip("session/load: ACP prompt: " + err.Error())
+		return
+	}
+	first.WaitForResponse([]string{"mock", "hello", "Hello", "codename", "server"}, 60*time.Second)
+	first.WaitIdle(2 * time.Second)
+
+	sessionID := first.SessionID()
+	if kill {
+		first.Kill()
+	} else {
+		first.Close()
+	}
+	endedAt := time.Now()
 	if sessionID == "" {
 		r.skip("session/load: the agent reported no session id to resume")
 		return
 	}
 
+	r.attemptResume(sessionID, bin, args, dir, how, endedAt, openers)
+}
+
+// attemptResume tries the load at increasing delays and reports the first one
+// that works, so an agent that needs time to persist its session is told apart
+// from one that will not resume at all.
+func (r *TestRunner) attemptResume(sessionID, bin string, args []string, dir, how string, endedAt time.Time, openers []string) {
+	var lastErr error
+	claim := ""
+	for _, delay := range resumeAttemptDelays {
+		if wait := time.Until(endedAt.Add(delay)); wait > 0 {
+			time.Sleep(wait)
+		}
+		waited := time.Since(endedAt).Round(100 * time.Millisecond)
+
+		resumed := NewACPDriver(bin, args, dir, r.envIn(dir))
+		resumed.ResumeSessionID = sessionID
+		err := resumed.Start()
+
+		// What the agent claims at initialize, recorded next to what it does.
+		// The claim has carried no information in any run so far: every agent
+		// measured declares loadSession, including ones that refuse the call.
+		claim = "declares loadSession"
+		if !resumed.CanLoadSession() {
+			claim = "declares nothing"
+		}
+		if err != nil {
+			lastErr = err
+			resumed.Close()
+			continue
+		}
+
+		load := resumed.LoadResult()
+		r.pass(fmt.Sprintf("session/load after %s: %s accepted the call %s after the process ended (%s, %d update(s) replayed, answered=%v, %s)",
+			how, r.harness.Name, waited, claim, load.Replayed, load.Answered,
+			load.Elapsed.Round(time.Millisecond)))
+		if lastErr != nil {
+			// The earlier refusals were the agent still writing, not the agent
+			// declining. A probe that asked once would have reported the
+			// refusal as the answer.
+			r.pass(fmt.Sprintf("session/load: %s refused until %s had passed, so the session is written after the process ends, not before",
+				r.harness.Name, waited))
+		}
+		r.reportReplayShape(load, resumed.ReplayedKinds(), openers)
+		r.reportResumedContext(resumed)
+		resumed.Close()
+		return
+	}
+
+	// Not a failure of this suite or of belt: it is the answer.
+	r.skip(fmt.Sprintf("session/load after %s: %s does not resume within %s (%s, %v)",
+		how, r.harness.Name, resumeAttemptDelays[len(resumeAttemptDelays)-1], claim, lastErr))
+}
+
+// reportReplayShape is the cheap half of the question, and the library answers
+// most of it: a fresh session cannot replay the user's own turn, because on a
+// fresh session the user has not spoken, so RestoredConversation separates a
+// replay from an agent that opened a blank session and sent its usual
+// notifications. The comparison against this agent's own openers stays as
+// corroboration — it catches a replay that is neither.
+func (r *TestRunner) reportReplayShape(load acp.LoadResult, replayed, openers []string) {
+	if len(replayed) == 0 {
+		r.skip("session/load: " + r.harness.Name + " replayed nothing at all")
+		return
+	}
+	kinds := strings.Join(replayed, ", ")
+	if !load.RestoredConversation {
+		r.skip(fmt.Sprintf("session/load: %s replayed %s — %d of them conversation and none of them the user's turn, which a fresh session cannot replay",
+			r.harness.Name, kinds, load.Conversation))
+		return
+	}
+	if sameKinds(replayed, openers) {
+		r.skip(fmt.Sprintf("session/load: %s replayed %s, which is what it sends on a session with no history",
+			r.harness.Name, kinds))
+		return
+	}
+	r.pass(fmt.Sprintf("session/load: %s replayed the user's own turn (%s), which a fresh session has none of",
+		r.harness.Name, kinds))
+}
+
+// resumeFollowUp is asked after a resume. It only has an answer if the earlier
+// turn came back.
+const resumeFollowUp = "What was my previous question?"
+
+// reportResumedContext is the check that settles it: ask the resumed session a
+// question and look at what reached the model. The test is not whether the
+// agent answers — the mock answers everything — but whether the request it
+// sends carries the turn from before the resume.
+func (r *TestRunner) reportResumedContext(resumed *ACPDriver) {
+	before := len(r.entries())
+	if err := resumed.SendPrompt(resumeFollowUp); err != nil {
+		r.skip("session/load: prompting the resumed session failed: " + err.Error())
+		return
+	}
+	// Waiting on the answer's text would be the wrong signal and a slow one:
+	// the question here is what the agent sent to the model, so the wait ends
+	// as soon as a request arrives, or as soon as the turn ends without one.
+	deadline := time.Now().Add(60 * time.Second)
+	for len(r.entries()) <= before && resumed.Alive() && !resumed.TurnDone() && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
+	resumed.WaitIdle(2 * time.Second)
+
+	after := r.entries()
+	if len(after) <= before {
+		r.skip("session/load: the resumed session sent nothing to the model, so there is nothing to read")
+		return
+	}
+	for _, e := range after[before:] {
+		if bytes.Contains(e.Body, []byte(promptText)) {
+			r.pass(fmt.Sprintf("session/load: %s carried the earlier turn to the model, so the resume was real", r.harness.Name))
+			return
+		}
+	}
+	// The load returned without an error, the notifications arrived, and the
+	// conversation is still gone.
+	r.skip(fmt.Sprintf("session/load: %s sent %d request(s) after the resume and none carried the earlier turn, so it attached to nothing",
+		r.harness.Name, len(after)-before))
+}
+
+// sameKinds reports whether two update-kind sequences are identical.
+func sameKinds(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// probeToolCallInFlight asks what an agent does about an approval nobody ever
+// gave: park a permission request, kill the client while the tool call is
+// still waiting on it, then attach to the same session from a new process.
+//
+// A resumed session that quietly drops the parked call loses work with no
+// error anywhere. A resumed session that raises it again is asking a question
+// the dead process never got an answer to, and the client has to decide
+// whether that is a live question or replayed history. This probe is what
+// decides it: agentprotocol marks such a request DuringLoad and refuses to
+// interpret it, which is the right call for a library and no help at all to a
+// client that has to answer. Opt in with HARNESS_ACP_INFLIGHT; =cancel
+// answers the re-raised request with a cancellation instead of an approval.
+func (r *TestRunner) probeToolCallInFlight() {
+	if len(r.harness.ACPCmd) == 0 {
+		return
+	}
+	fmt.Println("[probe] a tool call in flight across a kill")
+	bin, args, dir := r.acpInvocation()
+
+	// The main ACP phase consumed the prepared tool call, and this turn needs
+	// its own: without a tool there is nothing to ask permission for.
+	if !r.armToolCall("acp") {
+		r.skip("in-flight: no tool call is defined for " + r.harness.Name + ", so the mock cannot provoke an approval")
+		return
+	}
+	// Named in every line below, because whether an agent asks depends on what
+	// it was asked to do. Most of this registry's tool calls read a file,
+	// which agents allow without asking; gemini's writes one, and gemini asks.
+	// A "never asks" result is about this tool, not about the agent.
+	tool := r.toolMatcher()
+
+	// Without this the probe would measure the harness, not the agent: the
+	// registry tells several agents to approve everything so unattended runs
+	// finish, and an agent told that never asks its client for anything.
+	args, ungated := withoutAutoApproval(args)
+	if len(ungated) > 0 {
+		r.step("in-flight: dropped %s so the agent gates its own tool calls", strings.Join(ungated, " "))
+	}
+
+	first := NewACPDriver(bin, args, dir, r.envIn(dir))
+	first.ParkPermission = true
+	if err := first.Start(); err != nil {
+		r.skip("in-flight: ACP start: " + err.Error())
+		return
+	}
+	sessionID := first.SessionID()
+	time.Sleep(2 * time.Second)
+	if err := first.SendPrompt(promptText); err != nil {
+		first.Kill()
+		r.skip("in-flight: ACP prompt: " + err.Error())
+		return
+	}
+
+	if !first.WaitParked(90 * time.Second) {
+		first.Kill()
+		// Not a failure: an agent that runs tools without consulting its
+		// client has no approval to lose, and that is worth knowing too.
+		if !r.server.ToolCallServed() {
+			// The turn never reached a tool call, so the agent was never in a
+			// position to ask. A limit of this harness, not a trait of the
+			// agent.
+			r.skip("in-flight: the mock never served " + r.harness.Name + " its " + tool + " call, so no approval was ever due")
+			return
+		}
+		gated := "with nothing auto-approving for it"
+		if len(ungated) > 0 {
+			gated = "even without " + strings.Join(ungated, " ")
+		}
+		r.skip(fmt.Sprintf("in-flight: %s ran %s without asking the client %s, so there is nothing to park",
+			r.harness.Name, tool, gated))
+		return
+	}
+	parked := lastPermission(first.Permissions())
+	r.pass(fmt.Sprintf("in-flight: %s asked before running %s — parked its approval for %s (%s)",
+		r.harness.Name, tool, orUnnamed(parked.Title), orUnnamed(parked.ToolCallID)))
+
+	// Killed rather than closed: a client that is still holding an approval
+	// does not get to send session/close first.
+	first.Kill()
+
+	if sessionID == "" {
+		r.skip("in-flight: the agent reported no session id to resume")
+		return
+	}
+
+	before := r.server.LogCount()
+	mode := os.Getenv("HARNESS_ACP_INFLIGHT")
 	resumed := NewACPDriver(bin, args, dir, r.envIn(dir))
 	resumed.ResumeSessionID = sessionID
-	err := resumed.Start()
-	defer resumed.Close()
-
-	// What the agent claims at initialize, recorded next to what it does:
-	// a false claim is not a refusal, and several agents that resume declare
-	// nothing at all.
-	claim := "declares loadSession"
-	if !resumed.CanLoadSession() {
-		claim = "declares nothing"
-	}
-	if err != nil {
-		// Not a failure of this suite or of belt: it is the answer.
-		r.skip(fmt.Sprintf("session/load after %s: %s does not resume (%s, %v)", how, r.harness.Name, claim, err))
+	resumed.CancelDuringLoad = mode == "cancel"
+	// =hold answers nothing on the resumed session either, which asks the last
+	// question in the set: does an agent wait on an approval forever, or give
+	// up? Measurable only since agentprotocol v0.4.0 — before that the held
+	// answer stopped this client's own read loop, and an agent that waited
+	// looked exactly like a client that had deadlocked.
+	resumed.ParkPermission = mode == "hold"
+	if err := resumed.Start(); err != nil {
+		r.skip(fmt.Sprintf("in-flight: %s does not resume a session with a tool call in flight (%v)", r.harness.Name, err))
+		resumed.Close()
 		return
 	}
 	load := resumed.LoadResult()
-	r.pass(fmt.Sprintf("session/load after %s: %s resumed %s (%s, %d replayed, answered=%v, %s)",
-		how, r.harness.Name, truncate(sessionID, 20), claim, load.Replayed, load.Answered,
-		load.Elapsed.Round(time.Millisecond)))
+
+	// Anything the agent decides to do about the parked call — re-raise it,
+	// abandon it, or run it — happens after the load returns as well as
+	// during it, so settle before reading the tally.
+	resumed.WaitIdle(3 * time.Second)
+	r.reportInFlightResume(resumed.Permissions(), parked, load, r.server.LogCount()-before)
+
+	if resumed.ParkPermission && len(resumed.Permissions()) > 0 {
+		r.observeUnansweredApproval(resumed)
+	}
+
+	// Twice, because a client reconnects more than once over a long session
+	// and an agent may treat the first load as consuming the session.
+	resumed.Close()
+	again := NewACPDriver(bin, args, dir, r.envIn(dir))
+	again.ResumeSessionID = sessionID
+	if err := again.Start(); err != nil {
+		r.skip(fmt.Sprintf("in-flight: %s resumes once but not twice (%v)", r.harness.Name, err))
+		return
+	}
+	r.pass(fmt.Sprintf("in-flight: %s resumed the same session twice (%d replayed the second time)",
+		r.harness.Name, again.LoadResult().Replayed))
+	again.Close()
+}
+
+// reportInFlightResume says what the resumed process was asked, which is the
+// whole point of the probe: whether the parked approval comes back, when, and
+// whether it is recognisably the same tool call the api already has a row for.
+func (r *TestRunner) reportInFlightResume(seen []PermissionObservation, parked PermissionObservation, load acp.LoadResult, requests int) {
+	name := r.harness.Name
+	r.pass(fmt.Sprintf("in-flight: %s resumed with a tool call parked (%d replayed, answered=%v, %s)",
+		name, load.Replayed, load.Answered, load.Elapsed.Round(time.Millisecond)))
+
+	if len(seen) == 0 {
+		// The agent rebuilt the session and never mentioned the tool call
+		// again. Nothing errors, and the work is simply gone.
+		r.skip(fmt.Sprintf("in-flight: %s does not re-raise the parked approval on resume", name))
+		return
+	}
+
+	for _, p := range seen {
+		when := "after the load returned"
+		if p.DuringLoad {
+			when = "during the load"
+		}
+		correlates := "a different toolCallId than the parked one"
+		switch {
+		case p.ToolCallID == "" || parked.ToolCallID == "":
+			correlates = "no toolCallId to correlate by"
+		case p.ToolCallID == parked.ToolCallID:
+			correlates = "the same toolCallId as the parked call"
+		}
+		r.pass(fmt.Sprintf("in-flight: %s re-raised an approval %s for %s, %s, answered %s",
+			name, when, orUnnamed(p.Title), correlates, p.Answer))
+	}
+
+	// Whether the answer went anywhere is the difference between a live
+	// question and history: a tool the agent actually runs produces a request
+	// to the model with its result, and a replayed one produces nothing.
+	if requests > 0 {
+		r.pass(fmt.Sprintf("in-flight: answering it made %s run the tool (%d model request(s) after the resume)", name, requests))
+	} else {
+		r.pass(fmt.Sprintf("in-flight: %s sent nothing to the model after the answer, so nothing was waiting on it", name))
+	}
+}
+
+// observeUnansweredApproval watches a resumed session whose re-raised approval
+// this client is holding and never answering. An agent that waits goes quiet;
+// an agent that gives up either says so in an update or exits.
+func (r *TestRunner) observeUnansweredApproval(d *ACPDriver) {
+	const watch = 60 * time.Second
+	name := r.harness.Name
+	before := len(d.Updates())
+	deadline := time.Now().Add(watch)
+	for time.Now().Before(deadline) {
+		if !d.Alive() {
+			r.pass(fmt.Sprintf("in-flight: %s exited rather than wait on an approval nobody answered", name))
+			return
+		}
+		if notes := d.Updates(); len(notes) > before {
+			var kinds []string
+			for _, n := range notes[before:] {
+				kinds = append(kinds, n.Kind)
+			}
+			r.pass(fmt.Sprintf("in-flight: %s moved on without its answer, sending %s", name, strings.Join(kinds, ", ")))
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	r.pass(fmt.Sprintf("in-flight: %s waited out %s on an approval nobody answered, saying nothing", name, watch))
+}
+
+// autoApprovalFlags are the flags the registry passes so an unattended run
+// finishes without a human, mapped to whether they take a value. They are
+// exactly the flags the in-flight probe must leave out.
+var autoApprovalFlags = map[string]bool{
+	"--trust-all-tools": false,
+	"--yolo":            false,
+	"--auto":            true,
+	"--approval-mode":   true,
+}
+
+// withoutAutoApproval returns args with the auto-approval flags removed, and
+// the flags it removed. Config files can grant the same blanket approval —
+// kimi's permissions block does — and this cannot see those, so an agent that
+// still never asks is an agent whose configuration was never the reason.
+func withoutAutoApproval(args []string) (kept, removed []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		takesValue, known := autoApprovalFlags[a]
+		if !known && !strings.HasPrefix(a, "--dangerously-") {
+			kept = append(kept, a)
+			continue
+		}
+		removed = append(removed, a)
+		if takesValue && i+1 < len(args) {
+			i++
+			removed = append(removed, args[i])
+		}
+	}
+	return kept, removed
+}
+
+// lastPermission is the most recent observation, which for a parking driver is
+// the request it is still holding.
+func lastPermission(all []PermissionObservation) PermissionObservation {
+	if len(all) == 0 {
+		return PermissionObservation{}
+	}
+	return all[len(all)-1]
+}
+
+func orUnnamed(s string) string {
+	if s == "" {
+		return "(unnamed)"
+	}
+	return s
 }
 
 func (r *TestRunner) runSDK() {

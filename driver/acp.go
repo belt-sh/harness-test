@@ -52,6 +52,51 @@ type ACPDriver struct {
 	// session/load instead of opening a new one. Set before Start.
 	ResumeSessionID string
 	load            acp.LoadResult
+
+	// ParkPermission takes a permission request and never answers it, leaving
+	// the agent with a tool call in flight. That is the state a client crash
+	// leaves behind, and it is the only way to ask an agent what it does about
+	// an approval nobody ever gave.
+	//
+	// Holding an answer costs nothing else since agentprotocol v0.4.0, which
+	// answers each agent-initiated request on its own goroutine. Before that a
+	// held answer held the whole connection, which is what a human taking a
+	// minute over an approval would have done to a real client.
+	ParkPermission bool
+
+	// CancelDuringLoad answers a request that arrives while the session is
+	// being rebuilt with a cancellation instead of an approval, which is the
+	// right policy if such a request is history rather than a live question.
+	// Which of those it is, is what probeToolCallInFlight measures.
+	CancelDuringLoad bool
+
+	permissions []PermissionObservation
+	updateNotes []UpdateNote
+
+	// parked is signalled once a request is held; release lets the held
+	// handler return so the read loop is not leaked after the kill.
+	parked  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+// UpdateNote is one session/update, kept for what its kind says rather than
+// its text: an agent's openers on a new session (available_commands_update,
+// current_mode_update) look exactly like a short replay if all you count is
+// how many notifications arrived.
+type UpdateNote struct {
+	Kind   string
+	Replay bool
+}
+
+// PermissionObservation is one session/request_permission, recorded whatever
+// the driver did about it: what the agent wanted to run, whether it arrived
+// while the session was being rebuilt, and what answer it got.
+type PermissionObservation struct {
+	ToolCallID string
+	Title      string
+	DuringLoad bool
+	Answer     string // approved, cancelled, or parked
 }
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
@@ -62,6 +107,8 @@ func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDr
 		env:      env,
 		updates:  make(chan struct{}, 1),
 		turnOver: make(chan struct{}, 1),
+		parked:   make(chan struct{}, 1),
+		release:  make(chan struct{}),
 	}
 }
 
@@ -110,8 +157,76 @@ func (d *ACPDriver) LoadResult() acp.LoadResult {
 // that declares nothing is not refusing; several that resume declare nothing.
 func (d *ACPDriver) Capabilities() acp.AgentCapabilities { return d.proc.AgentCapabilities() }
 
-// CanLoadSession reports the agent's own claim about resuming.
+// CanLoadSession reports the agent's own claim about resuming. Worth showing
+// a person and not worth branching on: every agent measured here declares it,
+// including the one that refuses the call.
 func (d *ACPDriver) CanLoadSession() bool { return d.proc.CanLoadSession() }
+
+// Updates is every session/update this driver saw, in arrival order.
+func (d *ACPDriver) Updates() []UpdateNote {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]UpdateNote(nil), d.updateNotes...)
+}
+
+// ReplayedKinds is the kinds of the updates the agent sent while rebuilding a
+// loaded session.
+func (d *ACPDriver) ReplayedKinds() []string {
+	var kinds []string
+	for _, n := range d.Updates() {
+		if n.Replay {
+			kinds = append(kinds, n.Kind)
+		}
+	}
+	return kinds
+}
+
+// TurnDone reports whether a turn-done update has arrived since the last
+// prompt was sent.
+func (d *ACPDriver) TurnDone() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.turnEnded
+}
+
+// Alive reports whether the agent's stream is still open, without waiting.
+func (d *ACPDriver) Alive() bool {
+	select {
+	case <-d.proc.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+// Permissions is every session/request_permission this driver saw, in arrival
+// order.
+func (d *ACPDriver) Permissions() []PermissionObservation {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]PermissionObservation(nil), d.permissions...)
+}
+
+func (d *ACPDriver) recordPermission(obs PermissionObservation, answer string) {
+	obs.Answer = answer
+	d.mu.Lock()
+	d.permissions = append(d.permissions, obs)
+	d.mu.Unlock()
+}
+
+// WaitParked waits for the agent to ask permission for something, which
+// ParkPermission then holds. False means the agent never asked: it either
+// never reached the tool call or runs tools without consulting its client.
+func (d *ACPDriver) WaitParked(timeout time.Duration) bool {
+	select {
+	case <-d.parked:
+		return true
+	case <-d.proc.Done():
+		return false
+	case <-time.After(timeout):
+		return false
+	}
+}
 
 // loadSession attaches to an existing session. The race the load needs — the
 // call against a replay-idle timer and a deadline — and the marking of
@@ -138,6 +253,9 @@ func (d *ACPDriver) handler() acp.Handler {
 			// n.Replay marks history an agent sends while rebuilding a loaded
 			// session; the library reports how much of it there was, and this
 			// suite does not treat it as progress.
+			d.mu.Lock()
+			d.updateNotes = append(d.updateNotes, UpdateNote{Kind: n.Update.Kind, Replay: n.Replay})
+			d.mu.Unlock()
 			d.noteUpdate(n.Update)
 		},
 
@@ -146,8 +264,33 @@ func (d *ACPDriver) handler() acp.Handler {
 		// guessing, so an agent offering nothing recognisable is cancelled
 		// instead of silently authorised.
 		OnPermission: func(_ context.Context, r acp.PermissionRequest) (acp.PermissionResponse, error) {
+			obs := PermissionObservation{DuringLoad: r.DuringLoad}
+			if r.ToolCall != nil {
+				obs.ToolCallID, obs.Title = r.ToolCall.ToolCallID, r.ToolCall.Title
+			}
+			where := ""
+			if r.DuringLoad {
+				where = " during session/load"
+			}
+
+			if d.ParkPermission {
+				d.recordPermission(obs, "parked")
+				d.appendOutput("[acp] parked permission" + where + " (" + obs.ToolCallID + "), answering never\n")
+				d.wake(d.parked)
+				// Held until the process is taken away. Returning anything at
+				// all would be an answer, and the point is that there is none.
+				<-d.release
+				return acp.Cancelled(), nil
+			}
+			if r.DuringLoad && d.CancelDuringLoad {
+				d.recordPermission(obs, "cancelled")
+				d.appendOutput("[acp] cancelled permission during session/load (" + obs.ToolCallID + ")\n")
+				return acp.Cancelled(), nil
+			}
+
 			if id, ok := r.PickOption(acp.OptionKindAllowOnce, acp.OptionKindAllowAlways); ok {
-				d.appendOutput("[acp] approved permission (" + id + ")\n")
+				d.recordPermission(obs, "approved")
+				d.appendOutput("[acp] approved permission" + where + " (" + id + ")\n")
 				return acp.Selected(id), nil
 			}
 			// An agent whose option kinds the library does not recognise still
@@ -157,9 +300,11 @@ func (d *ACPDriver) handler() acp.Handler {
 				if looksLikeRefusal(o.Kind) || looksLikeRefusal(o.Name) {
 					continue
 				}
+				d.recordPermission(obs, "approved")
 				d.appendOutput("[acp] approved permission, unrecognised kind (" + o.OptionID + ")\n")
 				return acp.Selected(o.OptionID), nil
 			}
+			d.recordPermission(obs, "cancelled")
 			d.appendOutput("[acp] permission request offered no options; cancelled\n")
 			return acp.Cancelled(), nil
 		},
@@ -332,6 +477,7 @@ func (d *ACPDriver) Close() error {
 	if d.proc == nil {
 		return nil
 	}
+	d.releaseParked()
 	return d.proc.Wait()
 }
 
@@ -342,7 +488,16 @@ func (d *ACPDriver) Kill() error {
 	if d.proc == nil {
 		return nil
 	}
-	return d.proc.Kill()
+	err := d.proc.Kill()
+	// After the release the held handler returns into a dead process, so the
+	// answer goes nowhere — which is the point. Releasing only after the kill
+	// keeps the agent's view honest and keeps the read loop from leaking.
+	d.releaseParked()
+	return err
+}
+
+func (d *ACPDriver) releaseParked() {
+	d.once.Do(func() { close(d.release) })
 }
 
 func (d *ACPDriver) appendOutput(s string) {
