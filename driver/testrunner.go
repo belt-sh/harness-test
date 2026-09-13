@@ -1055,8 +1055,17 @@ func (r *TestRunner) runACP() {
 
 	if os.Getenv("HARNESS_ACP_LOAD") != "" {
 		sessionID := driver.SessionID()
-		driver.Close()
-		r.probeSessionLoad(sessionID, r.harness.ACPCmd[0], args, dir)
+		// HARNESS_ACP_LOAD=kill ends the first process the way a closed laptop
+		// does, so the resume meets whatever state the agent left on disk
+		// rather than the tidy state session/close leaves.
+		how := "closed"
+		if os.Getenv("HARNESS_ACP_LOAD") == "kill" {
+			how = "killed"
+			driver.Kill()
+		} else {
+			driver.Close()
+		}
+		r.probeSessionLoad(sessionID, r.harness.ACPCmd[0], args, dir, how)
 	}
 }
 
@@ -1068,8 +1077,8 @@ func (r *TestRunner) runACP() {
 // to work and starting over. Whether each agent implements session/load is not
 // something a spec can answer, so this asks them. Opt-in via HARNESS_ACP_LOAD
 // because it doubles the ACP phase.
-func (r *TestRunner) probeSessionLoad(sessionID, bin string, args []string, dir string) {
-	fmt.Println("[probe] session/load (resume in a new process)")
+func (r *TestRunner) probeSessionLoad(sessionID, bin string, args []string, dir, how string) {
+	fmt.Printf("[probe] session/load (resume after the first process was %s)\n", how)
 	if sessionID == "" {
 		r.skip("session/load: the agent reported no session id to resume")
 		return
@@ -1079,13 +1088,23 @@ func (r *TestRunner) probeSessionLoad(sessionID, bin string, args []string, dir 
 	resumed.ResumeSessionID = sessionID
 	err := resumed.Start()
 	defer resumed.Close()
+
+	// What the agent claims at initialize, recorded next to what it does:
+	// a false claim is not a refusal, and several agents that resume declare
+	// nothing at all.
+	claim := "declares loadSession"
+	if !resumed.CanLoadSession() {
+		claim = "declares nothing"
+	}
 	if err != nil {
 		// Not a failure of this suite or of belt: it is the answer.
-		r.skip(fmt.Sprintf("session/load: %s does not resume (%v)", r.harness.Name, err))
+		r.skip(fmt.Sprintf("session/load after %s: %s does not resume (%s, %v)", how, r.harness.Name, claim, err))
 		return
 	}
-	r.pass(fmt.Sprintf("session/load: %s resumed session %s, %d update(s) replayed",
-		r.harness.Name, truncate(sessionID, 24), resumed.ReplayedUpdates()))
+	load := resumed.LoadResult()
+	r.pass(fmt.Sprintf("session/load after %s: %s resumed %s (%s, %d replayed, answered=%v, %s)",
+		how, r.harness.Name, truncate(sessionID, 20), claim, load.Replayed, load.Answered,
+		load.Elapsed.Round(time.Millisecond)))
 }
 
 func (r *TestRunner) runSDK() {

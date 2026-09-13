@@ -34,7 +34,6 @@ type ACPDriver struct {
 	mu         sync.Mutex
 	output     strings.Builder
 	lastUpdate time.Time
-	loading    bool // a session/load is replaying; updates are history
 
 	// updates wakes a waiter; the text itself is appended as it arrives, so a
 	// dropped wakeup costs nothing.
@@ -52,7 +51,7 @@ type ACPDriver struct {
 	// ResumeSessionID makes Start attach to an existing session with
 	// session/load instead of opening a new one. Set before Start.
 	ResumeSessionID string
-	replayed        int // session/update notifications seen during a load
+	load            acp.LoadResult
 }
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
@@ -99,73 +98,36 @@ func (d *ACPDriver) Start() error {
 // SessionID is the session this driver is attached to, for a later resume.
 func (d *ACPDriver) SessionID() string { return d.proc.SessionID() }
 
-// ReplayedUpdates counts the session/update notifications an agent sent while
-// loading a session. An agent that replays the conversation sends many; one
-// that answers the call and says nothing sends none.
-func (d *ACPDriver) ReplayedUpdates() int {
+// LoadResult describes what the agent did when asked to resume: how much of
+// the conversation it replayed, and whether it ever answered the call.
+func (d *ACPDriver) LoadResult() acp.LoadResult {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.replayed
+	return d.load
 }
 
-// loadSession attaches to an existing session.
-//
-// session/load does not reliably return: some agents answer only once the
-// replay finishes, some never answer while streaming it. So the call races a
-// replay-idle timer — updates having gone quiet — and an overall deadline,
-// and whichever lands first decides. Until it settles, updates are counted as
-// replay rather than treated as live progress, because they arrive on the
-// same channel as a running turn's.
+// Capabilities is what the agent said it could do at initialize. An agent
+// that declares nothing is not refusing; several that resume declare nothing.
+func (d *ACPDriver) Capabilities() acp.AgentCapabilities { return d.proc.AgentCapabilities() }
+
+// CanLoadSession reports the agent's own claim about resuming.
+func (d *ACPDriver) CanLoadSession() bool { return d.proc.CanLoadSession() }
+
+// loadSession attaches to an existing session. The race the load needs — the
+// call against a replay-idle timer and a deadline — and the marking of
+// replayed updates as history both live in the library now, so every client
+// gets them.
 func (d *ACPDriver) loadSession(cwd string) error {
+	res, err := d.proc.LoadSession(context.Background(), d.ResumeSessionID, cwd, nil)
 	d.mu.Lock()
-	d.loading = true
+	d.load = res
 	d.mu.Unlock()
-	defer func() {
-		d.mu.Lock()
-		d.loading = false
-		d.mu.Unlock()
-	}()
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := d.proc.Call(context.Background(), acp.MethodSessionLoad, map[string]any{
-			"sessionId":  d.ResumeSessionID,
-			"cwd":        cwd,
-			"mcpServers": []any{},
-		})
-		done <- err
-	}()
-
-	start := time.Now()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	deadline := time.After(60 * time.Second)
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				return fmt.Errorf("session/load: %w", err)
-			}
-			d.appendOutput(fmt.Sprintf("[acp] session/load returned after %s, %d replayed update(s)\n",
-				time.Since(start).Round(time.Millisecond), d.ReplayedUpdates()))
-			return nil
-		case <-ticker.C:
-			// Replay finished without the call returning: the agent is
-			// attached even though the RPC has not answered.
-			d.mu.Lock()
-			quiet := d.replayed > 0 && time.Since(d.lastUpdate) >= 3*time.Second
-			d.mu.Unlock()
-			if quiet {
-				d.appendOutput(fmt.Sprintf("[acp] session/load replayed %d update(s) and went quiet without answering\n",
-					d.ReplayedUpdates()))
-				return nil
-			}
-		case <-deadline:
-			return fmt.Errorf("session/load: no answer and no replay after 60s")
-		case <-d.proc.Done():
-			return fmt.Errorf("session/load: agent exited")
-		}
+	if err != nil {
+		return err
 	}
+	d.appendOutput(fmt.Sprintf("[acp] session/load: %d replayed update(s), answered=%v, %s\n",
+		res.Replayed, res.Answered, res.Elapsed.Round(time.Millisecond)))
+	return nil
 }
 
 // handler is everything this suite decides for itself: it approves, it serves
@@ -173,6 +135,9 @@ func (d *ACPDriver) loadSession(cwd string) error {
 func (d *ACPDriver) handler() acp.Handler {
 	return acp.Handler{
 		OnUpdate: func(n acp.UpdateNotification) {
+			// n.Replay marks history an agent sends while rebuilding a loaded
+			// session; the library reports how much of it there was, and this
+			// suite does not treat it as progress.
 			d.noteUpdate(n.Update)
 		},
 
@@ -243,12 +208,6 @@ func (d *ACPDriver) handler() acp.Handler {
 func (d *ACPDriver) noteUpdate(u acp.SessionUpdate) {
 	d.mu.Lock()
 	d.lastUpdate = time.Now()
-	if d.loading {
-		// Replay, not live progress: the distinction matters to any client
-		// that acts on updates, which would otherwise re-raise last week's
-		// tool approvals as new ones.
-		d.replayed++
-	}
 	d.mu.Unlock()
 
 	if os.Getenv("HARNESS_DEBUG") != "" {
@@ -374,6 +333,16 @@ func (d *ACPDriver) Close() error {
 		return nil
 	}
 	return d.proc.Wait()
+}
+
+// Kill ends the agent without the courtesy of session/close, the way a closed
+// laptop or a dropped connection does. Resuming after this is the case a
+// long-lived client actually hits; a clean exit is the easy path.
+func (d *ACPDriver) Kill() error {
+	if d.proc == nil {
+		return nil
+	}
+	return d.proc.Kill()
 }
 
 func (d *ACPDriver) appendOutput(s string) {
