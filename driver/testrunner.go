@@ -1375,19 +1375,42 @@ func (r *TestRunner) probeCompactedResume() {
 	first.WaitForResponse([]string{"mock", "hello", "Hello", "codename", "server"}, 60*time.Second)
 	first.WaitIdle(2 * time.Second)
 
+	// Enough turns that there is something worth compacting. One exchange is
+	// below every agent's threshold, and compacting it is a no-op that reports
+	// a cheerful "nothing was lost".
+	for _, follow := range compactionFillers {
+		if first.SendPrompt(follow) != nil {
+			break
+		}
+		first.WaitForResponse([]string{"mock", "hello", "Hello", "server"}, 60*time.Second)
+		first.WaitIdle(time.Second)
+	}
+
 	// The compaction itself. Closed rather than killed: this probe is about
 	// what compaction costs, and a kill would confound it with durability.
 	before := len(r.entries())
 	first.SendCommand(r.harness.CompactCommand)
 	first.WaitIdle(4 * time.Second)
-	if len(r.entries()) <= before {
+	sent := r.entries()
+	if len(sent) <= before {
 		// Nothing reached the model, so the agent did not compact. Reporting
 		// the resume anyway would be reporting an uncompacted session.
 		first.Close()
 		r.skip("compaction: " + r.harness.Name + " sent nothing to the model for " + r.harness.CompactCommand + ", so the session was never compacted")
 		return
 	}
-	r.pass("compaction: " + r.harness.Name + " ran " + r.harness.CompactCommand)
+	// A request is not a compaction. Over ACP a slash command can arrive as an
+	// ordinary user message — the registry already records that codex treats
+	// /compact that way — and the model request it produces looks like any
+	// other turn. Without this the probe passes on a session that was never
+	// compacted, and "nothing was lost" means only that nothing happened.
+	if !looksLikeSummarisation(sent[before:]) {
+		first.Close()
+		r.skip(fmt.Sprintf("compaction: %s sent %s to the model as an ordinary message rather than compacting, so there is nothing to measure",
+			r.harness.Name, r.harness.CompactCommand))
+		return
+	}
+	r.pass("compaction: " + r.harness.Name + " ran " + r.harness.CompactCommand + " and asked the model to summarise")
 
 	sessionID := first.SessionID()
 	first.Close()
@@ -1405,6 +1428,36 @@ func (r *TestRunner) probeCompactedResume() {
 	}
 	defer resumed.Close()
 	r.reportCompactedContext(resumed)
+}
+
+// compactionFillers give the session enough history to be worth compacting.
+// The content does not matter; the number of turns does.
+var compactionFillers = []string{
+	"What files are in this repository?",
+	"Summarise what you have done so far.",
+	"What was the first thing I asked you?",
+}
+
+// looksLikeSummarisation reports whether any of these requests asked the model
+// to condense the conversation, which is what an agent does when it compacts.
+// Checked against the instructions rather than the whole body, since the word
+// can appear in a user turn — one of the fillers above contains it.
+func looksLikeSummarisation(entries []server.LogEntry) bool {
+	for _, e := range entries {
+		body := strings.ToLower(string(e.Body))
+		// Phrases an agent uses when instructing a model to condense a
+		// thread. Deliberately not the bare word "compact": the slash command
+		// arriving as an ordinary user message contains it, and that is the
+		// case this exists to rule out.
+		for _, phrase := range []string{"summarize the conversation", "summarise the conversation",
+			"conversation summary", "summary of the conversation", "condense the conversation",
+			"previous conversation", "chat history"} {
+			if strings.Contains(body, phrase) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // reportCompactedContext classifies what the model was sent after a compacted

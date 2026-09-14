@@ -58,3 +58,29 @@ func withModel(h harness.Harness, model string) harness.Harness {
 	h.AcceptedModels = nil
 	return h
 }
+
+// The compaction probe passed on sessions that were never compacted: over ACP
+// a slash command can arrive as an ordinary user message, the model request it
+// produces looks like any other turn, and "nothing was lost" then means only
+// that nothing happened. The probe now requires evidence that the agent asked
+// the model to condense the conversation.
+func TestSummarisationIsDistinguishedFromAnOrdinaryTurn(t *testing.T) {
+	entry := func(body string) server.LogEntry { return server.LogEntry{Body: []byte(body)} }
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"a compaction request", `{"messages":[{"role":"system","content":"Summarize the conversation so far."}]}`, true},
+		{"the slash command as an ordinary user message", `{"messages":[{"role":"user","content":"/compact"}]}`, false},
+		{"an ordinary turn", `{"messages":[{"role":"user","content":"What is the project codename?"}]}`, false},
+		{"a filler turn that says summarise", `{"messages":[{"role":"user","content":"Summarise what you have done so far."}]}`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := looksLikeSummarisation([]server.LogEntry{entry(c.body)}); got != c.want {
+				t.Errorf("looksLikeSummarisation() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

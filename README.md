@@ -232,34 +232,58 @@ agents answer only after the replay finishes — and replayed updates arrive on
 the same channel as live progress. A client that conflates the two re-raises
 every historical tool call as a new approval request.
 
-### A tool call in flight, and who asks permission at all
+### A tool call in flight: every agent drops it
 
 `HARNESS_ACP_INFLIGHT=1` parks a permission request and never answers it, kills
 the client while the tool call is still waiting, then resumes the session from a
 new process and records whether the agent raises the approval again, with what
 `toolCallId`, and whether answering it leads anywhere. `=cancel` refuses the
 re-raised request instead of approving it; `=hold` answers nothing on the
-resumed session either, to see whether an agent waits forever or gives up.
+resumed session either.
 
-It has had almost nothing to park, and the reason matters more than the result.
+**Six agents put an approval in flight, and not one of them mentions it again.**
+hermes, kilo, kimi, omp, opencode and qwen each asked before running a shell
+command, each resumed the session after the client was killed mid-approval, and
+each came back with nothing to say about the tool call that was waiting. No
+error, no repeated request; the work is simply gone. All six also resumed the
+same session twice.
 
-**Agents do not gate reads.** Every agent in this registry except gemini is
-offered a tool call that reads `README.md`, and reading is something agents run
-without consulting their client: droid, goose, grok, hermes, kilo, kimi, kiro,
-opencode and qwen all ran it without asking, kiro and droid included with their
-auto-approval flags stripped. gemini's mocked tool call writes a file, and
-gemini asks. So every line of this probe names the tool, because "never asked"
-is a fact about the tool and not about the agent.
+For a runner that is the shape to design around: an approval interrupted by a
+crash is not recoverable by resuming, so the pending operation has to be tracked
+outside the agent or it disappears silently. `PermissionRequest.DuringLoad` in
+`agentprotocol` exists for the opposite case — an agent that re-raises a parked
+call during the replay — and no agent measured here does that.
 
-Getting a trustworthy number for gated operations means giving each agent a
-write or a shell command it actually declares — twelve pieces of per-agent
-knowledge the registry does not have yet.
+gemini is the one agent that could not be asked: it gates shell commands, so the
+approval parked, but it cannot resume a session whose process was killed.
 
-The probe strips the registry's own auto-approval flags (`--trust-all-tools`,
-`--yolo`, `--auto high`) and says which it dropped, so a "never asked" result is
-not this harness's configuration reported as an agent trait. Blanket approval
-granted by a config file rather than a flag — kimi's `permissions` block — is
-not something it can see.
+### Agents gate shell commands. They do not gate reads
+
+The first run of this probe concluded that agents do not consult their client at
+all. That was a fact about the tool the registry offered them — nearly every
+entry asks the agent to read `README.md`, and reading is something agents do
+without asking. Asked instead to run `rm -rf` on a path that does not exist,
+through each agent's own shell tool:
+
+| Asked the client first | Ran it without asking |
+|------------------------|-----------------------|
+| gemini, hermes, kilo, kimi, omp, opencode, qwen | copilot, droid, goose, grok, kiro |
+
+Seven of twelve. The earlier "none of them ask" was the measurement, not the
+agents.
+
+Tool names are read off the wire with `HARNESS_DUMP_TOOLS=1`, which prints
+what each agent declared to the model, and stored per agent as `ToolCallGated`.
+They are not guessed: a tool an agent does not declare comes back "tool not
+found" and never runs, so a guess produces a silent negative.
+`TestEveryACPAgentHasAGatedTool` keeps the registry honest, and the probe says
+so when it has to fall back to a read.
+
+The probe also strips the registry's own auto-approval flags
+(`--trust-all-tools`, `--yolo`, `--auto high`) and reports which it dropped, so
+a "never asked" result is not this harness's configuration reported as an agent
+trait. Blanket approval granted by a config file rather than a flag — kimi's
+`permissions` block — is not something it can see.
 
 Holding an approval used to hold the whole connection: agentprotocol answered
 agent-initiated requests on its read loop, so a blocked handler stopped every
@@ -267,6 +291,22 @@ update and every pending reply behind it, which is what a human taking a minute
 over an approval would have done to a real client. Fixed in v0.4.0, and pinned
 here from the client's side.
 
+### Resuming a compacted session
+
+`HARNESS_ACP_COMPACT=1` runs a session several turns deep, compacts it with the
+agent's own command, resumes it from a new process, and reads what reaches the
+model: the original wording, a summary, or nothing but the new prompt. The last
+is a failure rather than a trait — the resume reported success and the
+conversation is gone.
+
+This probe needs two guards, and without either it passes on nothing. A single
+exchange is below every agent's compaction threshold, so the probe fills the
+session first. And a request to the model is not a compaction: over ACP a slash
+command can arrive as an ordinary user message — the registry already records
+that codex treats `/compact` that way — so the probe requires the request to
+carry summarisation instructions before it believes a compaction happened.
+Both were added after the first run reported a cheerful "nothing was lost" for
+every agent, which meant only that nothing had happened.
 
 ### Cursor hooks are requested by the backend
 
