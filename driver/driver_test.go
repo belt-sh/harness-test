@@ -1,18 +1,18 @@
 package driver
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // The JSON-RPC envelope, response routing and content-block flattening that
 // used to be tested here now live in github.com/inference-sh/agentprotocol/acp,
-// which has its own tests for them. What is still this repo's to hold is that
-// each driver satisfies the interface the runner drives, and the ACP policy
-// kept in acp.go (see acp_permission_test.go).
-func TestDriverInterface(t *testing.T) {
-	var _ Driver = (*ACPDriver)(nil)
-}
+// which has its own tests for them. What is still this repo's to hold is the
+// ACP policy kept in acp.go (see acp_permission_test.go).
+//
+// There was a Driver interface here asserting that the three transports were
+// interchangeable. Nothing ever took one: ACPDriver was its only implementer,
+// PTYSession did not satisfy it, and headless and SDK are plain exec calls.
+// An interface with no consumer is a claim about the code rather than a
+// constraint on it, and this one was read as the repo's central abstraction
+// while providing no polymorphism at all.
 
 func TestTruncate(t *testing.T) {
 	if truncate("hello", 10) != "hello" {
@@ -23,29 +23,34 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// The in-flight probe has to undo the registry's own auto-approval, or it
-// measures this harness's configuration and reports it as an agent trait.
-func TestWithoutAutoApprovalDropsTheFlagsAndTheirValues(t *testing.T) {
-	cases := []struct {
-		name    string
-		args    []string
-		kept    []string
-		removed []string
-	}{
-		{"kiro", []string{"--trust-all-tools", "--model", "m"}, []string{"--model", "m"}, []string{"--trust-all-tools"}},
-		{"qwen", []string{"--auth-type", "openai", "--yolo", "--model", "m"}, []string{"--auth-type", "openai", "--model", "m"}, []string{"--yolo"}},
-		{"droid takes a value with it", []string{"--auto", "high", "-m", "m"}, []string{"-m", "m"}, []string{"--auto", "high"}},
-		{"nothing to drop", []string{"--cwd", "/repo"}, []string{"--cwd", "/repo"}, nil},
+// The probes were environment variables with magic values, invisible to
+// --help and silent on a typo. As a flag a wrong value is an error.
+func TestParseProbes(t *testing.T) {
+	ok := func(spec string, want Probes) {
+		t.Helper()
+		got, err := ParseProbes(spec)
+		if err != nil {
+			t.Errorf("ParseProbes(%q): %v", spec, err)
+			return
+		}
+		if got != want {
+			t.Errorf("ParseProbes(%q) = %+v, want %+v", spec, got, want)
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			kept, removed := withoutAutoApproval(c.args)
-			if strings.Join(kept, " ") != strings.Join(c.kept, " ") {
-				t.Errorf("kept = %v, want %v", kept, c.kept)
-			}
-			if strings.Join(removed, " ") != strings.Join(c.removed, " ") {
-				t.Errorf("removed = %v, want %v", removed, c.removed)
-			}
-		})
+	ok("", Probes{})
+	ok("resume", Probes{Resume: true})
+	ok("resume=kill", Probes{Resume: true, ResumeKill: true})
+	ok("inflight", Probes{InFlight: true, Answer: AnswerApproved})
+	ok("inflight=hold", Probes{InFlight: true, Answer: AnswerParked})
+	ok("resume=kill,inflight=cancel,compact,tools", Probes{
+		Resume: true, ResumeKill: true,
+		InFlight: true, Answer: AnswerCancelled,
+		Compact: true, DumpTools: true,
+	})
+
+	for _, bad := range []string{"nope", "resume=maybe", "inflight=sometimes"} {
+		if _, err := ParseProbes(bad); err == nil {
+			t.Errorf("ParseProbes(%q) should have failed", bad)
+		}
 	}
 }

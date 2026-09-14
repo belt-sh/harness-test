@@ -24,8 +24,22 @@ func main() {
 		installScope = flag.String("scope", "user", "install scope: user or project")
 		serverOnly   = flag.Bool("server", false, "run mock server only (no tests)")
 		intercept    = flag.Bool("intercept", false, "intercept all LLM traffic via /etc/hosts + TLS (requires root/Docker)")
+		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], inflight[=approve|cancel|hold], compact, tools")
 	)
 	flag.Parse()
+
+	// Rejected here rather than defaulted: an unknown --mode used to fall
+	// through to "both", so a typo ran two phases the caller did not ask for.
+	runMode, modeErr := harness.ParseMode(*mode)
+	if modeErr != nil {
+		fmt.Fprintln(os.Stderr, modeErr)
+		os.Exit(2)
+	}
+	probes, probeErr := driver.ParseProbes(*probeSpec)
+	if probeErr != nil {
+		fmt.Fprintln(os.Stderr, probeErr)
+		os.Exit(2)
+	}
 
 	if *detectFlag {
 		results := harness.DetectAll()
@@ -218,7 +232,8 @@ func main() {
 		}
 		srv.ClearLog()
 		r := driver.New(h, srv, baseURL)
-		r.SetMode(*mode)
+		r.SetMode(runMode)
+		r.SetProbes(probes)
 		if *hooks == "belt" {
 			r.SetHookSource(driver.HooksBelt)
 		}

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,12 @@ type LogEntry struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Body      json.RawMessage   `json:"body,omitempty"`
 	Model     string            `json:"model,omitempty"`
+
+	// Streamed records that the mock answered this request with a stream.
+	// The mock is the only thing that knows: the checks used to re-derive it
+	// from five per-protocol path and header patterns, one of which could
+	// never match because Path carries no query string.
+	Streamed bool `json:"streamed,omitempty"`
 }
 
 // LLMHosts are API domains that agents call. Used by --intercept mode to
@@ -213,7 +220,8 @@ func New() *MockServer {
 				} `json:"conversationState"`
 			}
 			json.Unmarshal(body, &kreq)
-			s.record(r, body, kreq.ConversationState.CurrentMessage.UserInputMessage.ModelID)
+			// Always an event stream on this path.
+			s.markStreamed(s.record(r, body, kreq.ConversationState.CurrentMessage.UserInputMessage.ModelID))
 			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 			w.WriteHeader(200)
 			// Tool call round-trip: toolUseEvent carries the input as a JSON
@@ -527,19 +535,31 @@ func (s *MockServer) ToolCallServed() bool {
 	return s.toolCallServed
 }
 
-// parseRequest reads the body, records the request, and returns the parsed fields.
-func (s *MockServer) parseRequest(r *http.Request) (llmRequest, []byte) {
+// parseRequest reads the body, records the request, and returns the parsed
+// fields along with the log index, so a handler that streams can say so.
+func (s *MockServer) parseRequest(r *http.Request) (llmRequest, []byte, int) {
 	body, _ := io.ReadAll(r.Body)
 	var req llmRequest
 	json.Unmarshal(body, &req)
-	s.record(r, body, req.Model)
-	return req, body
+	return req, body, s.record(r, body, req.Model)
 }
 
-func (s *MockServer) record(r *http.Request, body []byte, model string) {
+// markStreamed records that the mock answered request i with a stream.
+func (s *MockServer) markStreamed(i int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if i >= 0 && i < len(s.log) {
+		s.log[i].Streamed = true
+	}
+}
 
+// record appends a request to the log and returns its index.
+//
+// The dump and the header map are built before the lock: s.mu also serves
+// AnswersServed and LogCount, which the runner polls several times a second
+// through every turn, and holding it across a full-body Printf blocks the
+// response path of every other request.
+func (s *MockServer) record(r *http.Request, body []byte, model string) int {
 	// HARNESS_DUMP=1 prints every recorded request body (for protocol work).
 	if os.Getenv("HARNESS_DUMP") != "" {
 		fmt.Printf("[dump] %s %s %s (%d bytes)\n%s\n", time.Now().Format("15:04:05.000"), r.Method, r.URL.Path, len(body), body)
@@ -549,15 +569,19 @@ func (s *MockServer) record(r *http.Request, body []byte, model string) {
 	for k, v := range r.Header {
 		headers[strings.ToLower(k)] = strings.Join(v, ", ")
 	}
-
-	s.log = append(s.log, LogEntry{
+	entry := LogEntry{
 		Timestamp: time.Now(),
 		Method:    r.Method,
 		Path:      r.URL.Path,
 		Headers:   headers,
 		Body:      json.RawMessage(body),
 		Model:     model,
-	})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.log = append(s.log, entry)
+	return len(s.log) - 1
 }
 
 // --- Handlers: models, test endpoints, Grok ---
@@ -662,43 +686,18 @@ func mustJSON(v any) string {
 // about to call. Agents route one turn across several models with different
 // toolsets (gemini answers a prepared write_file call from its small flash
 // toolset with "Tool not found" and never runs it, so no tool hook fires), so
-// the prepared call must go to a request that actually offers it. The search
-// is confined to "tools" sections: the tool's name also appears in ordinary
-// conversation history, error text included.
+// the prepared call must go to a request that actually offers it.
+//
+// It asks toolNamesIn rather than walking the body again: the old copy matched
+// the tool's name as a substring of the whole marshalled tools section, so a
+// name appearing in another tool's description or a parameter enum counted as
+// an offer.
 func (s *MockServer) bodyOffersTool(body []byte) bool {
 	name, _ := s.getToolCall()
 	if name == "" {
 		return false
 	}
-	var doc any
-	if json.Unmarshal(body, &doc) != nil {
-		return false
-	}
-	found := false
-	var walk func(any)
-	walk = func(v any) {
-		if found {
-			return
-		}
-		switch t := v.(type) {
-		case map[string]any:
-			for k, sub := range t {
-				if k == "tools" || k == "functionDeclarations" {
-					if b, err := json.Marshal(sub); err == nil && strings.Contains(string(b), `"`+name+`"`) {
-						found = true
-						return
-					}
-				}
-				walk(sub)
-			}
-		case []any:
-			for _, sub := range t {
-				walk(sub)
-			}
-		}
-	}
-	walk(doc)
-	return found
+	return slices.Contains(toolNamesIn(body), name)
 }
 
 // DeclaredTools is every tool name the agent offered the model, across all

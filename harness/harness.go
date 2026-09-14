@@ -124,7 +124,7 @@ type Harness struct {
 	// requesting those in interactive mode would run them twice. Measured in
 	// Docker 2026-09. It says what the agent does when asked; it does not say
 	// whether the vendor's real backend asks.
-	ServerRequestedHooks map[string][]string
+	ServerRequestedHooks map[Mode][]string
 
 	// CompactConfirm: the interactive compact command opens a confirmation
 	// dialog ("Enter to confirm"), so the runner presses Enter after it.
@@ -140,16 +140,36 @@ type Harness struct {
 	// whose engine there names its tools differently (kiro's V1 engine, which
 	// headless pins, calls the read tool fs_read where V2 calls it read).
 	// Keyed like KnownIssues: "headless", "interactive", "acp", "sdk".
-	ToolCallByMode map[string]ToolCall
+	ToolCallByMode map[Mode]ToolCall
 
 	// ToolCallGated is a tool this agent is expected to ask its client about:
 	// a write or a shell command, not a read. Agents run reads without
 	// consulting anyone, so a probe that wants to see a permission request has
 	// to ask for something the agent actually gates. Names are read off the
-	// wire with HARNESS_DUMP_TOOLS rather than guessed, because a tool an
+	// wire with --probe tools rather than guessed, because a tool an
 	// agent does not declare is answered with "tool not found" and nothing
 	// runs.
 	ToolCallGated ToolCall
+
+	// ACPAutoApproveArgs are the arguments that stop this agent asking its
+	// client for permission. They are kept apart from ACPArgs so the in-flight
+	// probe can compose an invocation without them, rather than trying to
+	// recognise them again by pattern after the fact — a denylist that could
+	// not see a flag it had not been told about, and reported the resulting
+	// silence as an agent trait.
+	ACPAutoApproveArgs []string
+
+	// SessionDir is where this agent writes its session transcripts, as a
+	// template ({{.HomeDir}}, {{.RepoDir}}). SessionExt is the file extension
+	// whose base name is the session id. Only needed by an agent whose
+	// follow-up command takes a session id it does not print.
+	//
+	// It is registry data because it is one vendor's filesystem layout: it
+	// used to be droid's directory, mangling scheme and extension written
+	// into a generically named helper in the runner, which then went looking
+	// for a .factory tree on behalf of claude and qwen.
+	SessionDir string
+	SessionExt string
 
 	// Pre-flight config files (auth, trust, provider config, permissions)
 	ConfigFiles    []ConfigFile

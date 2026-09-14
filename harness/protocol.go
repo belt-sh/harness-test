@@ -43,10 +43,12 @@ func (c ContextChannel) String() string {
 }
 
 // HookContext is the per-event context channel of a harness.
-type HookContext struct {
-	SessionStart ContextChannel
-	PromptSubmit ContextChannel
-}
+//
+// A map rather than two named fields: as a struct it could only describe
+// SessionStart and PromptSubmit, so an agent whose context channels are the
+// tool and stop hooks — grok is one — was recorded as having none at all,
+// which is a different claim from the one the evidence supports.
+type HookContext map[HookEvent]ContextChannel
 
 // hookContexts is the verified table (runner check "prompt hook context
 // reached the model", Docker, 2026-09). Sources: each agent's hook docs or
@@ -76,20 +78,15 @@ var hookContexts = map[string]HookContext{
 	"windsurf": {SessionStart: ContextNone, PromptSubmit: ContextNone},
 }
 
-// ContextChannelFor returns how a hook on beltEvent ("session-start" or
-// "user-prompt-submit") returns context for the named agent.
+// ContextChannelFor returns how a hook on beltEvent returns context for the
+// named agent. An event with no entry has no channel, which is the honest
+// answer for the events this suite has not measured.
 func ContextChannelFor(name, beltEvent string) ContextChannel {
-	hc, ok := hookContexts[name]
+	ch, ok := hookContexts[name][HookEvent(beltEvent)]
 	if !ok {
 		return ContextNone
 	}
-	switch beltEvent {
-	case "session-start":
-		return hc.SessionStart
-	case "user-prompt-submit":
-		return hc.PromptSubmit
-	}
-	return ContextNone
+	return ch
 }
 
 // HookStdout renders text as the stdout payload a hook must print for the
@@ -100,13 +97,7 @@ func HookStdout(name, beltEvent, text string) (payload string, ok bool) {
 	if !known {
 		return "", false
 	}
-	eventName := ""
-	switch beltEvent {
-	case "session-start":
-		eventName = h.Events.SessionStart
-	case "user-prompt-submit":
-		eventName = h.Events.PromptSubmit
-	}
+	eventName := HookEvent(beltEvent).AgentName(h)
 	switch ContextChannelFor(name, beltEvent) {
 	case ContextPlainText:
 		return text, true

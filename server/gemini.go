@@ -62,7 +62,7 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 		model = strings.TrimSuffix(parts[3], ":streamGenerateContent")
 		model = strings.TrimSuffix(model, ":generateContent")
 	}
-	s.record(r, body, model)
+	idx := s.record(r, body, model)
 
 	hasTools := len(req.Tools) > 0
 	if s.shouldToolCall(hasTools && s.bodyOffersTool(body), r.URL.Path) {
@@ -87,6 +87,7 @@ func (s *MockServer) handleGemini(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(r.URL.RawQuery, "alt=sse") {
+		s.markStreamed(idx)
 		s.geminiStream(w, model, text)
 		return
 	}

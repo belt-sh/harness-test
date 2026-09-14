@@ -278,9 +278,9 @@ func readBody(r *http.Request) []byte {
 	return body
 }
 
-func (s *MockServer) recordJSON(r *http.Request, v any, model string) {
+func (s *MockServer) recordJSON(r *http.Request, v any, model string) int {
 	data, _ := json.Marshal(v)
-	s.record(r, data, model)
+	return s.record(r, data, model)
 }
 
 // --- agent.v1 run stream ---
@@ -336,7 +336,8 @@ func (s *MockServer) handleCursorRunSSE(w http.ResponseWriter, r *http.Request) 
 			reqID = string(id)
 		}
 	}
-	s.recordJSON(r, map[string]any{"rpc": "RunSSE", "request_id": reqID}, "")
+	// RunSSE is a server stream by definition.
+	s.markStreamed(s.recordJSON(r, map[string]any{"rpc": "RunSSE", "request_id": reqID}, ""))
 	cs := s.cursorSession(reqID)
 
 	w.Header().Set("Content-Type", "application/connect+proto")

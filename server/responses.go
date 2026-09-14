@@ -21,7 +21,10 @@ func newResponse(id, status string, output []ResponseItem, usage *Usage) Respons
 }
 
 func (s *MockServer) handleResponses(w http.ResponseWriter, r *http.Request) {
-	req, body := s.parseRequest(r)
+	req, body, idx := s.parseRequest(r)
+	if req.Stream {
+		s.markStreamed(idx)
+	}
 
 	// Side calls that ask for one specific function (grok's session_title)
 	// get that function call, the way the real backend answers them.

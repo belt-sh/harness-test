@@ -121,33 +121,13 @@ func (r *TestRunner) checkAPIRequests(phase string, entries []server.LogEntry) {
 func (r *TestRunner) checkStreamingFormat(phase string, entries []server.LogEntry) {
 	fmt.Printf("[check] streaming (%s)\n", phase)
 
-	streamKey := []byte(`"stream"`)
+	// The mock records whether it answered with a stream, because it is the
+	// only thing that knows. This used to be five per-protocol guesses at
+	// paths and headers, tried against every entry regardless of the agent's
+	// API format, and one of them — a query-string match on a field that only
+	// ever holds a path — could not fire at all.
 	for _, e := range entries {
-		// OpenAI/Anthropic: "stream": true in body. Parsing every body means
-		// parsing whole system prompts; only the ones naming the field can
-		// answer this.
-		if bytes.Contains(e.Body, streamKey) {
-			var req map[string]any
-			if json.Unmarshal(e.Body, &req) == nil {
-				if stream, ok := req["stream"].(bool); ok && stream {
-					r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
-					return
-				}
-			}
-		}
-		// Cursor: connect server-stream
-		if strings.HasSuffix(e.Path, "/RunSSE") {
-			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
-			return
-		}
-		// Gemini: ?alt=sse in URL path
-		if strings.Contains(e.Path, "alt=sse") || strings.Contains(e.Path, "streamGenerateContent") {
-			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
-			return
-		}
-		// Bedrock/Q: converse-stream, invoke-with-response-stream, or GenerateAssistantResponse
-		if strings.Contains(e.Path, "converse-stream") || strings.Contains(e.Path, "invoke-with-response-stream") ||
-			strings.Contains(string(e.Headers["x-amz-target"]), "GenerateAssistantResponse") {
+		if e.Streamed {
 			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
 			return
 		}

@@ -36,14 +36,16 @@ func SkippedResult(h harness.Harness, reason harness.SkipReason, detail string) 
 	return Result{Harness: h.Name, SkipReason: reason, SkipDetail: detail}
 }
 
-type Mode int
+// Mode and its constants live in harness, where the registry's per-mode
+// tables and KnownIssues keys are written in the same words.
+type Mode = harness.Mode
 
 const (
-	ModeBoth Mode = iota
-	ModeHeadless
-	ModeInteractive
-	ModeACP
-	ModeSDK
+	ModeBoth        = harness.ModeBoth
+	ModeHeadless    = harness.ModeHeadless
+	ModeInteractive = harness.ModeInteractive
+	ModeACP         = harness.ModeACP
+	ModeSDK         = harness.ModeSDK
 )
 
 type HookSource int
@@ -77,7 +79,7 @@ type TestRunner struct {
 	lastOutput       string
 	proxyURL         string            // HTTPS_PROXY value, set only during agent execution
 	testEntries      []server.LogEntry // checks read these when set (unit tests)
-
+	probes           Probes
 }
 
 func (r *TestRunner) entries() []server.LogEntry {
@@ -119,19 +121,16 @@ func (r *TestRunner) promptEcho() string {
 	return " && " + shellPrint(p)
 }
 
-// jsonStr escapes a shell command for embedding inside a JSON/TOML string.
-func jsonStr(cmd string) string {
-	b, _ := json.Marshal(cmd)
-	return string(b[1 : len(b)-1])
-}
-
-const (
-	TagSessionStart = "SESSION_START"
-	TagPrompt       = "PROMPT"
-	TagPreTool      = "PRE_TOOL"
-	TagPostTool     = "POST_TOOL"
-	TagStop         = "STOP"
-	TagPreCompact   = "PRE_COMPACT"
+// The suite's log tags, taken from the one event vocabulary in harness rather
+// than spelled out again here. They stay as names because the registry's
+// KnownIssues keys and ServerRequestedHooks are written in terms of them.
+var (
+	TagSessionStart = harness.SessionStart.Tag()
+	TagPrompt       = harness.PromptSubmit.Tag()
+	TagPreTool      = harness.PreToolUse.Tag()
+	TagPostTool     = harness.PostToolUse.Tag()
+	TagStop         = harness.Stop.Tag()
+	TagPreCompact   = harness.PreCompact.Tag()
 )
 
 var originalHome = os.Getenv("HOME")
@@ -155,19 +154,12 @@ func (r *TestRunner) SetIntercept(on bool) {
 	r.intercept = on
 }
 
-func (r *TestRunner) SetMode(m string) {
-	switch m {
-	case "headless":
-		r.mode = ModeHeadless
-	case "interactive":
-		r.mode = ModeInteractive
-	case "acp":
-		r.mode = ModeACP
-	case "sdk":
-		r.mode = ModeSDK
-	default:
-		r.mode = ModeBoth
-	}
+func (r *TestRunner) SetMode(m Mode) {
+	r.mode = m
+}
+
+func (r *TestRunner) SetProbes(p Probes) {
+	r.probes = p
 }
 
 func (r *TestRunner) pass(msg string) {
@@ -212,8 +204,8 @@ func (r *TestRunner) Run() Result {
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		if len(r.harness.HeadlessCmd) > 0 {
-			r.prepareToolCall("headless")
-			r.requestHooksFor("headless")
+			r.prepareToolCall(ModeHeadless)
+			r.requestHooksFor(ModeHeadless)
 			r.runHeadless()
 			r.runChecks("headless")
 		} else {
@@ -221,34 +213,34 @@ func (r *TestRunner) Run() Result {
 		}
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
-		r.resetPhase("interactive")
-		r.requestHooksFor("interactive")
+		r.resetPhase(ModeInteractive)
+		r.requestHooksFor(ModeInteractive)
 		r.runInteractive()
 		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
-		r.resetPhase("acp")
-		r.requestHooksFor("acp")
+		r.resetPhase(ModeACP)
+		r.requestHooksFor(ModeACP)
 		r.runACP()
 		r.runChecks("acp")
 		// After the checks, because the probes run turns of their own and the
 		// checks read the same mock log and hook log.
-		if os.Getenv("HARNESS_ACP_LOAD") != "" {
-			r.resetPhase("acp")
+		if r.probes.Resume {
+			r.resetPhase(ModeACP)
 			r.probeSessionLoad()
 		}
-		if os.Getenv("HARNESS_ACP_INFLIGHT") != "" {
-			r.resetPhase("acp")
+		if r.probes.InFlight {
+			r.resetPhase(ModeACP)
 			r.probeToolCallInFlight()
 		}
-		if os.Getenv("HARNESS_ACP_COMPACT") != "" {
-			r.resetPhase("acp")
+		if r.probes.Compact {
+			r.resetPhase(ModeACP)
 			r.probeCompactedResume()
 		}
 	}
 	if r.mode == ModeSDK {
-		r.resetPhase("sdk")
-		r.requestHooksFor("sdk")
+		r.resetPhase(ModeSDK)
+		r.requestHooksFor(ModeSDK)
 		r.runSDK()
 		r.runChecks("sdk")
 	}
@@ -256,14 +248,14 @@ func (r *TestRunner) Run() Result {
 	return r.finish()
 }
 
-func (r *TestRunner) resetPhase(mode string) {
+func (r *TestRunner) resetPhase(mode Mode) {
 	os.Remove(hookLogPath)
 	os.Remove(hookLogPath + ".stdin")
 	r.server.ClearLog()
 	r.prepareToolCall(mode)
 }
 
-func (r *TestRunner) prepareToolCall(mode string) {
+func (r *TestRunner) prepareToolCall(mode Mode) {
 	if r.harness.Events.PreToolUse == "" && r.harness.Events.PostToolUse == "" {
 		return
 	}
@@ -274,7 +266,7 @@ func (r *TestRunner) prepareToolCall(mode string) {
 // reports whether the agent has one at all. Tool hooks are the usual reason to
 // serve a tool call, but not the only one: the in-flight probe needs a tool
 // call to have something to ask permission for.
-func (r *TestRunner) armToolCall(mode string) bool {
+func (r *TestRunner) armToolCall(mode Mode) bool {
 	name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
 	if o, ok := r.harness.ToolCallByMode[mode]; ok {
 		name, args = o.Name, o.Args
@@ -290,7 +282,7 @@ func (r *TestRunner) armGatedToolCall() (tool string, gated bool) {
 	if tc := r.harness.ToolCallGated; tc.Name != "" && r.armTool(tc.Name, tc.Args) {
 		return tc.Name, true
 	}
-	if !r.armToolCall("acp") {
+	if !r.armToolCall(ModeACP) {
 		return "", false
 	}
 	return r.toolMatcher(), false
@@ -1060,16 +1052,14 @@ func (r *TestRunner) runACP() {
 	// at once can run the hook without its output being attached (grok).
 	time.Sleep(2 * time.Second)
 
+	answered := r.server.AnswersServed()
 	prompt := promptText
 	if err := driver.SendPrompt(prompt); err != nil {
 		r.fail("ACP prompt: " + err.Error())
 		return
 	}
 
-	_, err := driver.WaitForResponse(
-		[]string{"mock", "hello", "Hello", "codename", "server"},
-		60*time.Second,
-	)
+	err := driver.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)
 	if err != nil {
 		r.skip("ACP response: " + err.Error())
 	} else {
@@ -1091,7 +1081,7 @@ func (r *TestRunner) runACP() {
 
 	r.pass("ACP session completed")
 
-	if os.Getenv("HARNESS_DUMP_TOOLS") != "" {
+	if r.probes.DumpTools {
 		// What this agent offered the model, for picking the tool the
 		// in-flight probe should ask permission for.
 		fmt.Printf("  [tools] %s declares: %s\n", r.harness.Name, strings.Join(r.server.DeclaredTools(), " "))
@@ -1099,8 +1089,20 @@ func (r *TestRunner) runACP() {
 
 }
 
-// acpInvocation is the command that starts this agent in ACP mode, expanded.
+// acpInvocation is the command that starts this agent in ACP mode, expanded,
+// including whatever makes it run unattended.
 func (r *TestRunner) acpInvocation() (bin string, args []string, dir string) {
+	bin, args, dir = r.acpInvocationGated()
+	for _, a := range r.harness.ACPAutoApproveArgs {
+		args = append(args, r.expand(a))
+	}
+	return bin, args, dir
+}
+
+// acpInvocationGated leaves out the arguments that stop the agent asking its
+// client for permission, which the registry names rather than the runner
+// recognising them by pattern afterwards.
+func (r *TestRunner) acpInvocationGated() (bin string, args []string, dir string) {
 	for _, a := range r.harness.ACPCmd[1:] {
 		args = append(args, r.expand(a))
 	}
@@ -1108,6 +1110,44 @@ func (r *TestRunner) acpInvocation() (bin string, args []string, dir string) {
 		args = append(args, r.expand(a))
 	}
 	return r.harness.ACPCmd[0], args, r.workDir()
+}
+
+// startProbeTurn opens a session of the probe's own and runs one turn in it.
+//
+// Every ACP probe needs the same prologue, and it used to be pasted into each
+// of them: three copies had drifted by the time they were counted. The session
+// belongs to the probe, which is the rule that keeps a probe's answer from
+// depending on what the phase did to a shared session.
+//
+// openers is what the agent sent before the turn — the yardstick a replay has
+// to beat. ok is false when the probe should give up; the skip has been
+// recorded.
+func (r *TestRunner) startProbeTurn(label string) (d *ACPDriver, openers []string, ok bool) {
+	bin, args, dir := r.acpInvocation()
+	r.armToolCall(ModeACP)
+
+	d = NewACPDriver(bin, args, dir, r.envIn(dir))
+	if err := d.Start(); err != nil {
+		r.skip(label + ": ACP start: " + err.Error())
+		return nil, nil, false
+	}
+	// Agents finish loading hooks after session/new returns; a prompt sent at
+	// once can run the hook without its output being attached (grok).
+	time.Sleep(2 * time.Second)
+
+	for _, n := range d.Updates() {
+		openers = append(openers, n.Kind)
+	}
+
+	answered := r.server.AnswersServed()
+	if err := d.SendPrompt(promptText); err != nil {
+		d.Kill()
+		r.skip(label + ": ACP prompt: " + err.Error())
+		return nil, nil, false
+	}
+	d.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)
+	d.WaitIdle(2 * time.Second)
+	return d, openers, true
 }
 
 // resumeAttemptDelays are how long after the first process ended each attempt
@@ -1138,44 +1178,21 @@ var resumeAttemptDelays = []time.Duration{0, 2 * time.Second, 5 * time.Second, 1
 // session made the answer depend on where the probe sat, which is how the
 // gemini result went wrong.
 //
-// Opt-in via HARNESS_ACP_LOAD; =kill ends the first process outright, the way
-// a closed laptop does, instead of closing its session.
+// Opt-in via --probe resume; resume=kill ends the first process outright, the
+// way a closed laptop does, instead of closing its session.
 func (r *TestRunner) probeSessionLoad() {
 	if len(r.harness.ACPCmd) == 0 {
 		return
 	}
-	kill := os.Getenv("HARNESS_ACP_LOAD") == "kill"
-	how := "closed"
-	if kill {
-		how = "killed"
-	}
+	kill := r.probes.ResumeKill
+	how := r.probes.How()
 	fmt.Printf("[probe] session/load (resume after the first process was %s)\n", how)
 
+	first, openers, ok := r.startProbeTurn("session/load")
+	if !ok {
+		return
+	}
 	bin, args, dir := r.acpInvocation()
-	r.armToolCall("acp")
-
-	first := NewACPDriver(bin, args, dir, r.envIn(dir))
-	if err := first.Start(); err != nil {
-		r.skip("session/load: ACP start: " + err.Error())
-		return
-	}
-	time.Sleep(2 * time.Second)
-
-	// What this agent sends on a session that has no history at all, recorded
-	// from the same process that is about to have some: the yardstick a replay
-	// has to beat.
-	var openers []string
-	for _, n := range first.Updates() {
-		openers = append(openers, n.Kind)
-	}
-
-	if err := first.SendPrompt(promptText); err != nil {
-		first.Kill()
-		r.skip("session/load: ACP prompt: " + err.Error())
-		return
-	}
-	first.WaitForResponse([]string{"mock", "hello", "Hello", "codename", "server"}, 60*time.Second)
-	first.WaitIdle(2 * time.Second)
 
 	sessionID := first.SessionID()
 	if kill {
@@ -1269,6 +1286,42 @@ func (r *TestRunner) reportReplayShape(load acp.LoadResult, replayed, openers []
 		r.harness.Name, kinds))
 }
 
+// askResumed puts a question to a resumed session and returns what reached the
+// model because of it. Both resume probes need exactly this, and the wait is
+// the part most likely to need changing, so it lives in one place.
+//
+// The wait ends on a request arriving or the turn ending — not on words in the
+// answer, which is both the wrong signal and a slow one.
+func (r *TestRunner) askResumed(d *ACPDriver, label string) ([]server.LogEntry, bool) {
+	before := len(r.entries())
+	if err := d.SendPrompt(resumeFollowUp); err != nil {
+		r.skip(label + ": prompting the resumed session failed: " + err.Error())
+		return nil, false
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for len(r.entries()) <= before && d.Alive() && !d.TurnDone() && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
+	d.WaitIdle(2 * time.Second)
+
+	after := r.entries()
+	if len(after) <= before {
+		r.skip(label + ": the resumed session sent nothing to the model, so there is nothing to read")
+		return nil, false
+	}
+	return after[before:], true
+}
+
+// entriesContain reports whether any of these requests carried the text.
+func entriesContain(entries []server.LogEntry, want string) bool {
+	for _, e := range entries {
+		if bytes.Contains(e.Body, []byte(want)) {
+			return true
+		}
+	}
+	return false
+}
+
 // resumeFollowUp is asked after a resume. It only has an answer if the earlier
 // turn came back.
 const resumeFollowUp = "What was my previous question?"
@@ -1278,30 +1331,13 @@ const resumeFollowUp = "What was my previous question?"
 // agent answers — the mock answers everything — but whether the request it
 // sends carries the turn from before the resume.
 func (r *TestRunner) reportResumedContext(resumed *ACPDriver) {
-	before := len(r.entries())
-	if err := resumed.SendPrompt(resumeFollowUp); err != nil {
-		r.skip("session/load: prompting the resumed session failed: " + err.Error())
+	sent, ok := r.askResumed(resumed, "session/load")
+	if !ok {
 		return
 	}
-	// Waiting on the answer's text would be the wrong signal and a slow one:
-	// the question here is what the agent sent to the model, so the wait ends
-	// as soon as a request arrives, or as soon as the turn ends without one.
-	deadline := time.Now().Add(60 * time.Second)
-	for len(r.entries()) <= before && resumed.Alive() && !resumed.TurnDone() && time.Now().Before(deadline) {
-		time.Sleep(250 * time.Millisecond)
-	}
-	resumed.WaitIdle(2 * time.Second)
-
-	after := r.entries()
-	if len(after) <= before {
-		r.skip("session/load: the resumed session sent nothing to the model, so there is nothing to read")
+	if entriesContain(sent, promptText) {
+		r.pass(fmt.Sprintf("session/load: %s carried the earlier turn to the model, so the resume was real", r.harness.Name))
 		return
-	}
-	for _, e := range after[before:] {
-		if bytes.Contains(e.Body, []byte(promptText)) {
-			r.pass(fmt.Sprintf("session/load: %s carried the earlier turn to the model, so the resume was real", r.harness.Name))
-			return
-		}
 	}
 	// The load returned without an error, the notifications arrived, and the
 	// conversation is still gone. A negative about an agent has to carry its
@@ -1309,7 +1345,7 @@ func (r *TestRunner) reportResumedContext(resumed *ACPDriver) {
 	// new prompt alone, and several would mean it carries something this
 	// check does not recognise.
 	var detail []string
-	for _, e := range after[before:] {
+	for _, e := range sent {
 		body := string(e.Body)
 		note := ""
 		if strings.Contains(body, resumeFollowUp) {
@@ -1318,7 +1354,7 @@ func (r *TestRunner) reportResumedContext(resumed *ACPDriver) {
 		detail = append(detail, fmt.Sprintf("%s with %d message(s)%s", e.Path, strings.Count(body, `"role"`), note))
 	}
 	r.skip(fmt.Sprintf("session/load: %s sent %d request(s) after the resume and none carried the earlier turn — %s",
-		r.harness.Name, len(after)-before, strings.Join(detail, "; ")))
+		r.harness.Name, len(sent), strings.Join(detail, "; ")))
 }
 
 // sameKinds reports whether two update-kind sequences are identical.
@@ -1346,8 +1382,7 @@ func sameKinds(a, b []string) bool {
 // it receives nothing, resuming a compacted session silently discards the
 // conversation, and a runner has to refuse rather than pretend.
 //
-// Opt in with HARNESS_ACP_COMPACT. Only agents with a CompactCommand can be
-// asked.
+// Opt in with --probe compact. Only agents with a CompactCommand can be asked.
 func (r *TestRunner) probeCompactedResume() {
 	if len(r.harness.ACPCmd) == 0 {
 		return
@@ -1358,22 +1393,11 @@ func (r *TestRunner) probeCompactedResume() {
 	}
 	fmt.Println("[probe] resuming a session the agent compacted")
 
+	first, _, ok := r.startProbeTurn("compaction")
+	if !ok {
+		return
+	}
 	bin, args, dir := r.acpInvocation()
-	r.armToolCall("acp")
-
-	first := NewACPDriver(bin, args, dir, r.envIn(dir))
-	if err := first.Start(); err != nil {
-		r.skip("compaction: ACP start: " + err.Error())
-		return
-	}
-	time.Sleep(2 * time.Second)
-	if err := first.SendPrompt(promptText); err != nil {
-		first.Kill()
-		r.skip("compaction: ACP prompt: " + err.Error())
-		return
-	}
-	first.WaitForResponse([]string{"mock", "hello", "Hello", "codename", "server"}, 60*time.Second)
-	first.WaitIdle(2 * time.Second)
 
 	// Enough turns that there is something worth compacting. One exchange is
 	// below every agent's threshold, and compacting it is a no-op that reports
@@ -1382,13 +1406,14 @@ func (r *TestRunner) probeCompactedResume() {
 		if first.SendPrompt(follow) != nil {
 			break
 		}
-		first.WaitForResponse([]string{"mock", "hello", "Hello", "server"}, 60*time.Second)
+		first.WaitAnswered(r.server.AnswersServed, r.server.AnswersServed()-1, 60*time.Second)
 		first.WaitIdle(time.Second)
 	}
 
 	// The compaction itself. Closed rather than killed: this probe is about
 	// what compaction costs, and a kill would confound it with durability.
 	before := len(r.entries())
+	widestBefore := widestRequest(r.entries())
 	first.SendCommand(r.harness.CompactCommand)
 	first.WaitIdle(4 * time.Second)
 	sent := r.entries()
@@ -1404,13 +1429,21 @@ func (r *TestRunner) probeCompactedResume() {
 	// /compact that way — and the model request it produces looks like any
 	// other turn. Without this the probe passes on a session that was never
 	// compacted, and "nothing was lost" means only that nothing happened.
-	if !looksLikeSummarisation(sent[before:]) {
+	//
+	// The test is structural rather than a search for summarising words: a
+	// compaction sends the thread to the model to be condensed, so its request
+	// carries at least as much history as the turn before it, while a slash
+	// command arriving as a user message carries one more message than that
+	// turn and nothing else. Matching English was a denylist that had to stay
+	// disjoint from the probe's own filler prompts, and would have reported a
+	// reworded agent as one that never compacted.
+	if widestRequest(sent[before:]) < widestBefore {
 		first.Close()
-		r.skip(fmt.Sprintf("compaction: %s sent %s to the model as an ordinary message rather than compacting, so there is nothing to measure",
-			r.harness.Name, r.harness.CompactCommand))
+		r.skip(fmt.Sprintf("compaction: %s answered %s with a %d-message request where the turn before carried %d, so it did not compact",
+			r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:]), widestBefore))
 		return
 	}
-	r.pass("compaction: " + r.harness.Name + " ran " + r.harness.CompactCommand + " and asked the model to summarise")
+	r.pass(fmt.Sprintf("compaction: %s ran %s over %d message(s)", r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:])))
 
 	sessionID := first.SessionID()
 	first.Close()
@@ -1438,26 +1471,23 @@ var compactionFillers = []string{
 	"What was the first thing I asked you?",
 }
 
-// looksLikeSummarisation reports whether any of these requests asked the model
-// to condense the conversation, which is what an agent does when it compacts.
-// Checked against the instructions rather than the whole body, since the word
-// can appear in a user turn — one of the fillers above contains it.
-func looksLikeSummarisation(entries []server.LogEntry) bool {
+// messageCount is how many messages a request carried to the model. Every
+// format this mock speaks marks them the same way, and the count is what
+// compaction changes: a compacted thread goes to the model as a summary plus
+// the new turn, not as the whole history.
+func messageCount(e server.LogEntry) int {
+	return bytes.Count(e.Body, []byte(`"role"`))
+}
+
+// widestRequest is the largest message count among these requests.
+func widestRequest(entries []server.LogEntry) int {
+	widest := 0
 	for _, e := range entries {
-		body := strings.ToLower(string(e.Body))
-		// Phrases an agent uses when instructing a model to condense a
-		// thread. Deliberately not the bare word "compact": the slash command
-		// arriving as an ordinary user message contains it, and that is the
-		// case this exists to rule out.
-		for _, phrase := range []string{"summarize the conversation", "summarise the conversation",
-			"conversation summary", "summary of the conversation", "condense the conversation",
-			"previous conversation", "chat history"} {
-			if strings.Contains(body, phrase) {
-				return true
-			}
+		if n := messageCount(e); n > widest {
+			widest = n
 		}
 	}
-	return false
+	return widest
 }
 
 // reportCompactedContext classifies what the model was sent after a compacted
@@ -1465,33 +1495,13 @@ func looksLikeSummarisation(entries []server.LogEntry) bool {
 // the new prompt.
 func (r *TestRunner) reportCompactedContext(resumed *ACPDriver) {
 	name := r.harness.Name
-	before := len(r.entries())
-	if err := resumed.SendPrompt(resumeFollowUp); err != nil {
-		r.skip("compaction: prompting the resumed session failed: " + err.Error())
-		return
-	}
-	deadline := time.Now().Add(60 * time.Second)
-	for len(r.entries()) <= before && resumed.Alive() && !resumed.TurnDone() && time.Now().Before(deadline) {
-		time.Sleep(250 * time.Millisecond)
-	}
-	resumed.WaitIdle(2 * time.Second)
-
-	after := r.entries()
-	if len(after) <= before {
-		r.skip("compaction: the resumed session sent nothing to the model, so there is nothing to read")
+	sent, ok := r.askResumed(resumed, "compaction")
+	if !ok {
 		return
 	}
 
-	carried, widest := false, 0
-	for _, e := range after[before:] {
-		body := string(e.Body)
-		if strings.Contains(body, promptText) {
-			carried = true
-		}
-		if n := strings.Count(body, `"role"`); n > widest {
-			widest = n
-		}
-	}
+	carried := entriesContain(sent, promptText)
+	widest := widestRequest(sent)
 	switch {
 	case carried:
 		// Either the agent kept the original wording through compaction, or
@@ -1516,7 +1526,7 @@ func (r *TestRunner) reportCompactedContext(resumed *ACPDriver) {
 // whether that is a live question or replayed history. This probe is what
 // decides it: agentprotocol marks such a request DuringLoad and refuses to
 // interpret it, which is the right call for a library and no help at all to a
-// client that has to answer. Opt in with HARNESS_ACP_INFLIGHT; =cancel
+// client that has to answer. Opt in with --probe inflight; inflight=cancel
 // answers the re-raised request with a cancellation instead of an approval.
 func (r *TestRunner) probeToolCallInFlight() {
 	if len(r.harness.ACPCmd) == 0 {
@@ -1542,9 +1552,10 @@ func (r *TestRunner) probeToolCallInFlight() {
 	// Without this the probe would measure the harness, not the agent: the
 	// registry tells several agents to approve everything so unattended runs
 	// finish, and an agent told that never asks its client for anything.
-	args, ungated := withoutAutoApproval(args)
+	bin, args, dir = r.acpInvocationGated()
+	ungated := r.harness.ACPAutoApproveArgs
 	if len(ungated) > 0 {
-		r.step("in-flight: dropped %s so the agent gates its own tool calls", strings.Join(ungated, " "))
+		r.step("in-flight: withheld %s so the agent gates its own tool calls", strings.Join(ungated, " "))
 	}
 
 	first := NewACPDriver(bin, args, dir, r.envIn(dir))
@@ -1594,16 +1605,15 @@ func (r *TestRunner) probeToolCallInFlight() {
 	}
 
 	before := r.server.LogCount()
-	mode := os.Getenv("HARNESS_ACP_INFLIGHT")
 	resumed := NewACPDriver(bin, args, dir, r.envIn(dir))
 	resumed.ResumeSessionID = sessionID
-	resumed.CancelDuringLoad = mode == "cancel"
+	resumed.CancelDuringLoad = r.probes.Answer == AnswerCancelled
 	// =hold answers nothing on the resumed session either, which asks the last
 	// question in the set: does an agent wait on an approval forever, or give
 	// up? Measurable only since agentprotocol v0.4.0 — before that the held
 	// answer stopped this client's own read loop, and an agent that waited
 	// looked exactly like a client that had deadlocked.
-	resumed.ParkPermission = mode == "hold"
+	resumed.ParkPermission = r.probes.Answer == AnswerParked
 	if err := resumed.Start(); err != nil {
 		r.skip(fmt.Sprintf("in-flight: %s does not resume a session with a tool call in flight (%v)", r.harness.Name, err))
 		resumed.Close()
@@ -1702,37 +1712,6 @@ func (r *TestRunner) observeUnansweredApproval(d *ACPDriver) {
 	r.pass(fmt.Sprintf("in-flight: %s waited out %s on an approval nobody answered, saying nothing", name, watch))
 }
 
-// autoApprovalFlags are the flags the registry passes so an unattended run
-// finishes without a human, mapped to whether they take a value. They are
-// exactly the flags the in-flight probe must leave out.
-var autoApprovalFlags = map[string]bool{
-	"--trust-all-tools": false,
-	"--yolo":            false,
-	"--auto":            true,
-	"--approval-mode":   true,
-}
-
-// withoutAutoApproval returns args with the auto-approval flags removed, and
-// the flags it removed. Config files can grant the same blanket approval —
-// kimi's permissions block does — and this cannot see those, so an agent that
-// still never asks is an agent whose configuration was never the reason.
-func withoutAutoApproval(args []string) (kept, removed []string) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		takesValue, known := autoApprovalFlags[a]
-		if !known && !strings.HasPrefix(a, "--dangerously-") {
-			kept = append(kept, a)
-			continue
-		}
-		removed = append(removed, a)
-		if takesValue && i+1 < len(args) {
-			i++
-			removed = append(removed, args[i])
-		}
-	}
-	return kept, removed
-}
-
 // lastPermission is the most recent observation, which for a parking driver is
 // the request it is still holding.
 func lastPermission(all []PermissionObservation) PermissionObservation {
@@ -1781,19 +1760,6 @@ func (r *TestRunner) checkHookEvents(phase string) {
 		r.reportEvent(phase, label, e.Tag, found, "")
 	}
 
-	if r.server.LogCount() > 0 {
-		r.pass(fmt.Sprintf("%s: mock server received %d request(s)", phase, r.server.LogCount()))
-	}
-}
-
-// beltEventNames maps our internal tag names to belt plugin hook event names.
-var beltEventNames = map[string]string{
-	TagSessionStart: "session-start",
-	TagPrompt:       "user-prompt-submit",
-	TagPreTool:      "pre-tool-use",
-	TagPostTool:     "post-tool-use",
-	TagStop:         "stop",
-	TagPreCompact:   "pre-compact",
 }
 
 func (r *TestRunner) dumpHookLogs(phase string) {
@@ -1820,44 +1786,27 @@ func (r *TestRunner) checkBeltHookEvents(phase string) {
 
 	for _, e := range r.eventEntries() {
 		label := strings.ToLower(strings.ReplaceAll(e.Tag, "_", "-"))
-		beltName := beltEventNames[e.Tag]
-
-		found := false
-		if beltName != "" {
-			found = strings.Contains(beltLog, "["+beltName+"]")
-		}
+		found := strings.Contains(beltLog, "["+string(e.Belt)+"]")
 		if !found {
-			found = strings.Contains(ptyContent, "[belt:hook] "+beltName+" done")
+			found = strings.Contains(ptyContent, "[belt:hook] "+string(e.Belt)+" done")
 		}
 
 		r.reportEvent(phase, label, e.Tag, found, "belt ")
 	}
 
-	if r.server.LogCount() > 0 {
-		r.pass(fmt.Sprintf("%s: mock server received %d request(s)", phase, r.server.LogCount()))
-	}
 }
 
+// eventEntry pairs the agent's own name for an event with the suite's tag.
 type eventEntry struct {
-	Event string
+	Belt  harness.HookEvent
+	Event string // what this agent calls it
 	Tag   string
 }
 
 func (r *TestRunner) eventEntries() []eventEntry {
-	evts := r.harness.Events
-	all := []eventEntry{
-		{evts.SessionStart, TagSessionStart},
-		{evts.PromptSubmit, TagPrompt},
-		{evts.PreToolUse, TagPreTool},
-		{evts.PostToolUse, TagPostTool},
-		{evts.Stop, TagStop},
-		{evts.PreCompact, TagPreCompact},
-	}
 	var result []eventEntry
-	for _, e := range all {
-		if e.Event != "" {
-			result = append(result, e)
-		}
+	for _, e := range r.harness.Defined() {
+		result = append(result, eventEntry{Belt: e, Event: e.AgentName(r.harness), Tag: e.Tag()})
 	}
 	return result
 }
@@ -1870,34 +1819,6 @@ func (r *TestRunner) toolMatcher() string {
 		return r.harness.ToolCallName
 	}
 	return server.DefaultToolName
-}
-
-func (r *TestRunner) buildNestedHooksJSON(logPath string) string {
-	entries := r.eventEntries()
-	parts := []string{}
-	for _, e := range entries {
-		// Drain the JSON payload the agent pipes to the hook, as a real hook
-		// (belt reads stdin) would: a hook that exits with stdin unread gives
-		// the agent a broken pipe, and gemini's TUI then discards its output.
-		cmd := fmt.Sprintf("[ -t 0 ] || cat >> %s.stdin; echo %s >> %s", logPath, e.Tag, logPath)
-		if e.Tag == TagPrompt {
-			cmd += r.promptEcho()
-		}
-		// Same unit belt's generated config uses: seconds, or milliseconds
-		// where the registry says so (gemini, qwen read "timeout" as ms and
-		// killed a 5-"second" hook after 5ms).
-		timeout := 5
-		if r.harness.HookTimeoutMs {
-			timeout = 5000
-		}
-		hook := fmt.Sprintf(`{"type":"command","command":"%s","timeout":%d}`, jsonStr(cmd), timeout)
-		if e.Tag == TagPreTool || e.Tag == TagPostTool {
-			parts = append(parts, fmt.Sprintf(`"%s":[{"matcher":"%s","hooks":[%s]}]`, e.Event, r.toolMatcher(), hook))
-		} else {
-			parts = append(parts, fmt.Sprintf(`"%s":[{"hooks":[%s]}]`, e.Event, hook))
-		}
-	}
-	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func (r *TestRunner) expand(tmpl string) string {
@@ -1922,9 +1843,15 @@ func (r *TestRunner) expand(tmpl string) string {
 	return s
 }
 
+// findLatestSessionID reads the newest session id out of the directory this
+// agent writes transcripts to, or "" when the registry does not say where that
+// is — which is most agents, and is the honest answer for them.
 func (r *TestRunner) findLatestSessionID(cwd string) string {
-	mangled := strings.ReplaceAll(cwd, "/", "-")
-	sessDir := filepath.Join(r.home, ".factory", "sessions", mangled)
+	if r.harness.SessionDir == "" {
+		return ""
+	}
+	sessDir := r.expand(strings.ReplaceAll(r.harness.SessionDir,
+		"{{.MangledRepoDir}}", strings.ReplaceAll(cwd, "/", "-")))
 	entries, err := os.ReadDir(sessDir)
 	if err != nil {
 		return ""
@@ -1932,7 +1859,7 @@ func (r *TestRunner) findLatestSessionID(cwd string) string {
 	var newest string
 	var newestTime time.Time
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !strings.HasSuffix(e.Name(), r.harness.SessionExt) {
 			continue
 		}
 		info, err := e.Info()
@@ -1941,7 +1868,7 @@ func (r *TestRunner) findLatestSessionID(cwd string) string {
 		}
 		if info.ModTime().After(newestTime) {
 			newestTime = info.ModTime()
-			newest = strings.TrimSuffix(e.Name(), ".jsonl")
+			newest = strings.TrimSuffix(e.Name(), r.harness.SessionExt)
 		}
 	}
 	return newest
@@ -2030,7 +1957,7 @@ func (r *TestRunner) reportEvent(phase, label, tag string, fired bool, prefix st
 
 // requestHooksFor tells the mock which hooks this agent needs its backend to
 // request in this mode (Harness.ServerRequestedHooks), and nothing else.
-func (r *TestRunner) requestHooksFor(mode string) {
+func (r *TestRunner) requestHooksFor(mode Mode) {
 	if r.server != nil {
 		r.server.SetRequestedHooks(r.harness.ServerRequestedHooks[mode])
 	}
@@ -2174,8 +2101,8 @@ func (r *TestRunner) strippedOutput() string {
 // Agents that hand the hook a JSON payload on stdin need it drained: a hook
 // that exits with stdin unread gives the agent a broken pipe, and gemini's
 // TUI then discards the hook's output.
-func (r *TestRunner) mockHookCommand(beltEvent string) string {
-	tag := beltTagFor(beltEvent)
+func (r *TestRunner) mockHookCommand(beltEvent harness.HookEvent) string {
+	tag := beltEvent.Tag()
 	cmd := fmt.Sprintf("[ -t 0 ] || cat >> %s.stdin; echo %s >> %s", hookLogPath, tag, hookLogPath)
 	if tag == TagPrompt {
 		cmd += r.promptEcho()
@@ -2191,17 +2118,6 @@ func (r *TestRunner) mockHookCommand(beltEvent string) string {
 		return script
 	}
 	return cmd
-}
-
-// beltTagFor is the inverse of beltEventNames: the suite's tag for a belt
-// hook event.
-func beltTagFor(beltEvent string) string {
-	for tag, name := range beltEventNames {
-		if name == beltEvent {
-			return tag
-		}
-	}
-	return strings.ToUpper(beltEvent)
 }
 
 // copyHooksToProject mirrors the installed hook file into the repo the agent

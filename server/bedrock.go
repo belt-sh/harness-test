@@ -6,15 +6,15 @@ import (
 	"net/http"
 )
 
-func (s *MockServer) parseBedrockRequest(r *http.Request) (string, bool) {
-	_, body := s.parseRequest(r)
+func (s *MockServer) parseBedrockRequest(r *http.Request) (model string, hasTools bool, idx int) {
+	_, body, idx := s.parseRequest(r)
 	var conv bedrockConverseRequest
 	json.Unmarshal(body, &conv)
-	return conv.ModelID, len(conv.ToolConfig.Tools) > 0
+	return conv.ModelID, len(conv.ToolConfig.Tools) > 0, idx
 }
 
 func (s *MockServer) handleBedrockConverse(w http.ResponseWriter, r *http.Request) {
-	_, hasTools := s.parseBedrockRequest(r)
+	_, hasTools, _ := s.parseBedrockRequest(r)
 
 	if s.shouldToolCall(hasTools, r.URL.Path) {
 		s.bedrockToolCall(w)
@@ -34,7 +34,8 @@ func (s *MockServer) handleBedrockConverse(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *MockServer) handleBedrockConverseStream(w http.ResponseWriter, r *http.Request) {
-	_, hasTools := s.parseBedrockRequest(r)
+	_, hasTools, idx := s.parseBedrockRequest(r)
+	s.markStreamed(idx)
 
 	if s.shouldToolCall(hasTools, r.URL.Path) {
 		s.bedrockToolCallStream(w)

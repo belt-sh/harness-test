@@ -6,16 +6,20 @@ import (
 )
 
 func (s *MockServer) handleMessages(w http.ResponseWriter, r *http.Request) {
-	req, body := s.parseRequest(r)
+	req, body, idx := s.parseRequest(r)
 	model := req.modelOrDefault()
 
 	if s.shouldToolCall(req.hasTools() && s.bodyOffersTool(body), r.URL.Path) {
+		if req.Stream {
+			s.markStreamed(idx)
+		}
 		s.anthropicToolCall(w, model, req.Stream)
 		return
 	}
 
 	text := s.getResponse()
 	if req.Stream {
+		s.markStreamed(idx)
 		streamSSEEvents(w, anthropicTextEvents(model, text))
 		return
 	}

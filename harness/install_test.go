@@ -11,8 +11,8 @@ import (
 // the first caller to pass a quoted one got malformed JSON — and hooks that
 // silently never fired.
 func TestGeneratedConfigSurvivesAQuotedCommand(t *testing.T) {
-	cmd := func(event string) string {
-		return `echo ` + event + ` && printf '%s' '{"key":"value"}'`
+	cmd := func(event HookEvent) string {
+		return `echo ` + string(event) + ` && printf '%s' '{"key":"value"}'`
 	}
 	for name, h := range All {
 		switch h.HookFormat {

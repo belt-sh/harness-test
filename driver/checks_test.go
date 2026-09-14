@@ -23,6 +23,7 @@ func TestChecksFailInsteadOfSkip(t *testing.T) {
 	}{
 		{"no requests fails", harness.All["claude"], nil, func(r *TestRunner) { r.checkAPIRequests("headless", r.entries()) }, 1, 0},
 		{"no stream fails", harness.All["claude"], []server.LogEntry{entry(`{"stream":false}`)}, func(r *TestRunner) { r.checkStreamingFormat("headless", r.entries()) }, 1, 0},
+		{"a streamed answer passes", harness.All["claude"], []server.LogEntry{{Path: "/v1/messages", Streamed: true}}, func(r *TestRunner) { r.checkStreamingFormat("headless", r.entries()) }, 0, 0},
 		{"no stream skips with reason", withIssue(harness.All["claude"], "headless:streaming", "x"), []server.LogEntry{entry(`{"stream":false}`)}, func(r *TestRunner) { r.checkStreamingFormat("headless", r.entries()) }, 0, 1},
 		{"wrong model fails", harness.All["claude"], []server.LogEntry{entry(`{"model":"someone-elses-model"}`)}, func(r *TestRunner) { r.checkModelSelection("headless", r.entries()) }, 1, 0},
 		{"wrong model skips with reason", withIssue(harness.All["claude"], "headless:model", "x"), []server.LogEntry{entry(`{"model":"someone-elses-model"}`)}, func(r *TestRunner) { r.checkModelSelection("headless", r.entries()) }, 0, 1},
@@ -59,28 +60,21 @@ func withModel(h harness.Harness, model string) harness.Harness {
 	return h
 }
 
-// The compaction probe passed on sessions that were never compacted: over ACP
-// a slash command can arrive as an ordinary user message, the model request it
-// produces looks like any other turn, and "nothing was lost" then means only
-// that nothing happened. The probe now requires evidence that the agent asked
-// the model to condense the conversation.
-func TestSummarisationIsDistinguishedFromAnOrdinaryTurn(t *testing.T) {
-	entry := func(body string) server.LogEntry { return server.LogEntry{Body: []byte(body)} }
-	cases := []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"a compaction request", `{"messages":[{"role":"system","content":"Summarize the conversation so far."}]}`, true},
-		{"the slash command as an ordinary user message", `{"messages":[{"role":"user","content":"/compact"}]}`, false},
-		{"an ordinary turn", `{"messages":[{"role":"user","content":"What is the project codename?"}]}`, false},
-		{"a filler turn that says summarise", `{"messages":[{"role":"user","content":"Summarise what you have done so far."}]}`, false},
+// A compaction sends the thread to the model to be condensed; a slash command
+// that arrives as an ordinary user message sends one more message than the
+// turn before it. The probe used to tell them apart by matching English,
+// which had to stay disjoint from its own filler prompts and would have
+// reported a reworded agent as one that never compacted.
+func TestMessageCountSeparatesCompactionFromAnOrdinaryTurn(t *testing.T) {
+	turn := server.LogEntry{Body: []byte(`{"messages":[{"role":"system"},{"role":"user"},{"role":"assistant"}]}`)}
+	compaction := server.LogEntry{Body: []byte(`{"messages":[{"role":"system"},{"role":"user"},{"role":"assistant"},{"role":"user"},{"role":"assistant"},{"role":"user"}]}`)}
+	ordinary := server.LogEntry{Body: []byte(`{"messages":[{"role":"system"},{"role":"user"}]}`)}
+
+	before := widestRequest([]server.LogEntry{turn})
+	if widestRequest([]server.LogEntry{compaction}) < before {
+		t.Error("a request carrying the whole thread should read as a compaction")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := looksLikeSummarisation([]server.LogEntry{entry(c.body)}); got != c.want {
-				t.Errorf("looksLikeSummarisation() = %v, want %v", got, c.want)
-			}
-		})
+	if widestRequest([]server.LogEntry{ordinary}) >= before {
+		t.Error("a request carrying less than the preceding turn should not read as a compaction")
 	}
 }

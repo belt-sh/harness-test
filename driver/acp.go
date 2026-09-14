@@ -19,7 +19,7 @@ import (
 // agent-initiated requests — belongs to github.com/inference-sh/agentprotocol/acp,
 // which belt's runner mode uses too. What stays here is this suite's policy:
 // approve everything, serve files, and accumulate updates into the polling
-// model the checks are written against (Output/WaitForResponse/WaitIdle).
+// model the checks are written against (Output/WaitAnswered/WaitIdle).
 // Quirks found against a real agent belong in the library, not here, so belt
 // inherits them; see the note on turnOver for the one asymmetry worth
 // watching.
@@ -96,8 +96,17 @@ type PermissionObservation struct {
 	ToolCallID string
 	Title      string
 	DuringLoad bool
-	Answer     string // approved, cancelled, or parked
+	Answer     PermissionAnswer
 }
+
+// PermissionAnswer is what this driver did about a request.
+type PermissionAnswer string
+
+const (
+	AnswerApproved  PermissionAnswer = "approved"
+	AnswerCancelled PermissionAnswer = "cancelled"
+	AnswerParked    PermissionAnswer = "parked" // held, never answered
+)
 
 func NewACPDriver(binary string, args []string, dir string, env []string) *ACPDriver {
 	return &ACPDriver{
@@ -153,10 +162,6 @@ func (d *ACPDriver) LoadResult() acp.LoadResult {
 	return d.load
 }
 
-// Capabilities is what the agent said it could do at initialize. An agent
-// that declares nothing is not refusing; several that resume declare nothing.
-func (d *ACPDriver) Capabilities() acp.AgentCapabilities { return d.proc.AgentCapabilities() }
-
 // CanLoadSession reports the agent's own claim about resuming. Worth showing
 // a person and not worth branching on: every agent measured here declares it,
 // including the one that refuses the call.
@@ -207,7 +212,7 @@ func (d *ACPDriver) Permissions() []PermissionObservation {
 	return append([]PermissionObservation(nil), d.permissions...)
 }
 
-func (d *ACPDriver) recordPermission(obs PermissionObservation, answer string) {
+func (d *ACPDriver) recordPermission(obs PermissionObservation, answer PermissionAnswer) {
 	obs.Answer = answer
 	d.mu.Lock()
 	d.permissions = append(d.permissions, obs)
@@ -274,7 +279,7 @@ func (d *ACPDriver) handler() acp.Handler {
 			}
 
 			if d.ParkPermission {
-				d.recordPermission(obs, "parked")
+				d.recordPermission(obs, AnswerParked)
 				d.appendOutput("[acp] parked permission" + where + " (" + obs.ToolCallID + "), answering never\n")
 				d.wake(d.parked)
 				// Held until the process is taken away. Returning anything at
@@ -283,13 +288,13 @@ func (d *ACPDriver) handler() acp.Handler {
 				return acp.Cancelled(), nil
 			}
 			if r.DuringLoad && d.CancelDuringLoad {
-				d.recordPermission(obs, "cancelled")
+				d.recordPermission(obs, AnswerCancelled)
 				d.appendOutput("[acp] cancelled permission during session/load (" + obs.ToolCallID + ")\n")
 				return acp.Cancelled(), nil
 			}
 
 			if id, ok := r.PickOption(acp.OptionKindAllowOnce, acp.OptionKindAllowAlways); ok {
-				d.recordPermission(obs, "approved")
+				d.recordPermission(obs, AnswerApproved)
 				d.appendOutput("[acp] approved permission" + where + " (" + id + ")\n")
 				return acp.Selected(id), nil
 			}
@@ -300,11 +305,11 @@ func (d *ACPDriver) handler() acp.Handler {
 				if looksLikeRefusal(o.Kind) || looksLikeRefusal(o.Name) {
 					continue
 				}
-				d.recordPermission(obs, "approved")
+				d.recordPermission(obs, AnswerApproved)
 				d.appendOutput("[acp] approved permission, unrecognised kind (" + o.OptionID + ")\n")
 				return acp.Selected(o.OptionID), nil
 			}
-			d.recordPermission(obs, "cancelled")
+			d.recordPermission(obs, AnswerCancelled)
 			d.appendOutput("[acp] permission request offered no options; cancelled\n")
 			return acp.Cancelled(), nil
 		},
@@ -376,8 +381,8 @@ func (d *ACPDriver) noteUpdate(u acp.SessionUpdate) {
 	}
 }
 
-// SendPrompt returns as soon as the prompt is on the wire, because the Driver
-// interface is send-then-wait for every mode. The call itself runs in the
+// SendPrompt returns as soon as the prompt is on the wire: every mode in this
+// suite is send-then-wait. The call itself runs in the
 // background and its return signals turnOver, which is what WaitForResponse
 // waits on.
 func (d *ACPDriver) SendPrompt(prompt string) error {
@@ -398,6 +403,39 @@ func (d *ACPDriver) SendPrompt(prompt string) error {
 		d.wake(d.turnOver)
 	}()
 	return nil
+}
+
+// WaitAnswered waits for the agent's turn to end, having been answered by the
+// mock at least once beyond `after`.
+//
+// It does not read the transcript. The old wait scanned the agent's output for
+// words from the canned answer, and one of them — "codename" — is in the
+// prompt itself, so an agent that echoes the user's turn back as an update
+// satisfied the wait before the model had said anything. The mock knows how
+// many answers it has served; that is the authority, and the interactive path
+// has used it since the same bug was found there.
+func (d *ACPDriver) WaitAnswered(answers func() int, after int, timeout time.Duration) error {
+	deadline := time.After(timeout)
+	for {
+		if answers() > after && d.TurnDone() {
+			return nil
+		}
+		select {
+		case <-d.updates:
+		case <-d.turnOver:
+			if answers() > after {
+				return nil
+			}
+		case <-time.After(200 * time.Millisecond):
+		case <-deadline:
+			if answers() > after {
+				return nil
+			}
+			return fmt.Errorf("timeout waiting for the mock to answer")
+		case <-d.proc.Done():
+			return nil
+		}
+	}
 }
 
 func (d *ACPDriver) WaitForResponse(patterns []string, timeout time.Duration) (string, error) {

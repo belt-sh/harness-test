@@ -132,9 +132,9 @@ Two ways a mock quietly changes what it is measuring, both found on gemini in 20
 
 ### Resuming a session: all 12 after a clean close, 11 after a kill
 
-`HARNESS_ACP_LOAD=1` adds a probe to the ACP phase: run a turn, end the
+`--probe resume` adds a probe to the ACP phase: run a turn, end the
 process, then attach to that same session from a second process with
-`session/load`. `HARNESS_ACP_LOAD=kill` ends the first process outright
+`session/load`. `--probe resume=kill` ends the first process outright
 instead of closing its session, which is what a closed laptop does.
 
 Measured 2026-09 in Docker, both paths:
@@ -234,12 +234,12 @@ every historical tool call as a new approval request.
 
 ### A tool call in flight: every agent drops it
 
-`HARNESS_ACP_INFLIGHT=1` parks a permission request and never answers it, kills
+`--probe inflight` parks a permission request and never answers it, kills
 the client while the tool call is still waiting, then resumes the session from a
 new process and records whether the agent raises the approval again, with what
-`toolCallId`, and whether answering it leads anywhere. `=cancel` refuses the
-re-raised request instead of approving it; `=hold` answers nothing on the
-resumed session either.
+`toolCallId`, and whether answering it leads anywhere. `inflight=cancel` refuses the
+re-raised request instead of approving it; `inflight=hold` answers nothing on
+the resumed session either.
 
 **Six agents put an approval in flight, and not one of them mentions it again.**
 hermes, kilo, kimi, omp, opencode and qwen each asked before running a shell
@@ -272,7 +272,7 @@ through each agent's own shell tool:
 Seven of twelve. The earlier "none of them ask" was the measurement, not the
 agents.
 
-Tool names are read off the wire with `HARNESS_DUMP_TOOLS=1`, which prints
+Tool names are read off the wire with `--probe tools`, which prints
 what each agent declared to the model, and stored per agent as `ToolCallGated`.
 They are not guessed: a tool an agent does not declare comes back "tool not
 found" and never runs, so a guess produces a silent negative.
@@ -293,7 +293,7 @@ here from the client's side.
 
 ### Resuming a compacted session
 
-`HARNESS_ACP_COMPACT=1` runs a session several turns deep, compacts it with the
+`--probe compact` runs a session several turns deep, compacts it with the
 agent's own command, resumes it from a new process, and reads what reaches the
 model: the original wording, a summary, or nothing but the new prompt. The last
 is a failure rather than a trait — the resume reported success and the

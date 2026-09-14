@@ -20,6 +20,11 @@ func withTSPluginExport(h Harness, export string) Harness {
 	return h
 }
 
+// gatedShellArgs is what the in-flight probe asks an agent to run: a command
+// every risk classifier flags, on a path that is absolute and fabricated, so
+// it exists nowhere and can do nothing if an agent runs it anyway.
+const gatedShellArgs = `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`
+
 // withGatedTool names the tool this agent is expected to ask permission for,
 // for harnesses built by a helper rather than written out as a literal.
 func withGatedTool(h Harness, name, args string) Harness {
@@ -171,7 +176,7 @@ var All = map[string]Harness{
 	},
 	"copilot": {
 		Name: "copilot", Binary: "copilot",
-		ToolCallGated: ToolCall{Name: "bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated: ToolCall{Name: "bash", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@github/copilot"},
 		DetectEnvVars: []string{"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN"},
 		APIFormat:     OpenAI,
@@ -197,7 +202,7 @@ var All = map[string]Harness{
 	},
 	"grok": {
 		Name: "grok", Binary: "grok",
-		ToolCallGated:  ToolCall{Name: "run_terminal_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated:  ToolCall{Name: "run_terminal_command", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://x.ai/cli/install.sh | bash"},
 		InstallBinDirs: []string{".grok/bin"},
 		APIFormat:      Responses,
@@ -259,7 +264,7 @@ var All = map[string]Harness{
 	},
 	"kiro": {
 		Name: "kiro", Binary: "kiro-cli",
-		ToolCallGated:  ToolCall{Name: "shell", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated:  ToolCall{Name: "shell", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://cli.kiro.dev/install | bash"},
 		InstallBinDirs: []string{".local/bin"},
 		APIFormat:      OpenAI,
@@ -294,8 +299,8 @@ var All = map[string]Harness{
 		// TUI and ACP run V2. V2's non-interactive client also drops --model
 		// ("failed to set model 'kiro-default': Method not found", 2.21.3).
 		HeadlessCmd: []string{"kiro-cli", "chat", "--no-interactive", "--trust-all-tools", "--agent-engine", "v1", "--model", "{{.Model}}"},
-		ToolCallByMode: map[string]ToolCall{
-			"headless": {Name: "fs_read", Args: `{"operations":[{"mode":"Line","path":"README.md"}]}`},
+		ToolCallByMode: map[Mode]ToolCall{
+			ModeHeadless: {Name: "fs_read", Args: `{"operations":[{"mode":"Line","path":"README.md"}]}`},
 		},
 		// Without --model, kiro sends an empty modelId and the backend picks.
 		InteractiveCmd:          []string{"kiro-cli", "chat", "--trust-all-tools", "--model", "{{.Model}}"},
@@ -305,13 +310,14 @@ var All = map[string]Harness{
 		OnboardingDismiss: []DismissAction{
 			{Pattern: "navigate"}, {Pattern: "select"}, {Pattern: "Welcome"},
 		},
-		ACPCmd:  []string{"kiro-cli", "acp"},
-		ACPArgs: []string{"--trust-all-tools", "--model", "{{.Model}}"},
+		ACPCmd:             []string{"kiro-cli", "acp"},
+		ACPArgs:            []string{"--model", "{{.Model}}"},
+		ACPAutoApproveArgs: []string{"--trust-all-tools"},
 	},
 
 	"omp": {
 		Name: "omp", Binary: "omp",
-		ToolCallGated:     ToolCall{Name: "bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated:     ToolCall{Name: "bash", Args: gatedShellArgs},
 		InstallCmd:        []string{"npm", "install", "-g", "@oh-my-pi/pi-coding-agent"},
 		APIFormat:         OpenAI,
 		EnvVars:           map[string]string{},
@@ -337,7 +343,7 @@ var All = map[string]Harness{
 	},
 	"hermes": {
 		Name: "hermes", Binary: "hermes",
-		ToolCallGated:  ToolCall{Name: "terminal", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated:  ToolCall{Name: "terminal", Args: gatedShellArgs},
 		InstallCmd:     []string{"pip", "install", "--break-system-packages", "hermes-agent[acp]"},
 		InstallBinDirs: []string{".local/bin"},
 		APIFormat:      OpenAI,
@@ -370,10 +376,10 @@ var All = map[string]Harness{
 		tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
 		`export default { id: "belt", server: BeltPlugin };`),
 		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
-		"bash", `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`),
+		"bash", gatedShellArgs),
 	"kimi": {
 		Name: "kimi", Binary: "kimi",
-		ToolCallGated: ToolCall{Name: "Bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated: ToolCall{Name: "Bash", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@moonshot-ai/kimi-code"},
 		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
@@ -406,7 +412,7 @@ var All = map[string]Harness{
 	},
 	"goose": {
 		Name: "goose", Binary: "goose",
-		ToolCallGated:  ToolCall{Name: "shell", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated:  ToolCall{Name: "shell", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "mkdir -p $HOME/.local/bin && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/goose-x86_64-unknown-linux-gnu.tar.bz2 | tar -xj --strip-components=0 -C $HOME/.local/bin"},
 		InstallBinDirs: []string{".local/bin"},
 		PluginManifest: ".agents/plugins/belt/plugin.json",
@@ -446,7 +452,7 @@ var All = map[string]Harness{
 	},
 	"gemini": {
 		Name: "gemini", Binary: "gemini",
-		ToolCallGated: ToolCall{Name: "run_shell_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated: ToolCall{Name: "run_shell_command", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@google/gemini-cli"},
 		DetectEnvVars: []string{"GEMINI_CLI"},
 		APIFormat:     Gemini,
@@ -496,7 +502,7 @@ var All = map[string]Harness{
 	},
 	"qwen": {
 		Name: "qwen", Binary: "qwen",
-		ToolCallGated: ToolCall{Name: "run_shell_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		ToolCallGated: ToolCall{Name: "run_shell_command", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@qwen-code/qwen-code"},
 		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
@@ -527,14 +533,18 @@ var All = map[string]Harness{
 		ExitCommand:             "/exit",
 		CompactCommand:          "/compress",
 		ACPCmd:                  []string{"qwen", "--acp"},
-		ACPArgs:                 []string{"--auth-type", "openai", "--yolo", "--model", "{{.Model}}"},
+		ACPArgs:                 []string{"--auth-type", "openai", "--model", "{{.Model}}"},
+		ACPAutoApproveArgs:      []string{"--yolo"},
 	},
 	"opencode": withGatedTool(withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".config/opencode/plugins"),
 		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
-		"bash", `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`),
+		"bash", gatedShellArgs),
 	"droid": {
 		Name: "droid", Binary: "droid",
-		ToolCallGated: ToolCall{Name: "Execute", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		// droid mangles the project path into the directory name.
+		SessionDir:    "{{.HomeDir}}/.factory/sessions/{{.MangledRepoDir}}",
+		SessionExt:    ".jsonl",
+		ToolCallGated: ToolCall{Name: "Execute", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "droid"},
 		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
@@ -591,10 +601,11 @@ var All = map[string]Harness{
 		// through the JSON-RPC worker the TUI drives, the only exec mode that
 		// runs the prompt hook. Headless deliberately tests plain exec, so
 		// without this nothing exercised the path that works.
-		SDKCmd:  []string{"droid", "exec"},
-		SDKArgs: []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
-		ACPCmd:  []string{"droid", "exec", "--output-format", "acp"},
-		ACPArgs: []string{"--auto", "high", "-m", "{{.Model}}"},
+		SDKCmd:             []string{"droid", "exec"},
+		SDKArgs:            []string{"--auto", "high", "-m", "{{.Model}}", "-o", "stream-jsonrpc"},
+		ACPCmd:             []string{"droid", "exec", "--output-format", "acp"},
+		ACPArgs:            []string{"-m", "{{.Model}}"},
+		ACPAutoApproveArgs: []string{"--auto", "high"},
 	},
 
 	// IDE-only agents: detection and hook install only, no test support.
@@ -619,9 +630,9 @@ var All = map[string]Harness{
 		ToolCallName: "read",
 		ToolCallArgs: `{"path":"README.md"}`,
 		HookFormat:   JSONFlat,
-		ServerRequestedHooks: map[string][]string{
-			"headless":    {"PROMPT", "STOP", "PRE_COMPACT"},
-			"interactive": {"PRE_COMPACT"},
+		ServerRequestedHooks: map[Mode][]string{
+			ModeHeadless:    {PromptSubmit.Tag(), Stop.Tag(), PreCompact.Tag()},
+			ModeInteractive: {PreCompact.Tag()},
 		},
 		HookConfigDir: ".cursor",
 		HookFileName:  "hooks.json",
@@ -730,33 +741,40 @@ var configDirEnvs = map[string]string{
 	"opencode": "XDG_CONFIG_HOME",
 }
 
+// decorate applies f to a registered harness, and refuses to invent one.
+//
+// The satellite tables are keyed by the same names as All, and one of these
+// loops used to read All[name] without checking: a typo there inserted a
+// zero-valued Harness under the misspelled name, which then looked like an
+// agent with no binary, no hooks and no events.
+func decorate(table string, name string, f func(*Harness)) {
+	h, ok := All[name]
+	if !ok {
+		panic(table + ": unknown harness " + name)
+	}
+	f(&h)
+	All[name] = h
+}
+
 func init() {
 	for name, dir := range skillsDirs {
-		h, ok := All[name]
-		if !ok {
-			panic("skillsDirs: unknown harness " + name)
-		}
-		if h.SkillsDir == "" {
-			h.SkillsDir = dir
-		}
-		All[name] = h
+		decorate("skillsDirs", name, func(h *Harness) {
+			if h.SkillsDir == "" {
+				h.SkillsDir = dir
+			}
+		})
 	}
 	for name, env := range configDirEnvs {
-		h := All[name]
-		h.ConfigDirEnv = env
-		All[name] = h
+		decorate("configDirEnvs", name, func(h *Harness) { h.ConfigDirEnv = env })
 	}
 	for name, f := range instructionFiles {
-		h, ok := All[name]
-		if !ok {
-			panic("instructionFiles: unknown harness " + name)
-		}
-		h.InstructionFile = f.User
-		h.ProjectInstructionFile = f.Project
-		h.InstructionFrontmatter = f.Frontmatter
-		h.InstructionMaxBytes = f.MaxBytes
-		h.InstructionNote = f.Note
-		All[name] = h
+		decorate("instructionFiles", name, func(h *Harness) {
+			h.InstructionFile = f.User
+			h.ProjectInstructionFile = f.Project
+			h.InstructionFrontmatter = f.Frontmatter
+			h.InstructionMaxBytes = f.MaxBytes
+			h.InstructionNote = f.Note
+		})
 	}
 }
 
