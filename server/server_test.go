@@ -226,3 +226,41 @@ func TestLogEndpoints(t *testing.T) {
 		t.Fatalf("log not cleared: %s", data)
 	}
 }
+
+// The registry needs each agent's own tool names to provoke a permission
+// request, and guessing twelve of them is how a probe ends up measuring
+// nothing. These are read off the wire instead, from the shapes agents
+// actually send: OpenAI's function envelope, Anthropic's flat tools, and
+// Gemini's functionDeclarations.
+func TestDeclaredToolsReadsEachWireShape(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"openai function envelope", `{"tools":[{"type":"function","function":{"name":"shell","parameters":{}}}]}`, "shell"},
+		{"anthropic flat tools", `{"tools":[{"name":"Write","input_schema":{}}]}`, "Write"},
+		{"gemini function declarations", `{"functionDeclarations":[{"name":"write_file"}]}`, "write_file"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := New()
+			s.log = []LogEntry{{Body: []byte(c.body)}}
+			got := s.DeclaredTools()
+			if len(got) != 1 || got[0] != c.want {
+				t.Errorf("DeclaredTools() = %v, want [%s]", got, c.want)
+			}
+		})
+	}
+
+	// A tool named in conversation history is not a declaration. The mock once
+	// served a prepared call to a request that never offered the tool, and the
+	// agent answered "Tool not found".
+	t.Run("history is not a declaration", func(t *testing.T) {
+		s := New()
+		s.log = []LogEntry{{Body: []byte(`{"messages":[{"role":"user","content":"use the shell tool"},{"name":"shell"}]}`)}}
+		if got := s.DeclaredTools(); len(got) != 0 {
+			t.Errorf("DeclaredTools() = %v, want none", got)
+		}
+	})
+}

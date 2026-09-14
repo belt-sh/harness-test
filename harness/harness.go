@@ -142,6 +142,15 @@ type Harness struct {
 	// Keyed like KnownIssues: "headless", "interactive", "acp", "sdk".
 	ToolCallByMode map[string]ToolCall
 
+	// ToolCallGated is a tool this agent is expected to ask its client about:
+	// a write or a shell command, not a read. Agents run reads without
+	// consulting anyone, so a probe that wants to see a permission request has
+	// to ask for something the agent actually gates. Names are read off the
+	// wire with HARNESS_DUMP_TOOLS rather than guessed, because a tool an
+	// agent does not declare is answered with "tool not found" and nothing
+	// runs.
+	ToolCallGated ToolCall
+
 	// Pre-flight config files (auth, trust, provider config, permissions)
 	ConfigFiles    []ConfigFile
 	TokenHashInput string // if set, {{.TokenHash16}} = sha256(this)[:16] (kimi auth)

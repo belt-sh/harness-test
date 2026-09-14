@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -698,6 +699,87 @@ func (s *MockServer) bodyOffersTool(body []byte) bool {
 	}
 	walk(doc)
 	return found
+}
+
+// DeclaredTools is every tool name the agent offered the model, across all
+// requests recorded since the last ClearLog.
+//
+// Which tools an agent declares is knowledge this registry needs and cannot
+// guess: an agent only asks its client for permission when it is about to do
+// something it gates, and the tool name it gates is its own. Reading them off
+// the wire beats writing twelve guesses into the registry.
+func (s *MockServer) DeclaredTools() []string {
+	s.mu.Lock()
+	entries := make([]LogEntry, len(s.log))
+	copy(entries, s.log)
+	s.mu.Unlock()
+
+	seen := map[string]bool{}
+	for _, e := range entries {
+		for _, n := range toolNamesIn(e.Body) {
+			seen[n] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// toolNamesIn collects the name of every tool declared in a request. Only
+// "tools" and "functionDeclarations" sections are searched, for the same
+// reason bodyOffersTool confines itself to them: a tool name in conversation
+// history is not a declaration.
+func toolNamesIn(body []byte) []string {
+	var doc any
+	if json.Unmarshal(body, &doc) != nil {
+		return nil
+	}
+	var names []string
+	var collect func(any)
+	collect = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			// A tool is declared either flat ({"name":...}) or wrapped in the
+			// OpenAI function envelope ({"function":{"name":...}}).
+			if fn, ok := t["function"].(map[string]any); ok {
+				if n, ok := fn["name"].(string); ok && n != "" {
+					names = append(names, n)
+				}
+			}
+			if n, ok := t["name"].(string); ok && n != "" {
+				names = append(names, n)
+			}
+			for _, sub := range t {
+				collect(sub)
+			}
+		case []any:
+			for _, sub := range t {
+				collect(sub)
+			}
+		}
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			for k, sub := range t {
+				if k == "tools" || k == "functionDeclarations" {
+					collect(sub)
+					continue
+				}
+				walk(sub)
+			}
+		case []any:
+			for _, sub := range t {
+				walk(sub)
+			}
+		}
+	}
+	walk(doc)
+	return names
 }
 
 // SetRequestedHooks tells the mock which hook events to request from an agent

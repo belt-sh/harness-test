@@ -20,6 +20,13 @@ func withTSPluginExport(h Harness, export string) Harness {
 	return h
 }
 
+// withGatedTool names the tool this agent is expected to ask permission for,
+// for harnesses built by a helper rather than written out as a literal.
+func withGatedTool(h Harness, name, args string) Harness {
+	h.ToolCallGated = ToolCall{Name: name, Args: args}
+	return h
+}
+
 func withACPProvider(h Harness, cmd []string, args []string) Harness {
 	h = withACP(h, cmd, args)
 	h.ACPNeedsTempHome = true
@@ -164,6 +171,7 @@ var All = map[string]Harness{
 	},
 	"copilot": {
 		Name: "copilot", Binary: "copilot",
+		ToolCallGated: ToolCall{Name: "bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:    []string{"npm", "install", "-g", "@github/copilot"},
 		DetectEnvVars: []string{"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN"},
 		APIFormat:     OpenAI,
@@ -189,6 +197,7 @@ var All = map[string]Harness{
 	},
 	"grok": {
 		Name: "grok", Binary: "grok",
+		ToolCallGated:  ToolCall{Name: "run_terminal_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://x.ai/cli/install.sh | bash"},
 		InstallBinDirs: []string{".grok/bin"},
 		APIFormat:      Responses,
@@ -250,6 +259,7 @@ var All = map[string]Harness{
 	},
 	"kiro": {
 		Name: "kiro", Binary: "kiro-cli",
+		ToolCallGated:  ToolCall{Name: "shell", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://cli.kiro.dev/install | bash"},
 		InstallBinDirs: []string{".local/bin"},
 		APIFormat:      OpenAI,
@@ -301,6 +311,7 @@ var All = map[string]Harness{
 
 	"omp": {
 		Name: "omp", Binary: "omp",
+		ToolCallGated:     ToolCall{Name: "bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:        []string{"npm", "install", "-g", "@oh-my-pi/pi-coding-agent"},
 		APIFormat:         OpenAI,
 		EnvVars:           map[string]string{},
@@ -326,6 +337,7 @@ var All = map[string]Harness{
 	},
 	"hermes": {
 		Name: "hermes", Binary: "hermes",
+		ToolCallGated:  ToolCall{Name: "terminal", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:     []string{"pip", "install", "--break-system-packages", "hermes-agent[acp]"},
 		InstallBinDirs: []string{".local/bin"},
 		APIFormat:      OpenAI,
@@ -354,14 +366,16 @@ var All = map[string]Harness{
 		ExitCommand:       "/exit",
 		ACPCmd:            []string{"hermes", "acp"},
 	},
-	"kilo": withACPProvider(withTSPluginExport(
+	"kilo": withGatedTool(withACPProvider(withTSPluginExport(
 		tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
 		`export default { id: "belt", server: BeltPlugin };`),
 		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
+		"bash", `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`),
 	"kimi": {
 		Name: "kimi", Binary: "kimi",
-		InstallCmd: []string{"npm", "install", "-g", "@moonshot-ai/kimi-code"},
-		APIFormat:  OpenAI,
+		ToolCallGated: ToolCall{Name: "Bash", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		InstallCmd:    []string{"npm", "install", "-g", "@moonshot-ai/kimi-code"},
+		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
 			"KIMI_CODE_BASE_URL": "{{.BaseURL}}/coding/v1",
 		},
@@ -392,6 +406,7 @@ var All = map[string]Harness{
 	},
 	"goose": {
 		Name: "goose", Binary: "goose",
+		ToolCallGated:  ToolCall{Name: "shell", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:     []string{"sh", "-c", "mkdir -p $HOME/.local/bin && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/goose-x86_64-unknown-linux-gnu.tar.bz2 | tar -xj --strip-components=0 -C $HOME/.local/bin"},
 		InstallBinDirs: []string{".local/bin"},
 		PluginManifest: ".agents/plugins/belt/plugin.json",
@@ -431,6 +446,7 @@ var All = map[string]Harness{
 	},
 	"gemini": {
 		Name: "gemini", Binary: "gemini",
+		ToolCallGated: ToolCall{Name: "run_shell_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 		InstallCmd:    []string{"npm", "install", "-g", "@google/gemini-cli"},
 		DetectEnvVars: []string{"GEMINI_CLI"},
 		APIFormat:     Gemini,
@@ -480,8 +496,9 @@ var All = map[string]Harness{
 	},
 	"qwen": {
 		Name: "qwen", Binary: "qwen",
-		InstallCmd: []string{"npm", "install", "-g", "@qwen-code/qwen-code"},
-		APIFormat:  OpenAI,
+		ToolCallGated: ToolCall{Name: "run_shell_command", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		InstallCmd:    []string{"npm", "install", "-g", "@qwen-code/qwen-code"},
+		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
 			"OPENAI_BASE_URL": "{{.BaseURL}}/v1",
 		},
@@ -512,12 +529,14 @@ var All = map[string]Harness{
 		ACPCmd:                  []string{"qwen", "--acp"},
 		ACPArgs:                 []string{"--auth-type", "openai", "--yolo", "--model", "{{.Model}}"},
 	},
-	"opencode": withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".config/opencode/plugins"),
+	"opencode": withGatedTool(withACPProvider(tsPluginHarness("opencode", "opencode", "opencode-ai", ".config/opencode/plugins"),
 		[]string{"opencode", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
+		"bash", `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`),
 	"droid": {
 		Name: "droid", Binary: "droid",
-		InstallCmd: []string{"npm", "install", "-g", "droid"},
-		APIFormat:  OpenAI,
+		ToolCallGated: ToolCall{Name: "Execute", Args: `{"command":"rm -rf /tmp/gated-probe-does-not-exist"}`},
+		InstallCmd:    []string{"npm", "install", "-g", "droid"},
+		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
 			"FACTORY_API_BASE_URL":    "{{.BaseURL}}",
 			"FACTORY_API_KEY":         "fk-mock-key-0123456789abcdef0123",

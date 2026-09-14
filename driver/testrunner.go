@@ -241,6 +241,10 @@ func (r *TestRunner) Run() Result {
 			r.resetPhase("acp")
 			r.probeToolCallInFlight()
 		}
+		if os.Getenv("HARNESS_ACP_COMPACT") != "" {
+			r.resetPhase("acp")
+			r.probeCompactedResume()
+		}
 	}
 	if r.mode == ModeSDK {
 		r.resetPhase("sdk")
@@ -271,14 +275,29 @@ func (r *TestRunner) prepareToolCall(mode string) {
 // serve a tool call, but not the only one: the in-flight probe needs a tool
 // call to have something to ask permission for.
 func (r *TestRunner) armToolCall(mode string) bool {
-	if r.server == nil {
-		return false
-	}
 	name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
 	if o, ok := r.harness.ToolCallByMode[mode]; ok {
 		name, args = o.Name, o.Args
 	}
-	if name == "" {
+	return r.armTool(name, args)
+}
+
+// armGatedToolCall arms the tool this agent is expected to ask permission for,
+// falling back to its ordinary one. It reports the tool armed, so a result can
+// say what the agent was asked to do rather than implying it was asked to do
+// anything.
+func (r *TestRunner) armGatedToolCall() (tool string, gated bool) {
+	if tc := r.harness.ToolCallGated; tc.Name != "" && r.armTool(tc.Name, tc.Args) {
+		return tc.Name, true
+	}
+	if !r.armToolCall("acp") {
+		return "", false
+	}
+	return r.toolMatcher(), false
+}
+
+func (r *TestRunner) armTool(name, args string) bool {
+	if r.server == nil || name == "" {
 		return false
 	}
 	r.server.PrepareToolCall(name, r.expand(args), r.harness.ToolCallPath)
@@ -1072,6 +1091,12 @@ func (r *TestRunner) runACP() {
 
 	r.pass("ACP session completed")
 
+	if os.Getenv("HARNESS_DUMP_TOOLS") != "" {
+		// What this agent offered the model, for picking the tool the
+		// in-flight probe should ask permission for.
+		fmt.Printf("  [tools] %s declares: %s\n", r.harness.Name, strings.Join(r.server.DeclaredTools(), " "))
+	}
+
 }
 
 // acpInvocation is the command that starts this agent in ACP mode, expanded.
@@ -1309,6 +1334,125 @@ func sameKinds(a, b []string) bool {
 	return true
 }
 
+// probeCompactedResume asks what a resumed session gives the model after the
+// agent has compacted it.
+//
+// The question exists because a resume can be genuine at the protocol level
+// and still not return the conversation: qwen replayed the user's own turn
+// after a /compress and sent the model a summary, so both the replay check and
+// the capability agreed while the original wording was gone. Two outcomes
+// matter and they are very different for a runner. If the model receives the
+// summary, compaction-then-resume is lossy by design and safe to build on. If
+// it receives nothing, resuming a compacted session silently discards the
+// conversation, and a runner has to refuse rather than pretend.
+//
+// Opt in with HARNESS_ACP_COMPACT. Only agents with a CompactCommand can be
+// asked.
+func (r *TestRunner) probeCompactedResume() {
+	if len(r.harness.ACPCmd) == 0 {
+		return
+	}
+	if r.harness.CompactCommand == "" {
+		r.skip("compaction: " + r.harness.Name + " has no compaction command, so there is nothing to compact")
+		return
+	}
+	fmt.Println("[probe] resuming a session the agent compacted")
+
+	bin, args, dir := r.acpInvocation()
+	r.armToolCall("acp")
+
+	first := NewACPDriver(bin, args, dir, r.envIn(dir))
+	if err := first.Start(); err != nil {
+		r.skip("compaction: ACP start: " + err.Error())
+		return
+	}
+	time.Sleep(2 * time.Second)
+	if err := first.SendPrompt(promptText); err != nil {
+		first.Kill()
+		r.skip("compaction: ACP prompt: " + err.Error())
+		return
+	}
+	first.WaitForResponse([]string{"mock", "hello", "Hello", "codename", "server"}, 60*time.Second)
+	first.WaitIdle(2 * time.Second)
+
+	// The compaction itself. Closed rather than killed: this probe is about
+	// what compaction costs, and a kill would confound it with durability.
+	before := len(r.entries())
+	first.SendCommand(r.harness.CompactCommand)
+	first.WaitIdle(4 * time.Second)
+	if len(r.entries()) <= before {
+		// Nothing reached the model, so the agent did not compact. Reporting
+		// the resume anyway would be reporting an uncompacted session.
+		first.Close()
+		r.skip("compaction: " + r.harness.Name + " sent nothing to the model for " + r.harness.CompactCommand + ", so the session was never compacted")
+		return
+	}
+	r.pass("compaction: " + r.harness.Name + " ran " + r.harness.CompactCommand)
+
+	sessionID := first.SessionID()
+	first.Close()
+	if sessionID == "" {
+		r.skip("compaction: the agent reported no session id to resume")
+		return
+	}
+
+	resumed := NewACPDriver(bin, args, dir, r.envIn(dir))
+	resumed.ResumeSessionID = sessionID
+	if err := resumed.Start(); err != nil {
+		r.skip(fmt.Sprintf("compaction: %s does not resume a compacted session (%v)", r.harness.Name, err))
+		resumed.Close()
+		return
+	}
+	defer resumed.Close()
+	r.reportCompactedContext(resumed)
+}
+
+// reportCompactedContext classifies what the model was sent after a compacted
+// session was resumed: the original wording, something else, or nothing but
+// the new prompt.
+func (r *TestRunner) reportCompactedContext(resumed *ACPDriver) {
+	name := r.harness.Name
+	before := len(r.entries())
+	if err := resumed.SendPrompt(resumeFollowUp); err != nil {
+		r.skip("compaction: prompting the resumed session failed: " + err.Error())
+		return
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for len(r.entries()) <= before && resumed.Alive() && !resumed.TurnDone() && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
+	resumed.WaitIdle(2 * time.Second)
+
+	after := r.entries()
+	if len(after) <= before {
+		r.skip("compaction: the resumed session sent nothing to the model, so there is nothing to read")
+		return
+	}
+
+	carried, widest := false, 0
+	for _, e := range after[before:] {
+		body := string(e.Body)
+		if strings.Contains(body, promptText) {
+			carried = true
+		}
+		if n := strings.Count(body, `"role"`); n > widest {
+			widest = n
+		}
+	}
+	switch {
+	case carried:
+		// Either the agent kept the original wording through compaction, or
+		// the compaction did not touch this turn.
+		r.pass(fmt.Sprintf("compaction: %s still sent the original wording after compacting, so nothing was lost", name))
+	case widest > 1:
+		// Lossy by design, which is what compaction is for.
+		r.pass(fmt.Sprintf("compaction: %s sent the model %d message(s) but not the original wording, so the resume carries a summary", name, widest))
+	default:
+		// The dangerous one: the resume worked and the conversation is gone.
+		r.fail(fmt.Sprintf("compaction: %s sent the model only the new prompt, so resuming a compacted session loses the conversation", name))
+	}
+}
+
 // probeToolCallInFlight asks what an agent does about an approval nobody ever
 // gave: park a permission request, kill the client while the tool call is
 // still waiting on it, then attach to the same session from a new process.
@@ -1330,15 +1474,17 @@ func (r *TestRunner) probeToolCallInFlight() {
 
 	// The main ACP phase consumed the prepared tool call, and this turn needs
 	// its own: without a tool there is nothing to ask permission for.
-	if !r.armToolCall("acp") {
+	// Named in every line below, because whether an agent asks depends on what
+	// it was asked to do: agents run reads without consulting anyone, so a
+	// probe armed with a read measures nothing about gating.
+	tool, gated := r.armGatedToolCall()
+	if tool == "" {
 		r.skip("in-flight: no tool call is defined for " + r.harness.Name + ", so the mock cannot provoke an approval")
 		return
 	}
-	// Named in every line below, because whether an agent asks depends on what
-	// it was asked to do. Most of this registry's tool calls read a file,
-	// which agents allow without asking; gemini's writes one, and gemini asks.
-	// A "never asks" result is about this tool, not about the agent.
-	tool := r.toolMatcher()
+	if !gated {
+		r.skip("in-flight: no gated tool is known for " + r.harness.Name + ", so this asks it to run " + tool + ", which agents do not gate")
+	}
 
 	// Without this the probe would measure the harness, not the agent: the
 	// registry tells several agents to approve everything so unattended runs
