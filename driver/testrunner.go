@@ -89,6 +89,15 @@ func (r *TestRunner) entries() []server.LogEntry {
 	return r.server.Log()
 }
 
+// entryCount is len(entries()) without copying every recorded request body,
+// which a poll loop would otherwise do on every tick.
+func (r *TestRunner) entryCount() int {
+	if r.testEntries != nil || r.server == nil {
+		return len(r.testEntries)
+	}
+	return r.server.LogCount()
+}
+
 const hookLogPath = "/tmp/belt-hook-events.log"
 
 // promptText is the one question every mode asks; the answer is the codename
@@ -813,7 +822,7 @@ func (r *TestRunner) runInteractive() {
 	// the runner is still dismissing onboarding screens, so count answers from
 	// before launch; otherwise the wait below looks for a second answer that
 	// never comes and sits out its whole timeout (kiro: 55s became 2m23s).
-	answeredAtLaunch := r.server.AnswersServed()
+	launchMark := r.markTurn(true)
 	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.envIn(dir))
 	if err != nil {
 		r.fail("PTY start: " + err.Error())
@@ -875,14 +884,14 @@ func (r *TestRunner) runInteractive() {
 	}
 	r.pass("TUI started")
 
-	answered := answeredAtLaunch
+	mark := launchMark
 	if !r.harness.InteractivePromptInArgs {
 		waitScreenQuiet(session, 1500*time.Millisecond, 15*time.Second)
-		answered = r.server.AnswersServed()
+		mark = r.markTurn(true)
 		r.sendLine(session, promptText)
 	}
-	r.step("waiting for answer > %d (served %d)", answered, r.server.AnswersServed())
-	r.waitTurnSettled(answered, 90*time.Second)
+	r.step("waiting for answer > %d (served %d)", mark.answers, r.server.AnswersServed())
+	r.waitTurnSettled(mark, 90*time.Second)
 	r.step("turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
 	if os.Getenv("HARNESS_DEBUG") != "" && r.server.LogCount() == 0 {
 		scr := stripANSI(session.Output())
@@ -892,11 +901,12 @@ func (r *TestRunner) runInteractive() {
 		fmt.Printf("    [step] no request yet; screen tail:\n%s\n", scr)
 	}
 	if r.harness.CompactCommand != "" {
-		answered = r.server.AnswersServed()
+		mark = r.markTurn(true)
 		r.step("typing second prompt")
 		r.sendLine(session, "Tell me more about the project.")
-		r.waitTurnSettled(answered, 60*time.Second)
+		r.waitTurnSettled(mark, 60*time.Second)
 		r.step("second turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
+		compactMark := r.markTurn(false)
 		r.sendLine(session, r.harness.CompactCommand)
 		session.WaitForAny([]string{"compact", "Compact", "compress", "Compress", "summar"}, 15*time.Second)
 		if r.harness.CompactConfirm {
@@ -904,7 +914,7 @@ func (r *TestRunner) runInteractive() {
 				session.SendLine("")
 			}
 		}
-		r.waitTurnSettled(-1, 30*time.Second)
+		r.waitTurnSettled(compactMark, 30*time.Second)
 		r.step("compaction settled (requests %d)", r.server.LogCount())
 	}
 	if !r.harness.InteractivePromptInArgs && r.harness.ExitCommand != "" {
@@ -1225,13 +1235,13 @@ func (r *TestRunner) reportReplayShape(load acp.LoadResult, replayed, openers []
 // The wait ends on a request arriving or the turn ending — not on words in the
 // answer, which is both the wrong signal and a slow one.
 func (r *TestRunner) askResumed(d *ACPDriver, label string) ([]server.LogEntry, bool) {
-	before := len(r.entries())
+	before := r.entryCount()
 	if err := d.SendPrompt(resumeFollowUp); err != nil {
 		r.skip(label + ": prompting the resumed session failed: " + err.Error())
 		return nil, false
 	}
 	deadline := time.Now().Add(60 * time.Second)
-	for len(r.entries()) <= before && d.Alive() && !d.TurnDone() && time.Now().Before(deadline) {
+	for r.entryCount() <= before && d.Alive() && !d.TurnDone() && time.Now().Before(deadline) {
 		time.Sleep(250 * time.Millisecond)
 	}
 	d.WaitIdle(2 * time.Second)
@@ -1344,7 +1354,7 @@ func (r *TestRunner) probeCompactedResume() {
 
 	// The compaction itself. Closed rather than killed: this probe is about
 	// what compaction costs, and a kill would confound it with durability.
-	before := len(r.entries())
+	before := r.entryCount()
 	widestBefore := widestRequest(r.entries())
 	first.SendCommand(r.harness.CompactCommand)
 	first.WaitIdle(4 * time.Second)
@@ -1706,14 +1716,7 @@ func (r *TestRunner) dumpHookLogs(phase string) {
 }
 
 func (r *TestRunner) checkBeltHookEvents(phase string) {
-	beltLog := ""
-	if data, err := os.ReadFile(filepath.Join(r.home, ".belt", "hooks.log")); err == nil {
-		beltLog = string(data)
-	}
-	if data, err := os.ReadFile(hookLogPath); err == nil {
-		beltLog += string(data)
-	}
-
+	beltLog := r.hookLogText()
 	ptyContent := r.strippedOutput()
 
 	for _, e := range r.eventEntries() {
@@ -1895,14 +1898,62 @@ func (r *TestRunner) requestHooksFor(mode Mode) {
 	}
 }
 
-// waitTurnSettled waits for a turn to finish: the mock has served an answer
-// beyond `after` (pass -1 to skip that), and then neither the mock's request
-// log nor the hook event log has changed for a few seconds, so trailing hooks
-// (stop, compaction; belt's take seconds) are done before the session is cut.
-func (r *TestRunner) waitTurnSettled(after int, timeout time.Duration) {
+// hookLogText is everything the hooks have written so far. Which files those
+// are, and what a fired event looks like in them, is the hook source's
+// business: the mock hooks append this suite's tag, belt writes its own event
+// name in brackets to a log of its own.
+func (r *TestRunner) hookLogText() string {
+	var b strings.Builder
+	if r.hookSource == HooksBelt {
+		if data, err := os.ReadFile(filepath.Join(r.home, ".belt", "hooks.log")); err == nil {
+			b.Write(data)
+		}
+	}
+	if data, err := os.ReadFile(hookLogPath); err == nil {
+		b.Write(data)
+	}
+	return b.String()
+}
+
+// stopsLogged counts the stop hooks that have fired, or -1 when this agent
+// has no stop hook and there is therefore no signal to wait for.
+func (r *TestRunner) stopsLogged() int {
+	if harness.Stop.AgentName(r.harness) == "" {
+		return -1
+	}
+	marker := TagStop
+	if r.hookSource == HooksBelt {
+		marker = "[" + string(harness.Stop) + "]"
+	}
+	return strings.Count(r.hookLogText(), marker)
+}
+
+// turnMark is the counters taken before a prompt goes in, so waitTurnSettled
+// can tell this turn's answer and stop hook from the previous turn's.
+type turnMark struct {
+	answers int // -1: no answer expected, as for a slash command
+	stops   int // -1: this agent has no stop hook
+}
+
+// markTurn records where a turn starts. Take it before sending the prompt: a
+// fast agent can fire its stop hook while the caller is still setting up.
+func (r *TestRunner) markTurn(expectAnswer bool) turnMark {
+	m := turnMark{answers: -1, stops: r.stopsLogged()}
+	if expectAnswer {
+		m.answers = r.server.AnswersServed()
+	}
+	return m
+}
+
+// waitTurnSettled waits for the turn to end: first the model's answer, then
+// the agent's own stop hook. A stop hook that fired since the mark is positive
+// evidence the turn is over and ends the wait immediately. Without one — the
+// agent has no stop hook, or it never fires — it falls back to waiting out a
+// quiet window, which costs `quiet` on every turn of every such agent.
+func (r *TestRunner) waitTurnSettled(m turnMark, timeout time.Duration) {
 	const quiet = 4 * time.Second
 	deadline := time.Now().Add(timeout)
-	for after >= 0 && r.server.AnswersServed() <= after && time.Now().Before(deadline) {
+	for m.answers >= 0 && r.server.AnswersServed() <= m.answers && time.Now().Before(deadline) {
 		time.Sleep(250 * time.Millisecond)
 	}
 	fingerprint := func() string {
@@ -1914,6 +1965,9 @@ func (r *TestRunner) waitTurnSettled(after int, timeout time.Duration) {
 	}
 	last, since := fingerprint(), time.Now()
 	for time.Now().Before(deadline) && time.Since(since) < quiet {
+		if m.stops >= 0 && r.stopsLogged() > m.stops {
+			return
+		}
 		time.Sleep(250 * time.Millisecond)
 		if fp := fingerprint(); fp != last {
 			last, since = fp, time.Now()
@@ -1933,10 +1987,10 @@ func (r *TestRunner) step(format string, a ...any) {
 // trust dialog) lost the first Enter, so the prompt sat in the composer.
 func waitScreenQuiet(session *PTYSession, quiet, max time.Duration) {
 	deadline := time.Now().Add(max)
-	last, since := len(session.Output()), time.Now()
+	last, since := session.Len(), time.Now()
 	for time.Now().Before(deadline) && time.Since(since) < quiet {
 		time.Sleep(100 * time.Millisecond)
-		if n := len(session.Output()); n != last {
+		if n := session.Len(); n != last {
 			last, since = n, time.Now()
 		}
 	}

@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/belt-sh/harness-test/harness"
@@ -76,5 +78,36 @@ func TestMessageCountSeparatesCompactionFromAnOrdinaryTurn(t *testing.T) {
 	}
 	if widestRequest([]server.LogEntry{ordinary}) >= before {
 		t.Error("a request carrying less than the preceding turn should not read as a compaction")
+	}
+}
+
+// waitTurnSettled ends early on a stop hook that fired since the mark. The
+// mark has to be taken before the prompt goes in, and the marker it counts
+// differs by hook source: the mock hooks write the suite's tag, belt writes
+// its own event name in brackets.
+func TestStopsLoggedCountsTheHookSourcesOwnMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(func() { os.Remove(hookLogPath) })
+
+	os.WriteFile(hookLogPath, []byte("PROMPT\nSTOP\n"), 0644)
+	os.MkdirAll(filepath.Join(home, ".belt"), 0755)
+	os.WriteFile(filepath.Join(home, ".belt", "hooks.log"), []byte("[stop] done\n[stop] done\n"), 0644)
+
+	mock := &TestRunner{harness: harness.All["claude"], home: home, hookSource: HooksMock}
+	if got := mock.stopsLogged(); got != 1 {
+		t.Errorf("mock source: stopsLogged = %d, want 1", got)
+	}
+	belt := &TestRunner{harness: harness.All["claude"], home: home, hookSource: HooksBelt}
+	if got := belt.stopsLogged(); got != 2 {
+		t.Errorf("belt source: stopsLogged = %d, want 2", got)
+	}
+
+	// An agent with no stop hook has no signal, and must not be reported as
+	// "no stop seen yet" — that would end the wait the moment one appeared
+	// from something else.
+	noStop := harness.All["claude"]
+	noStop.Events.Stop = ""
+	if got := (&TestRunner{harness: noStop, home: home}).stopsLogged(); got != -1 {
+		t.Errorf("no stop hook: stopsLogged = %d, want -1", got)
 	}
 }
