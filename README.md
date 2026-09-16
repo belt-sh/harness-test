@@ -96,8 +96,20 @@ Registry: `instructionFiles`, `skillsDirs`, and `configDirEnvs` in `harness/regi
 | `{"additional_context":…}` | cursor (the prompt hook runs when the backend requests it; see below) |
 | `{"context":…}` | hermes |
 | plain stdout | kimi, kiro |
-| in-plugin (TS) | kilo, omp, opencode, pi |
+| plain stdout, read by the plugin | kilo, omp, opencode, pi |
 | none | goose (hooks are observation-only), grok (prompt and session-start stdout is read only for a block decision; its tool and Stop hooks can add context), windsurf (exit code only) |
+
+The four plugin agents have no stdout channel of their own: the generated `.ts`
+file runs the hook, reads its stdout and hands the text to the agent —
+`output.system.push(out)` for the plugin format, a returned `systemPrompt` for
+the extension format. Both ends of that were broken until 2026-09 and the suite
+could not see it, because `writeHooks` wrote its own TS file with the injection
+in it rather than installing belt's. It was testing a plugin no user ever got.
+belt's generator ran the command with `execSync` and discarded the result, and
+`belt plugin hook` printed its suggestions to stderr for exactly these agents.
+Every format now comes from `harness/install.go`, and
+`TestPluginContextChannelIsWiredIntoTheGeneratedFile` fails if a plugin channel
+stops reaching its sink.
 
 Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into belt's own agent, `~/.kiro/agents/belt.json`, and selects it with `chat.defaultAgent` in `~/.kiro/settings/cli.json` (project scope: `.kiro/agents/belt.json` and `.kiro/settings/cli.json`). kiro-cli 2.21 has two engines, and the V1 engine ignores a `kiro_default.json` override and runs its built-in agent, so the override earlier belt versions installed never fired on V1; `chat.defaultAgent` works on both, and install strips belt's entries from a leftover `kiro_default.json`. A default agent the user chose stays the default (`belt plugin doctor` reports it). belt's agent stands in for the built-in one, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; with it, the requests carry the same steering, README and skill descriptions as the built-in agent's. An existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries and the `chat.defaultAgent` it set.
 
