@@ -100,10 +100,7 @@ func detectConfigDirs(name string) []string {
 }
 
 // HooksTarget returns the hook file path relative to HOME (derived from registry).
-func HooksTarget(name string) string { return hooksTarget(name) }
-
-// hooksTarget returns the hook file path relative to HOME (derived from registry).
-func hooksTarget(name string) string {
+func HooksTarget(name string) string {
 	h, ok := All[name]
 	if !ok {
 		return ""
@@ -149,7 +146,7 @@ func DetectInstalled() []DetectResult {
 	return found
 }
 
-// Detect is an alias for DetectOne.
+// Deprecated: use DetectOne.
 func Detect(name string) DetectResult { return DetectOne(name) }
 
 func DetectOne(name string) DetectResult {
@@ -171,7 +168,7 @@ func runDetection(name, binary, home string) DetectResult {
 	if r.Binary != "" {
 		r.Version = getVersion(r.Binary)
 	}
-	if target := hooksTarget(name); target != "" && home != "" {
+	if target := HooksTarget(name); target != "" && home != "" {
 		r.HooksPath = filepath.Join(home, target)
 	}
 

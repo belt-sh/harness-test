@@ -23,6 +23,13 @@ const (
 	ContextPlugin                                // TS plugin/extension: context set in code, no stdout channel
 )
 
+// IsPlain reports whether the hook prints the text as-is rather than wrapping
+// it in an envelope. ContextPlugin is plain because the generated plugin file,
+// not the hook's stdout, is what hands the text to the agent.
+func (c ContextChannel) IsPlain() bool {
+	return c == ContextPlainText || c == ContextPlugin
+}
+
 func (c ContextChannel) String() string {
 	switch c {
 	case ContextPlainText:
@@ -68,12 +75,12 @@ var hookContexts = map[string]HookContext{
 	// PreToolUse, PostToolUse and Stop can add additionalContext.
 	"grok":     {SessionStart: ContextNone, PromptSubmit: ContextNone},
 	"hermes":   {SessionStart: ContextNone, PromptSubmit: ContextKey},
-	"kilo":     {SessionStart: ContextPlugin, PromptSubmit: ContextPlugin},
+	"kilo":     {PromptSubmit: ContextPlugin},
 	"kimi":     {SessionStart: ContextPlainText, PromptSubmit: ContextPlainText},
 	"kiro":     {SessionStart: ContextNone, PromptSubmit: ContextPlainText},
-	"omp":      {SessionStart: ContextPlugin, PromptSubmit: ContextPlugin},
-	"opencode": {SessionStart: ContextPlugin, PromptSubmit: ContextPlugin},
-	"pi":       {SessionStart: ContextPlugin, PromptSubmit: ContextPlugin},
+	"omp":      {PromptSubmit: ContextPlugin},
+	"opencode": {PromptSubmit: ContextPlugin},
+	"pi":       {PromptSubmit: ContextPlugin},
 	"qwen":     {SessionStart: ContextHookSpecific, PromptSubmit: ContextHookSpecific},
 	"windsurf": {SessionStart: ContextNone, PromptSubmit: ContextNone},
 }
@@ -98,9 +105,11 @@ func HookStdout(name, beltEvent, text string) (payload string, ok bool) {
 		return "", false
 	}
 	eventName := HookEvent(beltEvent).AgentName(h)
-	switch ContextChannelFor(name, beltEvent) {
-	case ContextPlainText:
+	ch := ContextChannelFor(name, beltEvent)
+	if ch.IsPlain() {
 		return text, true
+	}
+	switch ch {
 	case ContextHookSpecific:
 		return jsonObj(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": eventName, "additionalContext": text}}), true
 	case ContextAdditionalCamel:
@@ -121,9 +130,11 @@ func HookStdout(name, beltEvent, text string) (payload string, ok bool) {
 // It lives next to HookStdout so the shapes are written once. A second copy in
 // the test runner only knew four of them and silently ignored the rest.
 func HookContextText(name, beltEvent, payload string) (string, bool) {
-	switch ContextChannelFor(name, beltEvent) {
-	case ContextPlainText:
+	ch := ContextChannelFor(name, beltEvent)
+	if ch.IsPlain() {
 		return payload, !strings.HasPrefix(strings.TrimSpace(payload), "{")
+	}
+	switch ch {
 	case ContextHookSpecific:
 		return jsonField(payload, "hookSpecificOutput", "additionalContext")
 	case ContextAdditionalCamel:

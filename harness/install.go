@@ -11,7 +11,7 @@ import (
 // InstallScope determines where hooks are written.
 type InstallScope int
 
-// Scope is an alias for InstallScope (CLI compatibility).
+// Deprecated: use InstallScope.
 type Scope = InstallScope
 
 const (
@@ -34,16 +34,19 @@ type InstallResult struct {
 	Inactive string
 }
 
-// KnownAgentNames is an alias for KnownNames (CLI compatibility).
+// These names are what go/cli imported before harness/ was extracted out of
+// it. They forward to the canonical names and go away once go/cli is off them.
+
+// Deprecated: use KnownNames.
 func KnownAgentNames() []string { return KnownNames() }
 
-// InstallHooks is an alias for Install (CLI compatibility).
+// Deprecated: use Install.
 func InstallHooks(name string, scope InstallScope) InstallResult { return Install(name, scope) }
 
-// UninstallHooks removes belt hooks for a harness at the given scope.
+// Deprecated: use Uninstall.
 func UninstallHooks(name string, scope InstallScope) InstallResult { return Uninstall(name, scope) }
 
-// HookTemplate returns the generated hook configuration for an agent (CLI compatibility).
+// Deprecated: use HookConfig, which reports why generation failed.
 func HookTemplate(name string) string {
 	s, _ := HookConfig(name)
 	return s
@@ -70,7 +73,7 @@ func InstallWithCommand(name string, scope InstallScope, cmdFor HookCommand) Ins
 
 	switch scope {
 	case ScopeUser:
-		target := hooksTarget(name)
+		target := HooksTarget(name)
 		if target == "" {
 			return InstallResult{Harness: name, Error: fmt.Errorf("no user hook path for %s", name)}
 		}
@@ -170,7 +173,7 @@ func Uninstall(name string, scope InstallScope) InstallResult {
 	root := home
 	switch scope {
 	case ScopeUser:
-		target := hooksTarget(name)
+		target := HooksTarget(name)
 		if target == "" {
 			return InstallResult{Harness: name, Error: fmt.Errorf("no user hook path for %s", name)}
 		}
@@ -504,21 +507,51 @@ func generateYAML(h Harness, cmdFor HookCommand) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+// tsExecOpts keeps the hook command off the agent's own stdin. execSync
+// inherits it by default, and over ACP that is the JSON-RPC stream: a hook
+// that reads stdin eats the agent's input.
+const tsExecOpts = `{ timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }`
+
+// tsRun renders the execSync call for a hook that only needs to fire, with
+// its continuation lines indented to pad.
+func tsRun(cmd, pad string) string {
+	return fmt.Sprintf("const { execSync } = require(\"child_process\");\n%stry { execSync(\"%s\", %s); } catch {}",
+		pad, jsonEscape(cmd), tsExecOpts)
+}
+
+// tsRunCapture renders the execSync call for a hook whose stdout is context,
+// binding the trimmed output to `out` and running sink only when it is
+// non-empty. ContextPlugin agents have no stdout channel of their own, so the
+// plugin file is the only place the command's output can reach the model.
+func tsRunCapture(cmd, sink, pad string) string {
+	return fmt.Sprintf("const { execSync } = require(\"child_process\");\n"+
+		"%[4]stry {\n"+
+		"%[4]s  const out = execSync(\"%[1]s\", %[2]s).toString().trim();\n"+
+		"%[4]s  if (out) %[3]s\n"+
+		"%[4]s} catch {}",
+		jsonEscape(cmd), tsExecOpts, sink, pad)
+}
+
+// injectsContext reports whether the agent takes this event's hook output as
+// model context through the plugin file rather than through stdout.
+func injectsContext(h Harness, e HookEvent) bool {
+	return ContextChannelFor(h.Name, string(e)) == ContextPlugin
+}
+
 func generateTSExtension(h Harness, cmdFor HookCommand) string {
 	var handlers []string
 
-	add := func(event string, beltEvent HookEvent) {
-		if event == "" {
-			return
-		}
-		handlers = append(handlers, fmt.Sprintf(`  pi.on("%s", async () => {
-    const { execSync } = require("child_process");
-    try { execSync("%s", { timeout: 5000 }); } catch {}
-  });`, event, jsonEscape(cmdFor(beltEvent))))
-	}
-
 	for _, e := range h.Defined() {
-		add(e.AgentName(h), e)
+		event := e.AgentName(h)
+		if event == "" {
+			continue
+		}
+		if injectsContext(h, e) {
+			body := tsRunCapture(cmdFor(e), `return { systemPrompt: (event.systemPrompt || "") + "\n" + out };`, "    ")
+			handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async (event: any) => {\n    %s\n  });", event, body))
+			continue
+		}
+		handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async () => {\n    %s\n  });", event, tsRun(cmdFor(e), "    ")))
 	}
 
 	return fmt.Sprintf("export default function (pi: any) {\n%s\n}\n", strings.Join(handlers, "\n"))
@@ -527,32 +560,27 @@ func generateTSExtension(h Harness, cmdFor HookCommand) string {
 func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
 	var hooks []string
 
-	add := func(event string, beltEvent HookEvent) {
-		if event == "" {
-			return
-		}
-		hooks = append(hooks, fmt.Sprintf(`    "%s": async () => {
-      const { execSync } = require("child_process");
-      try { execSync("%s", { timeout: 5000 }); } catch {}
-    }`, event, jsonEscape(cmdFor(beltEvent))))
-	}
-
 	for _, e := range h.Defined() {
-		if e == Stop {
+		event := e.AgentName(h)
+		if event == "" || e == Stop {
 			// Stop is not a named hook in this format; it arrives through the
 			// generic event channel below.
 			continue
 		}
-		add(e.AgentName(h), e)
+		if injectsContext(h, e) {
+			body := tsRunCapture(cmdFor(e), "output.system.push(out);", "      ")
+			hooks = append(hooks, fmt.Sprintf("    \"%s\": async (_input: any, output: any) => {\n      %s\n    }", event, body))
+			continue
+		}
+		hooks = append(hooks, fmt.Sprintf("    \"%s\": async () => {\n      %s\n    }", event, tsRun(cmdFor(e), "      ")))
 	}
 
 	if stop := Stop.AgentName(h); stop != "" {
 		hooks = append(hooks, fmt.Sprintf(`    "event": async ({ event }: any) => {
       if (event && event.type === "%s") {
-        const { execSync } = require("child_process");
-        try { execSync("%s", { timeout: 5000 }); } catch {}
+        %s
       }
-    }`, stop, cmdFor(Stop)))
+    }`, stop, tsRun(cmdFor(Stop), "        ")))
 	}
 
 	body := fmt.Sprintf("export const BeltPlugin = async (_ctx: any) => {\n  return {\n%s,\n  };\n};\n",
