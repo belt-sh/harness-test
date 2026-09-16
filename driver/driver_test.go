@@ -1,6 +1,10 @@
 package driver
 
-import "testing"
+import (
+	"os"
+	"testing"
+	"time"
+)
 
 // The JSON-RPC envelope, response routing and content-block flattening that
 // used to be tested here now live in github.com/inference-sh/agentprotocol/acp,
@@ -52,5 +56,20 @@ func TestParseProbes(t *testing.T) {
 		if _, err := ParseProbes(bad); err == nil {
 			t.Errorf("ParseProbes(%q) should have failed", bad)
 		}
+	}
+}
+
+// WaitForAny scans only what is new since the last look, so a target whose
+// bytes land either side of a read boundary is the case that breaks if the
+// overlap is wrong.
+func TestWaitForAnyFindsATargetSplitAcrossReads(t *testing.T) {
+	s, err := StartPTY("sh", []string{"-c", `printf 'ready'; sleep 0.5; printf ' to go\n'; sleep 5`}, "", os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, ok := s.WaitForAny([]string{"ready to go"}, 5*time.Second)
+	if !ok || got != "ready to go" {
+		t.Fatalf("WaitForAny = %q, %v; output: %q", got, ok, s.Output())
 	}
 }

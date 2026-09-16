@@ -6,3 +6,17 @@ services:
     # Default: --harness all --mode both
     # Override: docker compose run test --harness claude --mode headless
     # Belt hooks: docker compose run test --harness all --hooks belt
+    volumes:
+      # The agent CLIs are installed at test time, on purpose: the suite is
+      # there to catch what changes in the latest release, so baking them into
+      # the image would stop it doing its job. Caching the downloads does not.
+      - npm-cache:/home/testuser/.cache/npm
+      - pip-cache:/home/testuser/.cache/pip
+      - uv-cache:/home/testuser/.cache/uv
+      - bun-cache:/home/testuser/.cache/bun
+
+volumes:
+  npm-cache:
+  pip-cache:
+  uv-cache:
+  bun-cache:

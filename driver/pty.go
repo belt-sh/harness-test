@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -69,20 +68,50 @@ func (s *PTYSession) SendUp() {
 	s.ptmx.Write([]byte{0x1b, '[', 'A'})
 }
 
+// WaitForAny returns the first target to appear in the output. It scans only
+// the bytes that arrived since the last look, overlapping by the longest
+// target so a match straddling two reads is still found: a TUI writes
+// megabytes of escape sequences, and copying the whole buffer every 200ms to
+// re-scan text already scanned is quadratic in the length of the wait.
 func (s *PTYSession) WaitForAny(targets []string, timeout time.Duration) (string, bool) {
+	overlap := 0
+	for _, t := range targets {
+		if len(t) > overlap {
+			overlap = len(t)
+		}
+	}
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	scanned := 0
+	for {
 		s.mu.Lock()
-		out := s.output.String()
-		s.mu.Unlock()
+		buf := s.output.Bytes()
+		from := max(scanned-overlap+1, 0)
+		hit := ""
 		for _, t := range targets {
-			if strings.Contains(out, t) {
-				return t, true
+			if bytes.Contains(buf[from:], []byte(t)) {
+				hit = t
+				break
 			}
+		}
+		scanned = len(buf)
+		s.mu.Unlock()
+		if hit != "" {
+			return hit, true
+		}
+		if !time.Now().Before(deadline) {
+			return "", false
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return "", false
+}
+
+// Len is how many bytes the TUI has written. A caller watching for the screen
+// to settle wants the length, and Output copies the whole buffer into a string
+// to get it — every poll, for the length of the wait.
+func (s *PTYSession) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.output.Len()
 }
 
 func (s *PTYSession) Output() string {
