@@ -320,6 +320,21 @@ carry summarisation instructions before it believes a compaction happened.
 Both were added after the first run reported a cheerful "nothing was lost" for
 every agent, which meant only that nothing had happened.
 
+Four of the twelve ACP agents have a compaction command. With the session
+filled first, all four compact for real (2026-09, one pass):
+
+| Agent | Command | Compacted over | What the resume carried |
+|-------|---------|----------------|-------------------------|
+| droid | `/compress` | 10 messages | the original wording |
+| gemini | `/compress` | 12 messages | nothing — gemini did not resume the session at all |
+| grok | `/compact` | 14 messages | the original wording |
+| qwen | `/compress` | 12 messages | a summary: 6 messages, not the original wording |
+
+An earlier run had droid and gemini "sending `/compress` to the model as an
+ordinary user message rather than compacting". That was the missing filler:
+their sessions were too short to be worth compacting, and the agent forwarded
+the command. The reading was of the probe, not of the agent.
+
 ### Cursor hooks are requested by the backend
 
 The Cursor CLI runs every hook through one dispatcher that answers a backend request: `ExecServerMessage` field 27 `execute_hook_args { request: ExecuteHookRequest }`, whose oneof names the hook (`pre_compact` 1, `pre_tool_use` 4, `post_tool_use` 5, `before_submit_prompt` 7, `stop` 11), answered by `ExecClientMessage` field 27 `execute_hook_result` (agent.v1 schema, Cursor CLI 2026.09). The mock sends those requests, listed per mode in `Harness.ServerRequestedHooks`: the TUI runs the prompt and stop hooks itself as well, so in interactive mode the mock requests only compaction, while in headless it requests all three. Before this, the mock requested none, and "Cursor never runs the prompt or stop hook in headless" sat in the known-issue table.
