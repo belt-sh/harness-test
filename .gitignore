@@ -4,3 +4,4 @@ tests/belt
 
 # created by the driver tests
 driver/test-repo/
+driver/README.md
