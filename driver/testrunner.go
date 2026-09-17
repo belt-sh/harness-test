@@ -280,6 +280,15 @@ func (r *TestRunner) armToolCall(mode Mode) bool {
 	if o, ok := r.harness.ToolCallByMode[mode]; ok {
 		name, args = o.Name, o.Args
 	}
+	if name == "" {
+		// toolMatcher falls back to the default tool name, so arming has to
+		// as well. They disagreed: claude has tool hooks and no ToolCallName,
+		// so its hook config was written with a Read matcher while the mock
+		// was never given a tool call to serve, and its pre/post-tool checks
+		// skipped in every mode with "the agent was never offered the tool
+		// call" — which reads like an agent trait and was a missing default.
+		name, args = server.DefaultToolName, server.DefaultToolArgs
+	}
 	return r.armTool(name, args)
 }
 
@@ -1022,12 +1031,6 @@ func (r *TestRunner) runACP() {
 	}
 
 	r.pass("ACP session completed")
-
-	if r.probes.DumpTools {
-		// What this agent offered the model, for picking the tool the
-		// in-flight probe should ask permission for.
-		fmt.Printf("  [tools] %s declares: %s\n", r.harness.Name, strings.Join(r.server.DeclaredTools(), " "))
-	}
 
 }
 

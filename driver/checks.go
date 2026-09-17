@@ -23,6 +23,19 @@ func (r *TestRunner) runChecks(phase string) {
 	r.checkHookInjection(phase, entries)
 	// Belt runs only: reports once, on the first phase that reaches it.
 	r.checkBeltHookShape()
+	r.dumpDeclaredTools(phase)
+}
+
+// dumpDeclaredTools prints what the agent offered the model in this phase.
+// It answers why a prepared tool call was never served: the mock only serves
+// it to a request that declares that tool, so a name this list does not
+// contain can never fire the tool hooks.
+func (r *TestRunner) dumpDeclaredTools(phase string) {
+	if !r.probes.DumpTools || r.server == nil {
+		return
+	}
+	fmt.Printf("  [tools] %s/%s wanted %q, declared: %s\n",
+		r.harness.Name, phase, r.toolMatcher(), strings.Join(r.server.DeclaredTools(), " "))
 }
 
 // checkHookInjection verifies the text the prompt hook emitted reached the

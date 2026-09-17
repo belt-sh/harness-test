@@ -111,3 +111,26 @@ func TestStopsLoggedCountsTheHookSourcesOwnMarker(t *testing.T) {
 		t.Errorf("no stop hook: stopsLogged = %d, want -1", got)
 	}
 }
+
+// An agent that declares tool hooks must get a tool call armed for them, or
+// its pre/post-tool checks skip with "the agent was never offered the tool
+// call" — which reads as an agent trait and is really a missing default.
+// toolMatcher fell back to server.DefaultToolName and armToolCall did not, so
+// claude's hook config carried a Read matcher the mock was never told to
+// satisfy.
+func TestEveryAgentWithToolHooksArmsAToolCall(t *testing.T) {
+	for name, h := range harness.All {
+		if h.Events.PreToolUse == "" && h.Events.PostToolUse == "" {
+			continue
+		}
+		r := &TestRunner{harness: h, server: server.New()}
+		for _, mode := range harness.Modes {
+			if !r.armToolCall(Mode(mode)) {
+				t.Errorf("%s/%s: declares tool hooks but arms no tool call", name, mode)
+			}
+		}
+		if got := r.toolMatcher(); got == "" {
+			t.Errorf("%s: tool hooks with an empty matcher", name)
+		}
+	}
+}

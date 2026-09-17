@@ -1,3 +1,6 @@
 harness-test
 tests/belt
 *.log
+
+# created by the driver tests
+driver/test-repo/
