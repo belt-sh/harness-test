@@ -65,8 +65,13 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 			return
 		}
 	}
+	// ContextPlugin used to skip here too, from when those agents had no way
+	// to return context at all. They do now — the generated plugin file reads
+	// the hook's stdout and hands it to the agent — so a codename that never
+	// arrives is a failure, not a trait. While it skipped, the plugin agents
+	// could inject nothing and the run stayed green.
 	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
-	if channel == harness.ContextNone || channel == harness.ContextPlugin {
+	if channel == harness.ContextNone {
 		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, channel))
 		return
 	}

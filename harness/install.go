@@ -512,6 +512,16 @@ func generateYAML(h Harness, cmdFor HookCommand) string {
 // that reads stdin eats the agent's input.
 const tsExecOpts = `{ timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }`
 
+// tsExecOptsInput is tsExecOpts for a hook that must be given the prompt.
+// `input` supplies its own pipe, so the command is fed the payload without
+// ever touching the stdin the agent is using.
+//
+// belt reads the prompt from stdin and returns without printing when there is
+// none (suggest.ParseHookInput). Handing the command /dev/null therefore
+// produced a hook that fired, printed nothing, and injected nothing — the
+// channel correct end to end with nothing flowing through it.
+const tsExecOptsInput = `{ input: beltInput, timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }`
+
 // tsRun renders the execSync call for a hook that only needs to fire, with
 // its continuation lines indented to pad.
 func tsRun(cmd, pad string) string {
@@ -519,17 +529,18 @@ func tsRun(cmd, pad string) string {
 		pad, jsonEscape(cmd), tsExecOpts)
 }
 
-// tsRunCapture renders the execSync call for a hook whose stdout is context,
-// binding the trimmed output to `out` and running sink only when it is
-// non-empty. ContextPlugin agents have no stdout channel of their own, so the
-// plugin file is the only place the command's output can reach the model.
+// tsRunCapture renders the execSync call for a hook whose stdout is context:
+// it feeds the command the prompt payload bound to `beltInput`, binds the
+// trimmed output to `out`, and runs sink only when it is non-empty.
+// ContextPlugin agents have no stdout channel of their own, so the plugin file
+// is the only place the command's output can reach the model.
 func tsRunCapture(cmd, sink, pad string) string {
 	return fmt.Sprintf("const { execSync } = require(\"child_process\");\n"+
 		"%[4]stry {\n"+
 		"%[4]s  const out = execSync(\"%[1]s\", %[2]s).toString().trim();\n"+
 		"%[4]s  if (out) %[3]s\n"+
 		"%[4]s} catch {}",
-		jsonEscape(cmd), tsExecOpts, sink, pad)
+		jsonEscape(cmd), tsExecOptsInput, sink, pad)
 }
 
 // injectsContext reports whether the agent takes this event's hook output as
@@ -547,7 +558,10 @@ func generateTSExtension(h Harness, cmdFor HookCommand) string {
 			continue
 		}
 		if injectsContext(h, e) {
-			body := tsRunCapture(cmdFor(e), `return { systemPrompt: (event.systemPrompt || "") + "\n" + out };`, "    ")
+			// before_agent_start carries the prompt (measured: the event has
+			// type, prompt and systemPrompt), so the payload is built here.
+			body := `const beltInput = JSON.stringify({ prompt: (event && event.prompt) || "" });` + "\n    " +
+				tsRunCapture(cmdFor(e), `return { systemPrompt: (event.systemPrompt || "") + "\n" + out };`, "    ")
 			handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async (event: any) => {\n    %s\n  });", event, body))
 			continue
 		}
@@ -568,8 +582,26 @@ func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
 			continue
 		}
 		if injectsContext(h, e) {
+			// This format's context hook is a system-prompt transform, and it
+			// is handed only sessionID and model — no prompt (measured on
+			// opencode 1.18 and kilo 7.7). chat.message is where the user's
+			// text arrives, so it is captured there and used here. Measured
+			// order: chat.message once at the start of the turn, then the
+			// transform once per model request in it.
 			body := tsRunCapture(cmdFor(e), "output.system.push(out);", "      ")
-			hooks = append(hooks, fmt.Sprintf("    \"%s\": async (_input: any, output: any) => {\n      %s\n    }", event, body))
+			hooks = append(hooks, fmt.Sprintf(`    "chat.message": async (input: any, output: any) => {
+      beltSession = (input && input.sessionID) || "";
+      beltPrompt = ((output && output.parts) || [])
+        .filter((p: any) => p && p.type === "text")
+        .map((p: any) => p.text)
+        .join("\n");
+      beltPending = true;
+    }`))
+			hooks = append(hooks, fmt.Sprintf("    \"%s\": async (_input: any, output: any) => {\n"+
+				"      if (!beltPending) return;\n"+
+				"      beltPending = false;\n"+
+				"      const beltInput = JSON.stringify({ prompt: beltPrompt, session_id: beltSession });\n"+
+				"      %s\n    }", event, body))
 			continue
 		}
 		hooks = append(hooks, fmt.Sprintf("    \"%s\": async () => {\n      %s\n    }", event, tsRun(cmdFor(e), "      ")))
@@ -583,8 +615,15 @@ func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
     }`, stop, tsRun(cmdFor(Stop), "        ")))
 	}
 
-	body := fmt.Sprintf("export const BeltPlugin = async (_ctx: any) => {\n  return {\n%s,\n  };\n};\n",
-		strings.Join(hooks, ",\n"))
+	// The transform hook runs once per model request in a turn, so without a
+	// pending flag belt was invoked three times for one prompt and pushed
+	// three copies of the same suggestions into the system prompt.
+	state := ""
+	if injectsContext(h, PromptSubmit) {
+		state = "  let beltPrompt = \"\";\n  let beltSession = \"\";\n  let beltPending = false;\n"
+	}
+	body := fmt.Sprintf("export const BeltPlugin = async (_ctx: any) => {\n%s  return {\n%s,\n  };\n};\n",
+		state, strings.Join(hooks, ",\n"))
 
 	if h.TSPluginExport != "" {
 		return body + "\n" + h.TSPluginExport + "\n"

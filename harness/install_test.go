@@ -62,3 +62,33 @@ func TestPluginContextChannelIsWiredIntoTheGeneratedFile(t *testing.T) {
 		}
 	}
 }
+
+// belt reads the prompt from stdin and prints nothing without one, so a
+// plugin that reaches the sink but feeds the command /dev/null injects
+// nothing. TestPluginContextChannelIsWiredIntoTheGeneratedFile checked only
+// the sink and passed the whole time that was true.
+func TestPluginContextHookIsGivenThePrompt(t *testing.T) {
+	cmd := func(HookEvent) string { return "belt-hook-marker" }
+	for name, h := range All {
+		for _, e := range h.Defined() {
+			if ContextChannelFor(name, string(e)) != ContextPlugin {
+				continue
+			}
+			content, err := HookConfigFor(name, cmd)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if !strings.Contains(content, "input: beltInput") {
+				t.Errorf("%s: %s runs the hook without handing it stdin, so belt gets no prompt:\n%s", name, e, content)
+			}
+			if !strings.Contains(content, `JSON.stringify({ prompt:`) {
+				t.Errorf("%s: %s builds no prompt payload", name, e)
+			}
+			// A payload built from a value that is never assigned is the same
+			// bug wearing a different hat.
+			if strings.Contains(content, "prompt: beltPrompt") && !strings.Contains(content, "beltPrompt = ") {
+				t.Errorf("%s: sends beltPrompt but nothing ever assigns it", name)
+			}
+		}
+	}
+}

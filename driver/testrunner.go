@@ -2096,6 +2096,17 @@ func (r *TestRunner) mockHookCommand(beltEvent harness.HookEvent) string {
 	if tag == TagPrompt {
 		cmd += r.promptEcho()
 	}
+	// belt prints nothing when stdin carries no prompt, so a mock that prints
+	// its payload regardless tests a contract belt does not honour. The
+	// plugin agents get their prompt from the plugin file rather than from
+	// the agent, which is the case that was silently broken: the hook fired,
+	// printed the codename, and belt in the same position would have printed
+	// nothing. Gating the payload on stdin makes the injection check fail for
+	// a plugin that hands the command no prompt.
+	if tag == TagPrompt && harness.ContextChannelFor(r.harness.Name, string(beltEvent)) == harness.ContextPlugin {
+		cmd = fmt.Sprintf("payload=$(cat); echo %s >> %s; printf '%%s' \"$payload\" >> %s.stdin; case \"$payload\" in *'\"prompt\"'*) %s;; esac",
+			tag, hookLogPath, hookLogPath, shellPrint(r.promptPayload()))
+	}
 	// Formats whose config names a script rather than a command line get one
 	// written for them.
 	switch r.harness.HookFormat {
