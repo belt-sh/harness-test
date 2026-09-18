@@ -107,9 +107,41 @@ could not see it, because `writeHooks` wrote its own TS file with the injection
 in it rather than installing belt's. It was testing a plugin no user ever got.
 belt's generator ran the command with `execSync` and discarded the result, and
 `belt plugin hook` printed its suggestions to stderr for exactly these agents.
-Every format now comes from `harness/install.go`, and
+Every format now comes from `harness/install.go`.
+
+Fixing both ends was still not enough, and the third fault is the instructive
+one. belt reads the prompt from stdin and returns without printing when there
+is none, and the generated plugin ran the hook with `stdio: ["ignore", ...]` —
+chosen so the hook could not eat the agent's own stdin, which over ACP is the
+JSON-RPC stream. belt was handed `/dev/null`, printed nothing, and injected
+nothing: the channel correct end to end with nothing flowing through it. The
+payload now goes through `execSync`'s `input` option, which supplies its own
+pipe and leaves the agent's stdin alone.
+
+Where the prompt comes from differs by format, and was measured rather than
+assumed:
+
+| Format | Hook | Carries the prompt? |
+|--------|------|---------------------|
+| TSExtension (pi, omp) | `before_agent_start` | yes — `{type, prompt, systemPrompt}` |
+| TSPlugin (opencode, kilo) | `experimental.chat.system.transform` | no — only `{sessionID, model}` |
+
+opencode and kilo therefore take the prompt from `chat.message`, which carries
+`parts: [{type:"text", text}]`. Measured order: `chat.message` once at the
+start of a turn, then the transform once per model request within it. That
+repetition was a bug of its own — belt ran three times for one prompt and
+pushed three copies of the same suggestions into the system prompt — so a
+pending flag set in `chat.message` and cleared by the first transform makes it
+one invocation per prompt, as every other agent's prompt hook is.
+
+Three guards, because each of these hid the next:
 `TestPluginContextChannelIsWiredIntoTheGeneratedFile` fails if a plugin channel
-stops reaching its sink.
+stops reaching its sink; `TestPluginContextHookIsGivenThePrompt` fails if the
+command is run without one; and `checkHookInjection` no longer lets
+`ContextPlugin` skip — that skip dated from when these agents had no channel at
+all, and while it stood the plugin agents could inject nothing and the run
+stayed green. The mock's prompt hook now also prints only when stdin carried a
+prompt, so it tests the contract belt actually honours instead of a laxer one.
 
 Kiro hooks are part of the agent config, not `.kiro/hooks/*.json` (those are Kiro IDE documents; kiro-cli never runs them). `Install("kiro")` merges an `agentSpawn`/`userPromptSubmit`/`preToolUse`/`postToolUse`/`stop` hooks object into belt's own agent, `~/.kiro/agents/belt.json`, and selects it with `chat.defaultAgent` in `~/.kiro/settings/cli.json` (project scope: `.kiro/agents/belt.json` and `.kiro/settings/cli.json`). kiro-cli 2.21 has two engines, and the V1 engine ignores a `kiro_default.json` override and runs its built-in agent, so the override earlier belt versions installed never fired on V1; `chat.defaultAgent` works on both, and install strips belt's entries from a leftover `kiro_default.json`. A default agent the user chose stays the default (`belt plugin doctor` reports it). belt's agent stands in for the built-in one, and a config without `tools` has no tools at all, so the scaffold carries `"tools": ["*"]` and `"includeMcpJson": true`; with it, the requests carry the same steering, README and skill descriptions as the built-in agent's. An existing file keeps its prompt, tools, and own hooks, and uninstall removes only belt's entries and the `chat.defaultAgent` it set.
 
