@@ -335,6 +335,95 @@ update and every pending reply behind it, which is what a human taking a minute
 over an approval would have done to a real client. Fixed in v0.4.0, and pinned
 here from the client's side.
 
+### The default tool surface
+
+`--probe tools` prints what each agent offered the model on the turn the mock
+served, read off the wire rather than out of documentation. 12 agents measured
+in ACP, claude/codex/pi in headless; cursor speaks Connect-protobuf and its
+request carries no tool list this probe can read, so it is absent.
+
+| capability | claude | codex | copilot | droid | gemini | goose | grok | hermes | kilo | kimi | kiro | omp | opencode | pi | qwen |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| read a file | Read | — | view | Read | read_file | — | read_file | read_file | read | Read | read | read | read | read | read_file |
+| write a file | Write | — | — | Create | write_file | write | write | write_file | write | Write | write | write | write | write | write_file |
+| edit in place | Edit | — | apply_patch | Edit | replace | edit | search_replace | patch | edit | Edit | code | edit | edit | edit | edit |
+| run a shell cmd | Bash | — | bash | Execute | run_shell_command | shell | run_terminal_command | terminal | bash | Bash | shell | bash | bash | bash | run_shell_command |
+| find files | — | — | glob | Glob | glob | tree | list_dir | search_files | glob | Glob | glob | glob | glob | — | glob |
+| search contents | — | — | rg | Grep | grep_search | — | grep | — | grep | Grep | grep | grep | grep | — | grep_search |
+| todo list | — | — | — | TodoWrite | — | todo__todo_write | todo_write | todo | todowrite | TodoList | todo_list | todo | todowrite | — | — |
+| subagent | Agent | — | task | Task | invoke_agent | delegate | spawn_subagent | delegate_task | task | AgentSwarm | subagent | task | task | — | agent |
+| skills | Skill | — | skill | Skill | activate_skill | load_skill | — | skill_manage | skill | Skill | — | — | skill | — | skill |
+| fetch a url | WebFetch | — | web_fetch | — | web_fetch | — | — | — | webfetch | FetchURL | web_fetch | — | webfetch | — | — |
+| web search | — | — | — | — | google_web_search | — | web_search | — | — | — | web_search | web_search | — | — | — |
+| plan mode | — | — | — | ExitSpecMode | enter_plan_mode | — | enter_plan_mode | — | — | EnterPlanMode | — | — | — | — | enter_plan_mode |
+| ask the user | — | — | — | — | — | — | ask_user_question | — | question | AskUserQuestion | — | — | — | — | ask_user_question |
+| deferred tools | — | — | — | ToolSearch | — | — | search_tool | — | — | — | — | — | — | — | tool_search |
+
+**There is no tool every agent has.** The nearest thing to a universal core is
+edit-in-place and a shell, which 14 of 15 declare; read-a-file is 13, and every
+one of them spells it differently.
+
+**codex declares no file tools at all.** `exec_command`, `write_stdin` and
+`send_input` are its entire filesystem surface: it reads, writes and searches by
+running commands. An integration that assumes a `read`-shaped tool exists has
+nothing to bind to here. pi is the opposite extreme and ships four tools —
+`bash edit read write` — with no search of any kind.
+
+**Three agents declared a capability the others have and then dropped it.**
+goose offered no text read and no content search (`read_image` is images,
+`tree` lists); hermes has `search_files` and no grep; copilot has no `write`,
+because `apply_patch` creates files too.
+
+Skills matter for belt specifically: 10 of 15 declare a skill tool, under five
+names (`Skill` `skill` `load_skill` `activate_skill` `skill_manage`; hermes also
+carries `skill_view` and `skills_list`). codex, grok, kiro, omp and pi declare
+none, so a skill has to reach those five through the instruction file rather
+than a tool call.
+
+**What this table is not.** It is one turn's declaration, not the agent's
+catalogue. Plan mode swaps the set and MCP servers add to it. Three agents also
+ship a deferred-tool mechanism, which `--probe deferred` measures below.
+
+### Deferred tools: what a plain turn does not show
+
+droid, grok and qwen declare a tool whose job is to find other tools, so their
+turn-one declaration is partial by design. `--probe deferred` reads the search
+tool's own schema off the wire, fills its query argument, serves the call, and
+re-reads the declarations. Measured 2026-09 in Docker, headless:
+
+| agent | search tool | what the call did |
+|-------|-------------|-------------------|
+| droid | `ToolSearch(query)` | declared 4 more tools: `FetchUrl` `Loop` `WebSearch` `slack_post_file` |
+| grok | `search_tool(query)` | declared nothing new |
+| qwen | `tool_search(query)` | declared nothing new |
+
+**These are two different architectures, not one working agent and two failures.**
+droid expands the declaration, so its real surface is 17 tools and the matrix
+above undercounts it by four. grok and qwen return search results to the model
+as text and invoke the match through a second tool — `use_tool` and `tool_call`
+— so nothing is ever added to the declaration. For those two the table is a
+complete record of what is declared, and their reachable surface cannot be read
+off the wire at all, because it never goes over it.
+
+The probe reports "ran it and declared nothing new" separately from "was never
+offered it". They look the same in the tool list and mean opposite things: one
+is a measurement, the other is an untested agent.
+
+A search tool answers a query, so droid's four are the surface reachable under
+one broad query, not a total. Running a different query is how that number
+grows.
+
+Both halves of the mechanism are declared, and only one expands anything. qwen
+ships `tool_search` and `tool_call`; the first version of this probe took
+whichever name sorted first, called `tool_call`, revealed nothing, and reported
+that as qwen having nothing to reveal.
+
+Everything outside the shared rows is the agent's own idea of the job: goose
+manages extensions and creates apps (`apps__create_app`), grok generates and
+edits images and runs a scheduler, kimi and kiro track goals, kimi and claude
+schedule cron, kiro talks to AWS (`use_aws`), kilo posts to a board, copilot
+runs SQL against its session store, hermes has `memory` and `vision_analyze`.
+
 ### Resuming a compacted session
 
 `--probe compact` runs a session several turns deep, compacts it with the

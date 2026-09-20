@@ -220,6 +220,11 @@ func (r *TestRunner) Run() Result {
 			r.requestHooksFor(ModeHeadless)
 			r.runHeadless()
 			r.runChecks("headless")
+			// After the checks: the probe runs a turn of its own and the
+			// checks read the same mock log.
+			if r.probes.Deferred {
+				r.probeDeferredTools("headless")
+			}
 		} else {
 			r.skip(r.harness.Name + " has no headless mode")
 		}

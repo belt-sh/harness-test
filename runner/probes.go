@@ -33,6 +33,11 @@ type Probes struct {
 	// where ToolCallGated entries come from.
 	DumpTools bool
 
+	// Deferred serves the agent its own tool-search tool, so the tools it
+	// keeps out of a plain turn's declaration become visible. Only agents
+	// that declare such a tool have anything to reveal.
+	Deferred bool
+
 	// Detect checks what harness.DetectInstalled() claims against the agent
 	// this run actually installed. The installed list is what belt consumes;
 	// a container that installs exactly one agent is the only place the
@@ -49,7 +54,7 @@ type Probes struct {
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, env, detect
+//	tools, deferred, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -84,12 +89,14 @@ func ParseProbes(spec string) (Probes, error) {
 			p.Compact = true
 		case "tools":
 			p.DumpTools = true
+		case "deferred":
+			p.Deferred = true
 		case "env":
 			p.DumpEnv = true
 		case "detect":
 			p.Detect = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, env or detect)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, deferred, env or detect)", name)
 		}
 	}
 	return p, nil
