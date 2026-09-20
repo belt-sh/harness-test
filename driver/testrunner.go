@@ -100,6 +100,9 @@ func (r *TestRunner) entryCount() int {
 
 const hookLogPath = "/tmp/belt-hook-events.log"
 
+// envDumpPath collects what each agent exports to its hooks under --probe env.
+const envDumpPath = "/tmp/agent-env-dump.txt"
+
 // promptText is the one question every mode asks; the answer is the codename
 // the mock returns, so a check can tell a real turn from an empty one.
 const promptText = "What is the project codename? Reply ONLY the codename."
@@ -2106,6 +2109,13 @@ func (r *TestRunner) mockHookCommand(beltEvent harness.HookEvent) string {
 	if tag == TagPrompt && harness.ContextChannelFor(r.harness.Name, string(beltEvent)) == harness.ContextPlugin {
 		cmd = fmt.Sprintf("payload=$(cat); echo %s >> %s; printf '%%s' \"$payload\" >> %s.stdin; case \"$payload\" in *'\"prompt\"'*) %s;; esac",
 			tag, hookLogPath, hookLogPath, shellPrint(r.promptPayload()))
+	}
+	// --probe env: the hook is a child of the agent, so its environment is
+	// exactly what the agent exports to a subprocess. Written per agent and
+	// phase, appended, because an agent can export different variables in
+	// headless and in its TUI.
+	if r.probes.DumpEnv {
+		cmd = fmt.Sprintf("{ echo '### %s %s'; env; } >> %s 2>/dev/null; ", r.harness.Name, tag, envDumpPath) + cmd
 	}
 	// Formats whose config names a script rather than a command line get one
 	// written for them.

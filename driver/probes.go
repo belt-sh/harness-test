@@ -32,11 +32,18 @@ type Probes struct {
 	// DumpTools prints the tools each agent declared to the model, which is
 	// where ToolCallGated entries come from.
 	DumpTools bool
+
+	// DumpEnv records the environment each agent hands its hooks. A hook is
+	// a child process of the agent, so this is the only place the variables
+	// an agent exports can be observed rather than guessed, and it is where
+	// DetectEnvVars entries come from.
+	DumpEnv bool
 }
 
 // ParseProbes reads a comma-separated probe list:
 //
-//	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact, tools
+//	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact,
+//	tools, env
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -71,8 +78,10 @@ func ParseProbes(spec string) (Probes, error) {
 			p.Compact = true
 		case "tools":
 			p.DumpTools = true
+		case "env":
+			p.DumpEnv = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact or tools)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools or env)", name)
 		}
 	}
 	return p, nil

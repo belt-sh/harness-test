@@ -15,6 +15,13 @@ func withACP(h Harness, cmd []string, args []string) Harness {
 	return h
 }
 
+// withDetectEnvVars sets the runtime variables an agent exports, for entries
+// built by a helper rather than written out as a literal.
+func withDetectEnvVars(h Harness, vars ...string) Harness {
+	h.DetectEnvVars = vars
+	return h
+}
+
 func withTSPluginExport(h Harness, export string) Harness {
 	h.TSPluginExport = export
 	return h
@@ -90,7 +97,7 @@ var All = map[string]Harness{
 	"claude": {
 		Name: "claude", Binary: "claude",
 		InstallCmd:    []string{"npm", "install", "-g", "@anthropic-ai/claude-code"},
-		DetectEnvVars: []string{"CLAUDECODE", "CLAUDE_CODE"},
+		DetectEnvVars: []string{"CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_ENTRYPOINT"},
 		APIFormat:     Anthropic,
 		EnvVars: map[string]string{
 			"ANTHROPIC_BASE_URL":      "{{.BaseURL}}",
@@ -128,7 +135,7 @@ var All = map[string]Harness{
 	"codex": {
 		Name: "codex", Binary: "codex",
 		InstallCmd:    []string{"npm", "install", "-g", "@openai/codex"},
-		DetectEnvVars: []string{"CODEX_SANDBOX", "CODEX_THREAD_ID"},
+		DetectEnvVars: []string{"CODEX_SANDBOX", "CODEX_THREAD_ID", "CODEX_MANAGED_BY_NPM"},
 		PostInstall: [][]string{
 			{"sh", "-c", "codex plugin marketplace add https://github.com/belt-sh/skills.git 2>/dev/null || true"},
 			{"sh", "-c", "codex plugin add belt@belt-sh-skills 2>/dev/null || true"},
@@ -178,7 +185,7 @@ var All = map[string]Harness{
 		Name: "copilot", Binary: "copilot",
 		ToolCallGated: ToolCall{Name: "bash", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@github/copilot"},
-		DetectEnvVars: []string{"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN"},
+		DetectEnvVars: []string{"COPILOT_MODEL", "COPILOT_GITHUB_TOKEN", "COPILOT_CLI", "COPILOT_LOADER_PID"},
 		APIFormat:     OpenAI,
 		EnvVars: map[string]string{
 			"COPILOT_PROVIDER_BASE_URL": "{{.BaseURL}}",
@@ -202,6 +209,7 @@ var All = map[string]Harness{
 	},
 	"grok": {
 		Name: "grok", Binary: "grok",
+		DetectEnvVars:  []string{"GROK_SESSION_ID", "GROK_WORKSPACE_ROOT"},
 		ToolCallGated:  ToolCall{Name: "run_terminal_command", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://x.ai/cli/install.sh | bash"},
 		InstallBinDirs: []string{".grok/bin"},
@@ -264,6 +272,7 @@ var All = map[string]Harness{
 	},
 	"kiro": {
 		Name: "kiro", Binary: "kiro-cli",
+		DetectEnvVars:  []string{"KIRO_SESSION_ID", "KIRO_VERSION"},
 		ToolCallGated:  ToolCall{Name: "shell", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "curl -fsSL https://cli.kiro.dev/install | bash"},
 		InstallBinDirs: []string{".local/bin"},
@@ -343,6 +352,7 @@ var All = map[string]Harness{
 	},
 	"hermes": {
 		Name: "hermes", Binary: "hermes",
+		DetectEnvVars:  []string{"HERMES_SESSION_ID", "HERMES_INTERACTIVE"},
 		ToolCallGated:  ToolCall{Name: "terminal", Args: gatedShellArgs},
 		InstallCmd:     []string{"pip", "install", "--break-system-packages", "hermes-agent[acp]"},
 		InstallBinDirs: []string{".local/bin"},
@@ -373,7 +383,8 @@ var All = map[string]Harness{
 		ACPCmd:            []string{"hermes", "acp"},
 	},
 	"kilo": withGatedTool(withACPProvider(withTSPluginExport(
-		tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+		withDetectEnvVars(tsPluginHarness("kilo", "kilo", "@kilocode/cli", ".kilo/plugins"),
+			"KILO_TREE_SITTER_WASM_DIR"),
 		`export default { id: "belt", server: BeltPlugin };`),
 		[]string{"kilo", "acp"}, []string{"--cwd", "{{.RepoDir}}"}),
 		"bash", gatedShellArgs),
@@ -412,6 +423,7 @@ var All = map[string]Harness{
 	},
 	"goose": {
 		Name: "goose", Binary: "goose",
+		DetectEnvVars:  []string{"GOOSE_DISABLE_KEYRING"},
 		ToolCallGated:  ToolCall{Name: "shell", Args: gatedShellArgs},
 		InstallCmd:     []string{"sh", "-c", "mkdir -p $HOME/.local/bin && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/goose-x86_64-unknown-linux-gnu.tar.bz2 | tar -xj --strip-components=0 -C $HOME/.local/bin"},
 		InstallBinDirs: []string{".local/bin"},
@@ -454,7 +466,7 @@ var All = map[string]Harness{
 		Name: "gemini", Binary: "gemini",
 		ToolCallGated: ToolCall{Name: "run_shell_command", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@google/gemini-cli"},
-		DetectEnvVars: []string{"GEMINI_CLI"},
+		DetectEnvVars: []string{"GEMINI_CLI", "GEMINI_SESSION_ID", "GEMINI_CWD"},
 		APIFormat:     Gemini,
 		EnvVars: map[string]string{
 			"GOOGLE_GEMINI_BASE_URL":     "{{.BaseURL}}",
@@ -502,6 +514,7 @@ var All = map[string]Harness{
 	},
 	"qwen": {
 		Name: "qwen", Binary: "qwen",
+		DetectEnvVars: []string{"QWEN_CODE_CLI", "QWEN_CODE_SESSION_ID"},
 		ToolCallGated: ToolCall{Name: "run_shell_command", Args: gatedShellArgs},
 		InstallCmd:    []string{"npm", "install", "-g", "@qwen-code/qwen-code"},
 		APIFormat:     OpenAI,
@@ -541,6 +554,7 @@ var All = map[string]Harness{
 		"bash", gatedShellArgs),
 	"droid": {
 		Name: "droid", Binary: "droid",
+		DetectEnvVars: []string{"DROID_PROJECT_DIR", "FACTORY_UPSTREAM_CLIENT_TYPE"},
 		// droid mangles the project path into the directory name.
 		SessionDir:    "{{.HomeDir}}/.factory/sessions/{{.MangledRepoDir}}",
 		SessionExt:    ".jsonl",
@@ -619,7 +633,7 @@ var All = map[string]Harness{
 		Name: "cursor", Binary: "agent",
 		InstallCmd:       []string{"sh", "-c", "curl -fsSL https://cursor.com/install | bash"},
 		InstallBinDirs:   []string{".local/bin"},
-		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT"},
+		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT", "CURSOR_INVOKED_AS", "CURSOR_VERSION"},
 		DetectConfigDirs: []string{".cursor"},
 		APIFormat:        Cursor,
 		EnvVars: map[string]string{
