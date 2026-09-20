@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -474,7 +475,7 @@ func generateTOML(h Harness, cmdFor HookCommand) string {
 		if matcher != "" {
 			lines = append(lines, fmt.Sprintf("matcher = \"%s\"", matcher))
 		}
-		lines = append(lines, fmt.Sprintf("command = \"%s\"\ntimeout = %d", jsonEscape(cmdFor(beltEvent)), timeout))
+		lines = append(lines, fmt.Sprintf("command = \"%s\"\ntimeout = %d", jsonEscape(declare(h, cmdFor(beltEvent))), timeout))
 	}
 
 	for _, e := range h.Defined() {
@@ -510,7 +511,20 @@ func generateYAML(h Harness, cmdFor HookCommand) string {
 // tsExecOpts keeps the hook command off the agent's own stdin. execSync
 // inherits it by default, and over ACP that is the JSON-RPC stream: a hook
 // that reads stdin eats the agent's input.
-const tsExecOpts = `{ timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }`
+func tsExecOpts(h Harness) string {
+	return "{ timeout: 5000, stdio: [\"ignore\", \"pipe\", \"ignore\"]" + tsEnvOpt(h) + " }"
+}
+
+// tsEnvOpt renders the env option that declares which agent belt is running
+// inside, for the agents measured to export nothing that identifies them.
+// process.env is spread first: replacing the environment rather than adding to
+// it would take PATH with it.
+func tsEnvOpt(h Harness) string {
+	if !DeclaresAgent(h.Name) {
+		return ""
+	}
+	return fmt.Sprintf(`, env: { ...process.env, AI_AGENT: "%s" }`, h.Name)
+}
 
 // tsExecOptsInput is tsExecOpts for a hook that must be given the prompt.
 // `input` supplies its own pipe, so the command is fed the payload without
@@ -520,13 +534,38 @@ const tsExecOpts = `{ timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }`
 // none (suggest.ParseHookInput). Handing the command /dev/null therefore
 // produced a hook that fired, printed nothing, and injected nothing — the
 // channel correct end to end with nothing flowing through it.
-const tsExecOptsInput = `{ input: beltInput, timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }`
+func tsExecOptsInput(h Harness) string {
+	return "{ input: beltInput, timeout: 5000, stdio: [\"pipe\", \"pipe\", \"ignore\"]" + tsEnvOpt(h) + " }"
+}
+
+// DeclaresAgent reports whether belt's generated hook config for this agent
+// must state which agent it is. The agents in UndetectableByEnv export nothing
+// that identifies them, so without the declaration belt cannot tell where it
+// is running and every survey row from them is blank.
+//
+// It is deliberately not every agent: claude and pi set AI_AGENT themselves
+// and carry their version in it, and overwriting that would throw the version
+// away.
+func DeclaresAgent(name string) bool {
+	return slices.Contains(UndetectableByEnv, name)
+}
+
+// declare prefixes a shell hook command with the agent declaration. The
+// command is evaluated by a shell — kimi's own hook commands already use ;
+// and && — so an assignment followed by ; applies to the whole command,
+// which a bare "VAR=x cmd" prefix would not for a compound one.
+func declare(h Harness, cmd string) string {
+	if !DeclaresAgent(h.Name) {
+		return cmd
+	}
+	return fmt.Sprintf("export AI_AGENT=%s; %s", h.Name, cmd)
+}
 
 // tsRun renders the execSync call for a hook that only needs to fire, with
 // its continuation lines indented to pad.
-func tsRun(cmd, pad string) string {
+func tsRun(h Harness, cmd, pad string) string {
 	return fmt.Sprintf("const { execSync } = require(\"child_process\");\n%stry { execSync(\"%s\", %s); } catch {}",
-		pad, jsonEscape(cmd), tsExecOpts)
+		pad, jsonEscape(cmd), tsExecOpts(h))
 }
 
 // tsRunCapture renders the execSync call for a hook whose stdout is context:
@@ -534,13 +573,13 @@ func tsRun(cmd, pad string) string {
 // trimmed output to `out`, and runs sink only when it is non-empty.
 // ContextPlugin agents have no stdout channel of their own, so the plugin file
 // is the only place the command's output can reach the model.
-func tsRunCapture(cmd, sink, pad string) string {
+func tsRunCapture(h Harness, cmd, sink, pad string) string {
 	return fmt.Sprintf("const { execSync } = require(\"child_process\");\n"+
 		"%[4]stry {\n"+
 		"%[4]s  const out = execSync(\"%[1]s\", %[2]s).toString().trim();\n"+
 		"%[4]s  if (out) %[3]s\n"+
 		"%[4]s} catch {}",
-		jsonEscape(cmd), tsExecOptsInput, sink, pad)
+		jsonEscape(cmd), tsExecOptsInput(h), sink, pad)
 }
 
 // injectsContext reports whether the agent takes this event's hook output as
@@ -561,11 +600,11 @@ func generateTSExtension(h Harness, cmdFor HookCommand) string {
 			// before_agent_start carries the prompt (measured: the event has
 			// type, prompt and systemPrompt), so the payload is built here.
 			body := `const beltInput = JSON.stringify({ prompt: (event && event.prompt) || "" });` + "\n    " +
-				tsRunCapture(cmdFor(e), `return { systemPrompt: (event.systemPrompt || "") + "\n" + out };`, "    ")
+				tsRunCapture(h, cmdFor(e), `return { systemPrompt: (event.systemPrompt || "") + "\n" + out };`, "    ")
 			handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async (event: any) => {\n    %s\n  });", event, body))
 			continue
 		}
-		handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async () => {\n    %s\n  });", event, tsRun(cmdFor(e), "    ")))
+		handlers = append(handlers, fmt.Sprintf("  pi.on(\"%s\", async () => {\n    %s\n  });", event, tsRun(h, cmdFor(e), "    ")))
 	}
 
 	return fmt.Sprintf("export default function (pi: any) {\n%s\n}\n", strings.Join(handlers, "\n"))
@@ -588,7 +627,7 @@ func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
 			// text arrives, so it is captured there and used here. Measured
 			// order: chat.message once at the start of the turn, then the
 			// transform once per model request in it.
-			body := tsRunCapture(cmdFor(e), "output.system.push(out);", "      ")
+			body := tsRunCapture(h, cmdFor(e), "output.system.push(out);", "      ")
 			hooks = append(hooks, fmt.Sprintf(`    "chat.message": async (input: any, output: any) => {
       beltSession = (input && input.sessionID) || "";
       beltPrompt = ((output && output.parts) || [])
@@ -604,7 +643,7 @@ func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
 				"      %s\n    }", event, body))
 			continue
 		}
-		hooks = append(hooks, fmt.Sprintf("    \"%s\": async () => {\n      %s\n    }", event, tsRun(cmdFor(e), "      ")))
+		hooks = append(hooks, fmt.Sprintf("    \"%s\": async () => {\n      %s\n    }", event, tsRun(h, cmdFor(e), "      ")))
 	}
 
 	if stop := Stop.AgentName(h); stop != "" {
@@ -612,7 +651,7 @@ func generateTSPlugin(name string, h Harness, cmdFor HookCommand) string {
       if (event && event.type === "%s") {
         %s
       }
-    }`, stop, tsRun(cmdFor(Stop), "        ")))
+    }`, stop, tsRun(h, cmdFor(Stop), "        ")))
 	}
 
 	// The transform hook runs once per model request in a turn, so without a

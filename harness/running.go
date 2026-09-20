@@ -146,7 +146,18 @@ var runtimeAgents = []runtimeAgent{
 		Measured: "2026-09, pi 0.85.1: PI_CODING_AGENT",
 	},
 	{Name: "windsurf", Harness: "windsurf", Env: []string{"WINDSURF_EXTENSION_HOST_ROLE"}},
+	// These three export nothing that identifies them, so they carry no Env
+	// rule and are reached only through AI_AGENT, which belt's own generated
+	// hook config sets for them (DeclaresAgent). They are listed so the names
+	// belt can report are all in one place — a consumer grouping survey rows
+	// on the name can check them against RunningNames.
+	//
+	// opencode keeps OPENCODE_CLIENT because belt has always checked it; a
+	// run shows opencode 1.18.31 never setting it, and absence in one version
+	// is not proof for every surface.
 	{Name: "opencode", Harness: "opencode", Env: []string{"OPENCODE_CLIENT"}},
+	{Name: "kimi", Harness: "kimi"},
+	{Name: "omp", Harness: "omp"},
 	{Name: "antigravity", Env: []string{"ANTIGRAVITY_AGENT"}},
 	{Name: "augment", Env: []string{"AUGMENT_AGENT"}},
 	{Name: "replit", Env: []string{"REPL_ID"}},

@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -156,5 +157,62 @@ func TestAIAgentVersionSplitSurvivesTheSurfaceWord(t *testing.T) {
 				t.Errorf("AI_AGENT=%s gave name=%q version=%q, want %q/%q", c.raw, r.Name, r.Version, c.name, c.version)
 			}
 		})
+	}
+}
+
+// An agent that exports nothing identifying can only be known if belt's own
+// hook config says so. Losing that declaration would silently blank the
+// survey rows for every one of them, with nothing else failing.
+func TestUndetectableAgentsDeclareThemselvesInTheirHookConfig(t *testing.T) {
+	for _, name := range UndetectableByEnv {
+		if !DeclaresAgent(name) {
+			t.Errorf("%s exports nothing identifying and does not declare itself either", name)
+			continue
+		}
+		cfg, err := HookConfig(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(cfg, "AI_AGENT") {
+			t.Errorf("%s: generated hook config carries no AI_AGENT declaration:\n%s", name, cfg)
+		}
+		if !strings.Contains(cfg, name) {
+			t.Errorf("%s: declaration does not name the agent", name)
+		}
+	}
+}
+
+// The declaration is only for agents that need it. claude and pi set AI_AGENT
+// themselves and carry their version in it; overwriting that with a bare name
+// would throw the version away.
+func TestDetectableAgentsDoNotDeclare(t *testing.T) {
+	for name := range All {
+		if DeclaresAgent(name) {
+			continue
+		}
+		cfg, err := HookConfig(name)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(cfg, "AI_AGENT") {
+			t.Errorf("%s is detectable but its hook config overrides AI_AGENT", name)
+		}
+	}
+}
+
+// Every name DetectRunning can return should be reachable. A declared agent
+// with no runtime entry still works, but it is missing from RunningNames,
+// which is what a consumer checks its survey grouping against.
+func TestEveryDeclaredAgentHasARuntimeEntry(t *testing.T) {
+	for _, name := range UndetectableByEnv {
+		found := false
+		for _, rt := range runtimeAgents {
+			if rt.Harness == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s declares itself but has no runtime entry, so RunningNames omits it", name)
+		}
 	}
 }
