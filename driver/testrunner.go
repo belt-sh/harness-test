@@ -435,6 +435,7 @@ func (r *TestRunner) checkBinary() {
 		}
 		r.pass(r.harness.Binary + " installed")
 		r.detectVersion()
+		r.checkDetection()
 		for _, postCmd := range r.harness.PostInstall {
 			cmd := exec.Command(postCmd[0], postCmd[1:]...)
 			cmd.Env = os.Environ()
@@ -444,6 +445,70 @@ func (r *TestRunner) checkBinary() {
 	}
 	r.pass(r.harness.Binary + " found")
 	r.detectVersion()
+	r.checkDetection()
+}
+
+// checkDetection compares what harness.DetectInstalled() claims against the
+// agent this run has just installed. belt consumes that list to decide where
+// to install hooks, and until now nothing checked it: a container that
+// installs exactly one agent is the only place "installed" is ground truth.
+func (r *TestRunner) checkDetection() {
+	if !r.probes.Detect {
+		return
+	}
+	self := harness.DetectOne(r.harness.Name)
+	if self.Installed() {
+		r.pass(fmt.Sprintf("detect: %s found installed (%s)", r.harness.Name, probeNames(self)))
+	} else {
+		r.fail(fmt.Sprintf("detect: %s is installed but DetectInstalled does not report it (probes: %s)",
+			r.harness.Name, probeNames(self)))
+	}
+	// Another agent reported installed is only a bug when this run's own
+	// install is what it found. Resolving the binary says so exactly: grok's
+	// installer drops ~/.grok/bin/agent, and "agent" was cursor's binary
+	// name, so every machine with grok reported cursor as installed too.
+	// A multi-harness run genuinely has several installed, so the test is
+	// provenance, not count.
+	var others []string
+	for _, d := range harness.DetectInstalled() {
+		if d.Name == r.harness.Name {
+			continue
+		}
+		others = append(others, fmt.Sprintf("%s(%s)", d.Name, probeNames(d)))
+		if d.Binary == "" {
+			continue
+		}
+		if target, err := filepath.EvalSymlinks(d.Binary); err == nil && r.ownsPath(target) {
+			r.fail(fmt.Sprintf("detect: %s is reported installed, but its binary %s resolves to %s, which belongs to %s — the binary name is not specific enough to identify it",
+				d.Name, d.Binary, target, r.harness.Name))
+		}
+	}
+	if len(others) > 0 {
+		fmt.Printf("  [detect] also reported installed: %s\n", strings.Join(others, " "))
+	}
+}
+
+// ownsPath reports whether a resolved binary path lives inside what this
+// harness installed.
+func (r *TestRunner) ownsPath(target string) bool {
+	for _, d := range r.harness.InstallBinDirs {
+		if strings.Contains(target, filepath.Join(r.home, filepath.Dir(d))) {
+			return true
+		}
+	}
+	return strings.Contains(target, "/."+r.harness.Name+"/") ||
+		strings.Contains(target, "/"+r.harness.Binary+"/")
+}
+
+func probeNames(d harness.DetectResult) string {
+	var out []string
+	for _, p := range d.Probes {
+		out = append(out, string(p))
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, "+")
 }
 
 func (r *TestRunner) detectVersion() {

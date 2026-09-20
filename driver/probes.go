@@ -33,6 +33,12 @@ type Probes struct {
 	// where ToolCallGated entries come from.
 	DumpTools bool
 
+	// Detect checks what harness.DetectInstalled() claims against the agent
+	// this run actually installed. The installed list is what belt consumes;
+	// a container that installs exactly one agent is the only place the
+	// claim can be checked against ground truth.
+	Detect bool
+
 	// DumpEnv records the environment each agent hands its hooks. A hook is
 	// a child process of the agent, so this is the only place the variables
 	// an agent exports can be observed rather than guessed, and it is where
@@ -43,7 +49,7 @@ type Probes struct {
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, env
+//	tools, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -80,8 +86,10 @@ func ParseProbes(spec string) (Probes, error) {
 			p.DumpTools = true
 		case "env":
 			p.DumpEnv = true
+		case "detect":
+			p.Detect = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools or env)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, env or detect)", name)
 		}
 	}
 	return p, nil

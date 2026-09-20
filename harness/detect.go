@@ -80,6 +80,10 @@ var strategies = []strategy{
 	{"env-var", probeEnvVar},
 }
 
+// DetectConfigDirsFor is detectConfigDirs, exported so a consumer can show
+// what a detection claim rests on.
+func DetectConfigDirsFor(name string) []string { return detectConfigDirs(name) }
+
 // detectConfigDirs returns config directories to probe for detection.
 func detectConfigDirs(name string) []string {
 	h, ok := All[name]
@@ -93,10 +97,25 @@ func detectConfigDirs(name string) []string {
 	if d == "" {
 		return nil
 	}
-	if i := strings.IndexByte(d, '/'); i > 0 {
-		d = d[:i]
+	// The hook directory's first segment usually names the agent (.claude,
+	// .gemini), but not when it sits under a shared root: opencode's
+	// .config/opencode/plugins truncated to ".config", so every machine with
+	// a ~/.config — which is every Linux and macOS machine — reported
+	// opencode as installed. Under a shared root, keep the segment that
+	// actually names the agent.
+	segs := strings.Split(d, "/")
+	if len(segs) > 1 && sharedConfigRoots[segs[0]] {
+		return []string{strings.Join(segs[:2], "/")}
 	}
-	return []string{d}
+	return []string{segs[0]}
+}
+
+// sharedConfigRoots are directories many programs share, so their existence
+// says nothing about any one agent.
+var sharedConfigRoots = map[string]bool{
+	".config": true,
+	".local":  true,
+	".cache":  true,
 }
 
 // HooksTarget returns the hook file path relative to HOME (derived from registry).

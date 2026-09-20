@@ -630,7 +630,12 @@ var All = map[string]Harness{
 	// server/cursor.go. beforeSubmitPrompt cannot inject context; sessionStart
 	// can (additional_context).
 	"cursor": {
-		Name: "cursor", Binary: "agent",
+		// cursor-agent installs two names for the same binary, "agent" and
+		// "cursor-agent". Detection uses the specific one: grok's installer
+		// also drops an "agent" into ~/.grok/bin, so the generic name made
+		// every machine with grok report cursor as installed. The commands
+		// below keep calling "agent", which is what cursor documents.
+		Name: "cursor", Binary: "cursor-agent",
 		InstallCmd:       []string{"sh", "-c", "curl -fsSL https://cursor.com/install | bash"},
 		InstallBinDirs:   []string{".local/bin"},
 		DetectEnvVars:    []string{"CURSOR_TRACE_ID", "CURSOR_AGENT", "CURSOR_INVOKED_AS", "CURSOR_VERSION"},
