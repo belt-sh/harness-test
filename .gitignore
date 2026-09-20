@@ -3,5 +3,5 @@ tests/belt
 *.log
 
 # created by the driver tests
-driver/test-repo/
+runner/test-repo/
 driver/README.md
