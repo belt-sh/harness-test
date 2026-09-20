@@ -448,7 +448,7 @@ var All = map[string]Harness{
 			{Path: ".config/goose/config.yaml", Content: "GOOSE_PROVIDER: mock\nGOOSE_MODEL: {{.Model}}\nGOOSE_MODE: auto\n"},
 		},
 		HookFormat:    JSONNested,
-		HookConfigDir: ".agents/plugins/belt-test/hooks",
+		HookConfigDir: GoosePluginDir + "/hooks",
 		HookFileName:  "hooks.json",
 		Events: Events{
 			SessionStart: "SessionStart",

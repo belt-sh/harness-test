@@ -9,6 +9,18 @@ import (
 	"strings"
 )
 
+// GoosePluginDir is belt's plugin directory under goose's shared plugin root.
+//
+// It was ".agents/plugins/belt-test/hooks" until 2026-09: this suite's name
+// had been copied into the shipped registry, so every belt user's goose hooks
+// went into a directory named after the test harness. Renaming it moves the
+// install, so Install removes the old one.
+const GoosePluginDir = ".agents/plugins/belt"
+
+// gooseLegacyPluginDir is where belt used to write goose's hooks. Removable
+// once no install predating 2026-09 is in use.
+const gooseLegacyPluginDir = ".agents/plugins/belt-test"
+
 // InstallScope determines where hooks are written.
 type InstallScope int
 
@@ -95,6 +107,14 @@ func InstallWithCommand(name string, scope InstallScope, cmdFor HookCommand) Ins
 	// we need to read-modify-write. For standalone files, just write.
 	switch h.HookFormat {
 	case JSONNested:
+		if name == "goose" {
+			// Migration, added 2026-09: belt wrote goose's hooks into a
+			// directory named after this test suite. Remove the old file so
+			// goose does not run both.
+			removeMergedHooks(filepath.Join(root, gooseLegacyPluginDir, "hooks", hookFileName(h)), JSONNested)
+			os.Remove(filepath.Join(root, gooseLegacyPluginDir, "hooks"))
+			os.Remove(filepath.Join(root, gooseLegacyPluginDir))
+		}
 		if needsMerge(h) {
 			result.Merged = true
 			err = mergeJSONHooks(hooksPath, content)

@@ -457,6 +457,15 @@ func (r *TestRunner) checkDetection() {
 		return
 	}
 	self := harness.DetectOne(r.harness.Name)
+	// "Inside this agent" and "this agent is installed" are separate answers.
+	// An env-var match alone must never reach the installed list, or belt
+	// offers to write hooks for an agent that is not on the machine.
+	if envOnly := (harness.DetectResult{Name: self.Name, Probes: []harness.Probe{harness.ProbeEnvVar}}); envOnly.Installed() || envOnly.Configured() {
+		r.fail("detect: an env-var match alone reports as installed")
+	}
+	if self.IsEnvironment() && !self.Installed() && !self.Configured() {
+		r.fail(fmt.Sprintf("detect: %s is only an environment match yet reached the installed list", self.Name))
+	}
 	if self.Installed() {
 		r.pass(fmt.Sprintf("detect: %s found installed (%s)", r.harness.Name, probeNames(self)))
 	} else {
