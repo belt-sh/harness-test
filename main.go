@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/belt-sh/harness-test/driver"
-	"github.com/belt-sh/harness-test/harness"
+	"github.com/belt-sh/harness-test/runner"
+	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
 )
 
@@ -35,7 +35,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, modeErr)
 		os.Exit(2)
 	}
-	probes, probeErr := driver.ParseProbes(*probeSpec)
+	probes, probeErr := runner.ParseProbes(*probeSpec)
 	if probeErr != nil {
 		fmt.Fprintln(os.Stderr, probeErr)
 		os.Exit(2)
@@ -219,7 +219,7 @@ func main() {
 
 	totalPassed, totalFailed, totalSkipped := 0, 0, 0
 	var failed []string
-	var results []driver.Result
+	var results []runner.Result
 
 	for _, name := range targets {
 		h := harness.All[name]
@@ -227,15 +227,15 @@ func main() {
 			// Only a typed skip: "cannot be tested" is not a failure, and the
 			// summary says why. Explicitly named harnesses still skip, loudly.
 			fmt.Printf("=== %s ===\n  ○ skipped [%s]: %s\n\n", name, reason, detail)
-			results = append(results, driver.SkippedResult(h, reason, detail))
+			results = append(results, runner.SkippedResult(h, reason, detail))
 			continue
 		}
 		srv.ClearLog()
-		r := driver.New(h, srv, baseURL)
+		r := runner.New(h, srv, baseURL)
 		r.SetMode(runMode)
 		r.SetProbes(probes)
 		if *hooks == "belt" {
-			r.SetHookSource(driver.HooksBelt)
+			r.SetHookSource(runner.HooksBelt)
 		}
 		if *intercept {
 			r.SetIntercept(true)

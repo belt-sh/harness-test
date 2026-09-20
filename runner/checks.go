@@ -1,4 +1,4 @@
-package driver
+package runner
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/belt-sh/harness-test/harness"
+	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
 )
 

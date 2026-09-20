@@ -1,4 +1,4 @@
-package driver
+package runner
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/belt-sh/harness-test/harness"
+	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
 	"github.com/inference-sh/agentprotocol/acp"
 )

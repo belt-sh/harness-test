@@ -1,11 +1,11 @@
-package driver
+package runner
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/belt-sh/harness-test/harness"
+	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
 )
 
