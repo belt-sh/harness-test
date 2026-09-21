@@ -28,26 +28,26 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 ## Compatibility matrix
 
-<!-- Updated 2026-08-29. Versions from latest CI run in Docker. -->
+<!-- Updated 2026-09-21. Versions read from the agents themselves in the latest Docker run. -->
 
 | Agent | Version | Headless | Interactive | ACP | SDK | Hook Format | API |
 |-------|---------|:--------:|:-----------:|:---:|:---:|-------------|-----|
 | [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅¹ | JSONNested | anthropic |
-| [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
+| [Codex](https://github.com/openai/codex) | 0.155.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
 | [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | oai completions |
-| [Cursor](https://cursor.com/docs/cli) | 2026.09 | ✅ | ✅ | — | — | JSONFlat | cursor⁶ |
-| [Droid](https://docs.factory.ai/cli) | 0.217.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
-| [Goose](https://github.com/block/goose) | 1.50.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
-| [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
+| [Cursor](https://cursor.com/docs/cli) | 2026.09.18 | ✅ | ✅ | — | — | JSONFlat | cursor⁶ |
+| [Droid](https://docs.factory.ai/cli) | 0.223.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.60.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
+| [Goose](https://github.com/block/goose) | 1.51.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
+| [Grok](https://x.ai/grok-build) | 1.0.34 | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | oai completions |
-| [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
-| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | oai completions |
-| [Kiro](https://kiro.dev) | 2.21.x | ✅ | ✅ | ✅ | — | JSONKiro | oai completions |
-| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | oai completions |
+| [Kilo](https://github.com/nicepkg/kilo) | 7.7.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
+| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 2.0.x | ✅ | ✅ | ✅ | — | TOML | oai completions |
+| [Kiro](https://kiro.dev) | 2.22.x | ✅ | ✅ | ✅ | — | JSONKiro | oai completions |
+| [Oh My Pi](https://omp.sh) | 18.2.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | oai completions |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
-| [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | oai completions |
-| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
+| [Pi](https://github.com/earendil-works/pi) | 0.86.x | ✅ | ✅ | — | ✅³ | TSExtension | oai completions |
+| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.24.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
 
 **16/16** headless · **12/16** ACP · **4/16** SDK · **33 mode-tests in CI**
 
@@ -226,8 +226,17 @@ does not offer it — while it does list the session the same run closed
 cleanly. Two files can carry the same session id. Checking for the file is
 what this suite tried first, and it pointed the wrong way.
 
-For a runner: a gemini session that ends in a crash is usually gone, you cannot
-tell by looking for its file, and the remaining eleven agents are unaffected.
+**A clean close is not sufficient either, once the session has been compacted.**
+The compaction probe closes the first process rather than killing it, and
+gemini still could not load the session back, with the same
+`Invalid session identifier` naming the same `chats` directory. So there are
+two ways to lose a gemini session and only one of them is a crash: killing the
+process mid-turn, and running `/compress`. A plain session, closed cleanly,
+resumes every time at 0s — which is what makes the other two easy to miss.
+
+For a runner: a gemini session that ends in a crash or a compaction is usually
+gone, you cannot tell by looking for its file, and the remaining eleven agents
+are unaffected.
 
 **An agent's own claim is not an answer.** All twelve declare `loadSession` at
 initialize, gemini included, on both paths. The claim is worth showing a
@@ -355,35 +364,49 @@ request carries no tool list this probe can read, so it is absent.
 
 | capability | claude | codex | copilot | droid | gemini | goose | grok | hermes | kilo | kimi | kiro | omp | opencode | pi | qwen |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| read a file | Read | — | view | Read | read_file | — | read_file | read_file | read | Read | read | read | read | read | read_file |
-| write a file | Write | — | — | Create | write_file | write | write | write_file | write | Write | write | write | write | write | write_file |
-| edit in place | Edit | — | apply_patch | Edit | replace | edit | search_replace | patch | edit | Edit | code | edit | edit | edit | edit |
-| run a shell cmd | Bash | — | bash | Execute | run_shell_command | shell | run_terminal_command | terminal | bash | Bash | shell | bash | bash | bash | run_shell_command |
-| find files | — | — | glob | Glob | glob | tree | list_dir | search_files | glob | Glob | glob | glob | glob | — | glob |
-| search contents | — | — | rg | Grep | grep_search | — | grep | — | grep | Grep | grep | grep | grep | — | grep_search |
+| read a file | Read | ↳shell | view | Read | read_file | ↳shell | read_file | read_file | read | Read | read | read | read | read | read_file |
+| write a file | Write | ↳shell | ↳shell | Create | write_file | write | write | write_file | write | Write | write | write | write | write | write_file |
+| edit in place | Edit | ↳shell | apply_patch | Edit | replace | edit | search_replace | patch | edit | Edit | code | edit | edit | edit | edit |
+| run a shell cmd | Bash | exec_command | bash | Execute | run_shell_command | shell | run_terminal_command | terminal | bash | Bash | shell | bash | bash | bash | run_shell_command |
+| find files | ↳shell | ↳shell | glob | Glob | glob | tree | list_dir | search_files | glob | Glob | glob | glob | glob | ↳shell | glob |
+| search contents | ↳shell | ↳shell | rg | Grep | grep_search | ↳shell | grep | ↳shell | grep | Grep | grep | grep | grep | ↳shell | grep_search |
 | todo list | — | — | — | TodoWrite | — | todo__todo_write | todo_write | todo | todowrite | TodoList | todo_list | todo | todowrite | — | — |
-| subagent | Agent | — | task | Task | invoke_agent | delegate | spawn_subagent | delegate_task | task | AgentSwarm | subagent | task | task | — | agent |
+| subagent | Agent | spawn_agent | task | Task | invoke_agent | delegate | spawn_subagent | delegate_task | task | AgentSwarm | subagent | task | task | — | agent |
 | skills | Skill | — | skill | Skill | activate_skill | load_skill | — | skill_manage | skill | Skill | — | — | skill | — | skill |
 | fetch a url | WebFetch | — | web_fetch | — | web_fetch | — | — | — | webfetch | FetchURL | web_fetch | — | webfetch | — | — |
-| web search | — | — | — | — | google_web_search | — | web_search | — | — | — | web_search | web_search | — | — | — |
+| web search | WebSearch | — | — | — | google_web_search | — | web_search | — | — | — | web_search | web_search | — | — | — |
 | plan mode | — | — | — | ExitSpecMode | enter_plan_mode | — | enter_plan_mode | — | — | EnterPlanMode | — | — | — | — | enter_plan_mode |
-| ask the user | — | — | — | — | — | — | ask_user_question | — | question | AskUserQuestion | — | — | — | — | ask_user_question |
+| ask the user | — | request_user_input | — | — | — | — | ask_user_question | — | question | AskUserQuestion | — | — | — | — | ask_user_question |
 | deferred tools | — | — | — | ToolSearch | — | — | search_tool | — | — | — | — | — | — | — | tool_search |
 
-**There is no tool every agent has.** The nearest thing to a universal core is
-edit-in-place and a shell, which 14 of 15 declare; read-a-file is 13, and every
-one of them spells it differently.
+`↳shell` means the agent declared no tool for that row but did declare a shell,
+so it reaches the capability by running a command. A bare `—` means neither.
 
-**codex declares no file tools at all.** `exec_command`, `write_stdin` and
-`send_input` are its entire filesystem surface: it reads, writes and searches by
-running commands. An integration that assumes a `read`-shaped tool exists has
-nothing to bind to here. pi is the opposite extreme and ships four tools —
-`bash edit read write` — with no search of any kind.
+**A shell is the only thing all 15 have.** Every other row has holes. The next
+most common is edit-in-place at 14, and every agent spells it differently.
 
-**Three agents declared a capability the others have and then dropped it.**
+**codex declares no file tools at all.** Its 13 tools are `exec_command`,
+`write_stdin`, `send_input`, agent spawning, goals and `view_image`; reading,
+writing, editing and searching all happen by running commands. codex's
+`apply_patch` is a CLI invoked inside the shell, not a tool the model is
+offered. An integration that binds to a `read`-shaped tool has nothing to
+attach to here.
+
+**claude declares no `Glob` and no `Grep`.** 2.1.278 offered 27 tools and
+neither was among them; it finds and searches through `Bash`. This was checked
+against the raw request bodies rather than the parser, because it is the kind
+of result that is usually a bug in the reader — the only occurrence of either
+word in claude's request is inside this suite's own "do not call any tool"
+instruction.
+
+**Three agents declared a capability their peers have and then dropped it.**
 goose offered no text read and no content search (`read_image` is images,
 `tree` lists); hermes has `search_files` and no grep; copilot has no `write`,
-because `apply_patch` creates files too.
+because `apply_patch` creates files too. All four reach those through their
+shell instead.
+
+pi is the minimal extreme: four tools, `bash edit read write`, and no search,
+no subagent, no skills.
 
 Skills matter for belt specifically: 10 of 15 declare a skill tool, under five
 names (`Skill` `skill` `load_skill` `activate_skill` `skill_manage`; hermes also
@@ -458,9 +481,18 @@ filled first, all four compact for real (2026-09, one pass):
 | Agent | Command | Compacted over | What the resume carried |
 |-------|---------|----------------|-------------------------|
 | droid | `/compress` | 10 messages | the original wording |
-| gemini | `/compress` | 12 messages | nothing — gemini did not resume the session at all |
+| gemini | `/compress` | 12 messages | nothing — the session could not be loaded back |
 | grok | `/compact` | 14 messages | the original wording |
 | qwen | `/compress` | 12 messages | a summary: 6 messages, not the original wording |
+
+gemini's row is not a compaction result. It compacted 12 messages and then
+failed `session/load` with `Invalid session identifier`, the same error its
+killed sessions give and pointing at the same `.gemini/tmp/<project>/chats`
+directory. The compaction probe closes the first process cleanly, so this is
+the same session-durability defect reached without a crash — `/compress`
+appears to replace the session rather than rewrite it, and the id the client
+holds stops resolving. Whether gemini's compaction preserves the conversation
+is still unmeasured here, because nothing survives to read.
 
 An earlier run had droid and gemini "sending `/compress` to the model as an
 ordinary user message rather than compacting". That was the missing filler:

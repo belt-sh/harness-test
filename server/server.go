@@ -581,7 +581,24 @@ func (s *MockServer) record(r *http.Request, body []byte, model string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log = append(s.log, entry)
+	dumpRequestBody(r.URL.Path, body)
 	return len(s.log) - 1
+}
+
+// dumpRequestBody appends every request the mock received to the file named by
+// HARNESS_DUMP_BODIES. Reading tools off the wire is only as good as the
+// parser, and the parser is not what a disagreement should be settled with.
+func dumpRequestBody(path string, body []byte) {
+	name := os.Getenv("HARNESS_DUMP_BODIES")
+	if name == "" || len(body) == 0 {
+		return
+	}
+	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "=== %s %d bytes\n%s\n", path, len(body), body)
 }
 
 // --- Handlers: models, test endpoints, Grok ---
