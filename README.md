@@ -32,24 +32,35 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 | Agent | Version | Headless | Interactive | ACP | SDK | Hook Format | API |
 |-------|---------|:--------:|:-----------:|:---:|:---:|-------------|-----|
-| [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅¹ | JSONNested | Anthropic |
-| [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | ✅² | JSONNested | Responses |
-| [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | OpenAI |
-| [Cursor](https://cursor.com/docs/cli) | 2026.09 | ✅ | ✅ | — | — | JSONFlat | Cursor⁵ |
-| [Droid](https://docs.factory.ai/cli) | 0.217.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | OpenAI |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | Gemini |
-| [Goose](https://github.com/block/goose) | 1.50.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
-| [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | — | JSONNested | Responses |
-| [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | OpenAI |
-| [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
-| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | OpenAI |
-| [Kiro](https://kiro.dev) | 2.21.x | ✅ | ✅ | ✅ | — | JSONKiro | OpenAI |
-| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | OpenAI |
-| [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | Responses |
-| [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | OpenAI |
-| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | OpenAI |
+| [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅¹ | JSONNested | anthropic |
+| [Codex](https://github.com/openai/codex) | 1.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
+| [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | oai completions |
+| [Cursor](https://cursor.com/docs/cli) | 2026.09 | ✅ | ✅ | — | — | JSONFlat | cursor⁶ |
+| [Droid](https://docs.factory.ai/cli) | 0.217.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.57.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
+| [Goose](https://github.com/block/goose) | 1.50.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
+| [Grok](https://x.ai/grok-build) | 1.0.x | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
+| [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | oai completions |
+| [Kilo](https://github.com/nicepkg/kilo) | 7.5.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
+| [Kimi Code](https://github.com/nicepkg/gpt-runner) | 1.49.x | ✅ | ✅ | ✅ | — | TOML | oai completions |
+| [Kiro](https://kiro.dev) | 2.21.x | ✅ | ✅ | ✅ | — | JSONKiro | oai completions |
+| [Oh My Pi](https://omp.sh) | 18.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | oai completions |
+| [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
+| [Pi](https://github.com/earendil-works/pi) | 0.x | ✅ | ✅ | — | ✅³ | TSExtension | oai completions |
+| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.22.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
 
 **16/16** headless · **12/16** ACP · **4/16** SDK · **33 mode-tests in CI**
+
+The API column is the wire format the mock has to speak, not the vendor. **oai**
+is OpenAI, and the two oai rows are two different OpenAI APIs with different
+request and streaming shapes: `oai completions` is Chat Completions
+(`POST /v1/chat/completions`) and `oai responses` is the Responses API
+(`POST /v1/responses`). The mock implements them separately.
+
+Most agents on `oai completions` are not OpenAI products. Chat Completions is
+the format everyone else clones, so kimi, kiro, goose, droid and hermes all
+speak it and one implementation serves them. codex, grok, kilo and opencode
+chose Responses instead.
 
 ¹ `claude -p --output-format stream-json` — claude's own streaming protocol, not ACP.
 ² `codex exec --experimental-json` — JSONL event stream over stdout.
@@ -57,7 +68,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 ⁴ `omp --mode json` — Oh My Pi is a Pi fork (bun runtime) with native ACP, plugins, and multi-model roles.
 
 ⁵ `droid exec -o stream-jsonrpc` — the JSON-RPC worker the TUI drives, and the only exec path that runs the prompt hook. Headless tests plain `exec`, which does not, so both are covered.
-⁵ Cursor's `agent` CLI has no BYOK endpoint: the mock speaks its Connect-protobuf `agent.v1.AgentService` (RunSSE + BidiAppend, schemas read out of the CLI bundle). Server config pins the stream to HTTP/1.1. Headless fires sessionStart and the tool hooks; the TUI also fires beforeSubmitPrompt and stop.
+⁶ Cursor's `agent` CLI has no BYOK endpoint: the mock speaks its Connect-protobuf `agent.v1.AgentService` (RunSSE + BidiAppend, schemas read out of the CLI bundle). Server config pins the stream to HTTP/1.1. Headless fires sessionStart and the tool hooks; the TUI also fires beforeSubmitPrompt and stop.
 
 ### Instruction files
 
