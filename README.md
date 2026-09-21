@@ -478,6 +478,7 @@ matrix.
 | agent | declared | tool-shaped names in the package that no turn declared |
 |-------|---------:|--------------------------------------------------------|
 | claude | 27 | `Glob` `Grep` `ToolSearch` `Task` `TodoWrite` `AskUserQuestion` `SendUserMessage` `Cd` `MultiEdit` `NotebookRead` `BashOutput` `KillShell` `ExitPlanMode` |
+| hermes | 15 | `clarify` `code_execution` `vision` `video` `image_gen` `video_gen` `x_search` `tts` `text_to_speech` `skills` `context_engine` `delegation` `cronjob` `web` `browser` `computer_use` `homeassistant` `spotify` `discord` `discord_admin` `yuanbao` |
 | qwen | 17 | `zoom_image` `propose_goal` `send_message` `save_memory` `lsp` `monitor` `loop_wakeup` `cron_create` `cron_list` `cron_delete` `create_sub_session` `read_mcp_resource` `web_fetch` `list_directory` `todo_write` |
 | droid | 15 | `AskUser` `ApplyPatch` `FetchUrl` `WebSearch` `Loop` `GenerateDroid` `Script` `ProposeMission` `RecommendMission` `StartMissionRun` `EndFeatureRun` `ExitMissionPlanning` `DismissHandoffItems` `slack_post_message` |
 | kimi | 26 | `WebSearch` `NotifyUser` `Think` `TowerInit` `TowerStatus` `TowerTeardown` |
@@ -485,8 +486,14 @@ matrix.
 | kilo | 15 | `apply_patch` |
 | opencode | 10 | `apply_patch` |
 | omp, pi | 11, 4 | swept, no tool cluster — the best-matching file was a model catalogue and an SDK type declaration |
-| codex, copilot | 13, 16 | no cluster — their packages do not carry the declared names as quoted strings |
-| cursor, goose, grok, hermes, kiro | — | not swept: they install outside the npm tree this sweep walks |
+| goose, grok | 18, 27 | swept, weak cluster (3/18, 5/27): compiled binaries whose strings around the tool names are DOM event names and wire-format keys, not tools |
+| codex, copilot, kiro | 13, 16, 13 | no cluster — compiled binaries that do not carry their tool names as quoted strings |
+| cursor | — | nothing to cluster on: it declares no tools on the path this suite drives |
+
+hermes is the widest gap in the table. Its `tools_config.py` names a Spotify
+client, a Discord client with an admin variant, Home Assistant, a cron job
+runner, image, video and speech generation, and a browser — against the 15
+tools it offered on a turn.
 
 **Every agent the sweep could read ships more than it declares**, and for some
 the gap is large: qwen declares 17 and carries goals, cron, an LSP client and a
@@ -564,10 +571,20 @@ a live tool from dead code, a legacy alias, a permission-rule label or a
 feature behind a flag, and the sweep reads strings near other strings, so a
 parameter name or a status value can survive the filter. Nothing in this table
 is a measurement of what an agent will do; it is a list of what to go and
-measure. Five agents are missing from it because they install outside the npm
-tree, and two more because their packages do not carry their tool names as
-quoted strings — absence from this table means the sweep could not look, not
-that there is nothing there. The wire is still the only
+measure. Four agents carry no readable cluster because they are compiled
+binaries, and cursor has no declared tools to cluster on — absence from this
+table means the sweep could not look, not that there is nothing there.
+
+Five agents were missing from an earlier version of this table for a reason
+that was not about them: the sweep walked the npm prefix, and the curl and pip
+installers write into `$HOME`, which the suite points at a temp directory it
+deletes after each run. They were never on disk to be found. Two bugs followed
+from adding them — the binary's parent directory was taken as a root, so
+`~/.local/bin` made hermes and kiro report goose's strings under their names,
+and the site-packages search looked one level too shallow and saw only
+`python3.11`. The first is the mistake the detector made taking `.config` for
+opencode's config directory: a parent shared by many programs identifies none
+of them. The wire is still the only
 place an answer comes from, which is what the three columns are for: declared,
 revealed by asking, and present in the package.
 

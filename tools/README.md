@@ -35,8 +35,12 @@ docker run --rm --entrypoint bash \
   -lc 'python3 /work/tools/package-sweep.py'
 ```
 
-It walks `~/.npm-global/lib/node_modules`, so the five agents that install
-outside the npm tree — cursor, goose, grok, hermes, kiro — are not covered.
+It resolves each agent's code from three shapes: an npm package under the
+shared prefix, a binary the installer dropped in a bin directory, and a pip
+package in site-packages. The curl and pip installers write into `$HOME`, and
+the suite points `HOME` at a temp directory it deletes, so those agents have to
+be installed against a fixed `HOME` before the sweep can see them — set
+`SWEEP_HOME` if it is not `/home/testuser`.
 
 The output is candidates, not measurements. It reads strings near other
 strings, so parameter names and status values survive the filter, and a name
