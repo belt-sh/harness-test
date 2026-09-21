@@ -359,8 +359,9 @@ here from the client's side.
 
 `--probe tools` prints what each agent offered the model on the turn the mock
 served, read off the wire rather than out of documentation. 12 agents measured
-in ACP, claude/codex/pi in headless; cursor speaks Connect-protobuf and its
-request carries no tool list this probe can read, so it is absent.
+in ACP, claude/codex/pi in headless. cursor is absent because the reader walks
+JSON and cursor declares its tools as a protobuf enum, which is a gap in this
+suite rather than in cursor — see "what the packages contain" below.
 
 | capability | claude | codex | copilot | droid | gemini | goose | grok | hermes | kilo | kimi | kiro | omp | opencode | pi | qwen |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -457,6 +458,52 @@ manages extensions and creates apps (`apps__create_app`), grok generates and
 edits images and runs a scheduler, kimi and kiro track goals, kimi and claude
 schedule cron, kiro talks to AWS (`use_aws`), kilo posts to a board, copilot
 runs SQL against its session store, hermes has `memory` and `vision_analyze`.
+
+#### What the packages contain that no turn declares
+
+The matrix and the deferred probe both read the wire, so both measure what an
+agent offers. A third question is what it *implements*, which is answered by
+reading the shipped package instead. Measured 2026-09 against the copies
+installed on one developer machine, so the versions are not always the ones in
+the matrix above.
+
+| agent | declared on a turn | found in the package and not declared | version read |
+|-------|--------------------|----------------------------------------|--------------|
+| claude | 27 | `Glob` `Grep` `Cd` `MultiEdit` `NotebookRead` `BashOutput` `KillShell` `TodoWrite` `Task` `LS` `ExitPlanMode` | 2.1.278 |
+| cursor | nothing readable | 53 `ClientSideToolV2` enum entries | 2026.05.16 |
+| droid | 15 (17 after expansion) | `ApplyPatch` `AskUser` `slack_post_message` `ProposeMission` `StartMissionRun` `EndFeatureRun` `DismissHandoffItems` `GenerateDroid` | 0.223 |
+| opencode | 10 | `apply_patch` | 1.18.31 |
+| codex, hermes | 13, 15 | method does not apply — compiled binaries whose strings are dominated by runtime internals | — |
+
+**claude implements `Glob` and `Grep` and did not declare them.** They are
+tool-name constants in the binary (`var eo="Glob"`, `var zr="Grep"`) and appear
+in its `filePatternTools` permission table beside `Read`, `Write` and `Edit`.
+The matrix row above is still right about what claude offered — it searched
+through `Bash` on that turn — but "claude has no Glob" would be wrong, and the
+declared set is a configured subset of the implemented one.
+
+**cursor declares its tools after all, and this suite could not read them.**
+The request message carries `supported_tools`, a repeated
+`aiserver.v1.ClientSideToolV2` enum. It is on the wire; it is protobuf enum
+numbers rather than JSON names, and the declaration reader only walks JSON.
+Decoding that field would give cursor a measured row like every other agent.
+The 53 enum entries are the protocol's whole vocabulary and include IDE-only
+entries the CLI cannot run — `computer_use`, `record_screen`,
+`background_composer_followup`, `ai_attribution` — so the enum is an upper
+bound and `supported_tools` is the answer.
+
+**The method checks out against a known result.** droid's package contains
+`FetchUrl`, `WebSearch`, `Loop` and `slack_post_file`, which are exactly the
+four `--probe deferred` revealed by serving `ToolSearch` a query. Static
+reading and dynamic expansion agree where they overlap, which is the only
+reason to trust either on the names where they do not.
+
+**A name in a package is not an available tool.** Static extraction cannot tell
+a live tool from dead code, a legacy alias, a permission-rule label or a
+feature behind a flag. Nothing in this table is a measurement of what an agent
+will do; it is a list of what to go and measure. The wire is still the only
+place an answer comes from, which is what the three columns are for: declared,
+revealed by asking, and present in the package.
 
 ### Resuming a compacted session
 
