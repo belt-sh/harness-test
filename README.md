@@ -28,7 +28,9 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 ## Compatibility matrix
 
-<!-- Updated 2026-09-21. Versions read from the agents themselves in the latest Docker run. -->
+<!-- Updated 2026-09-21. Versions read from the agents themselves in the latest
+     Docker run. Several move within a day — grok went 1.0.34 to 1.0.40 in an
+     afternoon — so the minor is written as .x and only the shape is stable. -->
 
 | Agent | Version | Headless | Interactive | ACP | SDK | Hook Format | API |
 |-------|---------|:--------:|:-----------:|:---:|:---:|-------------|-----|
@@ -39,7 +41,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Droid](https://docs.factory.ai/cli) | 0.223.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.60.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
 | [Goose](https://github.com/block/goose) | 1.51.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
-| [Grok](https://x.ai/grok-build) | 1.0.34 | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
+| [Grok](https://x.ai/grok-build) | 1.0.4x | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | oai completions |
 | [Kilo](https://github.com/nicepkg/kilo) | 7.7.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 2.0.x | ✅ | ✅ | ✅ | — | TOML | oai completions |
