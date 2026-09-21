@@ -26,6 +26,7 @@ type Result struct {
 	Passed     int
 	Failed     int
 	Skipped    int
+	Findings   int
 	Duration   time.Duration
 	SkipReason harness.SkipReason // set when the whole harness was skipped
 	SkipDetail string
@@ -190,6 +191,18 @@ func (r *TestRunner) skip(msg string) {
 	fmt.Printf("  ○ %s\n", msg)
 }
 
+// finding records a probe that ran to completion and whose answer is "no".
+//
+// This used to be a skip, and it made the suite misreport itself: a skip means
+// the question could not be asked, and six agents were being counted as
+// untested when in fact they had been asked and had answered. A reader
+// totalling the skips saw holes where there were results. An answer is not a
+// gap, so it gets its own mark and its own column.
+func (r *TestRunner) finding(msg string) {
+	r.result.Findings++
+	fmt.Printf("  ● %s\n", msg)
+}
+
 func (r *TestRunner) Run() Result {
 	r.startTime = time.Now()
 	r.savedEnv = os.Environ()
@@ -333,8 +346,12 @@ func (r *TestRunner) finish() Result {
 	}
 	r.cleanups = nil
 	r.result.Duration = time.Since(r.startTime)
-	fmt.Printf("\n=== %s: %d passed, %d failed, %d skipped (%s) ===\n\n",
-		r.harness.Name, r.result.Passed, r.result.Failed, r.result.Skipped, r.result.Duration.Round(time.Second))
+	found := ""
+	if r.result.Findings > 0 {
+		found = fmt.Sprintf(", %d found", r.result.Findings)
+	}
+	fmt.Printf("\n=== %s: %d passed, %d failed, %d skipped%s (%s) ===\n\n",
+		r.harness.Name, r.result.Passed, r.result.Failed, r.result.Skipped, found, r.result.Duration.Round(time.Second))
 	os.Clearenv()
 	for _, e := range r.savedEnv {
 		k, v, _ := strings.Cut(e, "=")
@@ -537,10 +554,20 @@ func (r *TestRunner) detectVersion() {
 		}
 		ver := strings.TrimSpace(string(out))
 		ver, _, _ = strings.Cut(ver, "\n")
+		if ver == "" {
+			continue
+		}
 		r.result.Version = ver
 		fmt.Printf("  → version: %s\n", ver)
 		return
 	}
+	// Every agent in the registry answers one of those flags, so reaching here
+	// means the binary is on PATH and will not run. Say that, because the
+	// alternative is what happened to omp in CI on 2026-09-21: the install
+	// passed, the version column was blank, the turn exited 127, and the run
+	// reported "prompt hook did not fire" and "mock server received no
+	// requests" — three symptoms of a cause nothing named.
+	r.fail(fmt.Sprintf("%s is installed but will not run: no output from --version, -v or version", r.harness.Binary))
 }
 
 func (r *TestRunner) setupEndpoint() {
@@ -1683,7 +1710,7 @@ func (r *TestRunner) reportInFlightResume(seen []PermissionObservation, parked P
 	if len(seen) == 0 {
 		// The agent rebuilt the session and never mentioned the tool call
 		// again. Nothing errors, and the work is simply gone.
-		r.skip(fmt.Sprintf("in-flight: %s does not re-raise the parked approval on resume", name))
+		r.finding(fmt.Sprintf("in-flight: %s does not re-raise the parked approval on resume", name))
 		return
 	}
 

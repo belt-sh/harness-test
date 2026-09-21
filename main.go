@@ -217,7 +217,7 @@ func main() {
 		}
 	}
 
-	totalPassed, totalFailed, totalSkipped := 0, 0, 0
+	totalPassed, totalFailed, totalSkipped, totalFound := 0, 0, 0, 0
 	var failed []string
 	var results []runner.Result
 
@@ -245,6 +245,7 @@ func main() {
 		totalPassed += result.Passed
 		totalFailed += result.Failed
 		totalSkipped += result.Skipped
+		totalFound += result.Findings
 		if result.Failed > 0 {
 			failed = append(failed, name)
 		}
@@ -252,7 +253,7 @@ func main() {
 
 	var totalDuration time.Duration
 	fmt.Println("=== Summary ===")
-	fmt.Printf("%-12s %-30s %6s %6s %6s %8s\n", "HARNESS", "VERSION", "PASS", "FAIL", "SKIP", "TIME")
+	fmt.Printf("%-12s %-30s %6s %6s %6s %6s %8s\n", "HARNESS", "VERSION", "PASS", "FAIL", "SKIP", "FOUND", "TIME")
 	for _, r := range results {
 		totalDuration += r.Duration
 		ver := r.Version
@@ -263,12 +264,12 @@ func main() {
 			ver = ver[:30]
 		}
 		if r.SkipReason != harness.SkipNone {
-			fmt.Printf("%-12s %-30s %6s %6s %6s %8s  skipped [%s]\n", r.Harness, "—", "—", "—", "—", "—", r.SkipReason)
+			fmt.Printf("%-12s %-30s %6s %6s %6s %6s %8s  skipped [%s]\n", r.Harness, "—", "—", "—", "—", "—", "—", r.SkipReason)
 			continue
 		}
-		fmt.Printf("%-12s %-30s %6d %6d %6d %8s\n", r.Harness, ver, r.Passed, r.Failed, r.Skipped, r.Duration.Round(time.Second))
+		fmt.Printf("%-12s %-30s %6d %6d %6d %6d %8s\n", r.Harness, ver, r.Passed, r.Failed, r.Skipped, r.Findings, r.Duration.Round(time.Second))
 	}
-	fmt.Printf("%-12s %-30s %6d %6d %6d %8s\n", "TOTAL", "", totalPassed, totalFailed, totalSkipped, totalDuration.Round(time.Second))
+	fmt.Printf("%-12s %-30s %6d %6d %6d %6d %8s\n", "TOTAL", "", totalPassed, totalFailed, totalSkipped, totalFound, totalDuration.Round(time.Second))
 	if len(failed) > 0 {
 		fmt.Printf("failures: %s\n", strings.Join(failed, ", "))
 		os.Exit(1)
