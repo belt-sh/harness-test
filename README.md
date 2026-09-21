@@ -198,7 +198,7 @@ Measured 2026-09 in Docker, both paths:
 
 | Path | Resumed the conversation | Did not | Passes |
 |------|--------------------------|---------|--------|
-| first process closed its session | all 12 | — | 1 |
+| first process closed its session | 11 always, gemini usually | — | 1 |
 | first process killed | 11, every pass | gemini, 7 times in 8 | 3 |
 
 Every resume replayed the user's own turn and carried the earlier turn to the
@@ -209,8 +209,13 @@ The kill path was run three times end to end because one run cannot tell a
 property from a coincidence, and the eleven agree with themselves across all
 three. The clean-close pass has been run once and its table is one sample.
 
-**gemini does not reliably survive a kill: it resumed once in eight runs.**
-Closed, it resumes every time at 0s. Killed, it usually answers `session/load`
+**gemini's `session/load` is unreliable on every path.** The kill and
+compaction paths have never succeeded. The clean close usually works and
+sometimes does not: on 2026-09-21 the same probe, same image, same 0.60.0,
+resumed in the morning with 2 updates replayed in 58ms and in the afternoon
+failed all five retries. An earlier eight-run series put the kill path at one
+success in eight. Treat the clean-close row in the table above as "usually",
+not "always" — it was written from a run where it worked. Killed, it usually answers `session/load`
 with `Internal error` at 0s, 2s, 5s, 10s and 20s — and the retries cannot help,
 because the problem is not that the session has not been written yet but that
 it never will be. The error carries the reason in its `data`, which is worth
@@ -237,8 +242,10 @@ process mid-turn, and running `/compress`. A plain session, closed cleanly,
 resumes every time at 0s — which is what makes the other two easy to miss.
 
 For a runner: a gemini session that ends in a crash or a compaction is usually
-gone, you cannot tell by looking for its file, and the remaining eleven agents
-are unaffected.
+gone, a clean close is only usually safe, you cannot tell by looking for its
+file, and the remaining eleven agents are unaffected.
+
+Written up for the vendor in [docs/gemini-session-load.md](docs/gemini-session-load.md).
 
 **An agent's own claim is not an answer.** All twelve declare `loadSession` at
 initialize, gemini included, on both paths. The claim is worth showing a
