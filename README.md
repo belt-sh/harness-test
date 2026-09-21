@@ -463,17 +463,30 @@ runs SQL against its session store, hermes has `memory` and `vision_analyze`.
 
 The matrix and the deferred probe both read the wire, so both measure what an
 agent offers. A third question is what it *implements*, which is answered by
-reading the shipped package instead. Measured 2026-09 against the copies
-installed on one developer machine, so the versions are not always the ones in
-the matrix above.
+reading the shipped package instead.
 
-| agent | declared on a turn | found in the package and not declared | version read |
-|-------|--------------------|----------------------------------------|--------------|
-| claude | 27 | `Glob` `Grep` `Cd` `MultiEdit` `NotebookRead` `BashOutput` `KillShell` `TodoWrite` `Task` `LS` `ExitPlanMode` | 2.1.278 |
-| cursor | not on this path | 53 `ClientSideToolV2` enum entries (protocol vocabulary, not cursor-agent's set) | 2026.05.16 |
-| droid | 15 (17 after expansion) | `ApplyPatch` `AskUser` `slack_post_message` `ProposeMission` `StartMissionRun` `EndFeatureRun` `DismissHandoffItems` `GenerateDroid` | 0.223 |
-| opencode | 10 | `apply_patch` | 1.18.31 |
-| codex, hermes | 13, 15 | method does not apply — compiled binaries whose strings are dominated by runtime internals | — |
+The sweep takes the tool names an agent was measured declaring, finds the file
+in its package where they cluster, and reports the other tool-shaped strings
+around them. Run 2026-09 against the versions the suite installs, in the
+container, so the packages match the matrix.
+
+| agent | declared | tool-shaped names in the package that no turn declared |
+|-------|---------:|--------------------------------------------------------|
+| claude | 27 | `Glob` `Grep` `ToolSearch` `Task` `TodoWrite` `AskUserQuestion` `SendUserMessage` `Cd` `MultiEdit` `NotebookRead` `BashOutput` `KillShell` `ExitPlanMode` |
+| qwen | 17 | `zoom_image` `propose_goal` `send_message` `save_memory` `lsp` `monitor` `loop_wakeup` `cron_create` `cron_list` `cron_delete` `create_sub_session` `read_mcp_resource` `web_fetch` `list_directory` `todo_write` |
+| droid | 15 | `AskUser` `ApplyPatch` `FetchUrl` `WebSearch` `Loop` `GenerateDroid` `Script` `ProposeMission` `RecommendMission` `StartMissionRun` `EndFeatureRun` `ExitMissionPlanning` `DismissHandoffItems` `slack_post_message` |
+| kimi | 26 | `WebSearch` `NotifyUser` `Think` `TowerInit` `TowerStatus` `TowerTeardown` |
+| gemini | 15 | `read_many_files` `ask_user` |
+| kilo | 15 | `apply_patch` |
+| opencode | 10 | `apply_patch` |
+| omp, pi | 11, 4 | swept, no tool cluster — the best-matching file was a model catalogue and an SDK type declaration |
+| codex, copilot | 13, 16 | no cluster — their packages do not carry the declared names as quoted strings |
+| cursor, goose, grok, hermes, kiro | — | not swept: they install outside the npm tree this sweep walks |
+
+**Every agent the sweep could read ships more than it declares**, and for some
+the gap is large: qwen declares 17 and carries goals, cron, an LSP client and a
+sub-session spawner; droid declares 15 and carries a mission-planning system and
+a Slack poster; kimi carries `NotifyUser` and three `Tower*` tools.
 
 **claude implements `Glob` and `Grep` and did not declare them.** They are
 tool-name constants in the binary (`var eo="Glob"`, `var zr="Grep"`) and appear
@@ -490,11 +503,23 @@ RunSSE + BidiAppend flow instead, and those messages do not carry the field: a
 run was captured with every request body dumped, every packed-varint run
 decoded, and `supported_tools` appears in none of them.
 
-So cursor is still unmeasured, for a narrower reason than "protobuf". The CLI
-bundle references `StreamUnifiedChat` 34 times and `ConversationMessage` 64,
-against `AgentClientMessage` once — the chat path exists in the CLI and the
-mock steers it onto the other one. Teaching the mock `StreamUnifiedChat` and
-reading field 29 is what would give cursor a measured row.
+The CLI does not declare its tools on that path at all. Its richest message —
+the 2764-byte `BidiAppend` carrying the request context — sends the hook names
+it supports (`sessionStart`, `beforeSubmitPrompt`, `preToolUse`, `postToolUse`,
+`stop`, `preCompact`), the shell, the OS, the timezone, the working directory,
+the git branch and status, and the rules file. There is no tool list anywhere
+in it.
+
+That the bundle carries `StreamUnifiedChat` code is not evidence the CLI sends
+it: the CLI ships the whole schema, and every message it was observed sending
+is on the `agent.v1` path. So cursor's row cannot be measured here, and the
+only thing that would settle whether it declares tools to its own backend is a
+run against that backend with a real key.
+
+This is the third answer this file has given about cursor — invisible, then
+declared-and-unreadable, now declared-nowhere-we-can-see. The first two were
+inferred from the schema; this one is read off a captured run, which is the
+difference.
 
 Until then the enum below is the protocol's whole vocabulary, which is an upper
 bound and not an answer: it includes entries the CLI cannot run at all
@@ -531,8 +556,13 @@ reason to trust either on the names where they do not.
 
 **A name in a package is not an available tool.** Static extraction cannot tell
 a live tool from dead code, a legacy alias, a permission-rule label or a
-feature behind a flag. Nothing in this table is a measurement of what an agent
-will do; it is a list of what to go and measure. The wire is still the only
+feature behind a flag, and the sweep reads strings near other strings, so a
+parameter name or a status value can survive the filter. Nothing in this table
+is a measurement of what an agent will do; it is a list of what to go and
+measure. Five agents are missing from it because they install outside the npm
+tree, and two more because their packages do not carry their tool names as
+quoted strings — absence from this table means the sweep could not look, not
+that there is nothing there. The wire is still the only
 place an answer comes from, which is what the three columns are for: declared,
 revealed by asking, and present in the package.
 
