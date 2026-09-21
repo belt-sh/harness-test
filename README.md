@@ -499,6 +499,98 @@ ordinary user message rather than compacting". That was the missing filler:
 their sessions were too short to be worth compacting, and the agent forwarded
 the command. The reading was of the probe, not of the agent.
 
+### Two questions about an agent, and they are not the same question
+
+"Is this agent installed on this machine" and "am I running inside it right
+now" have different evidence, different consumers and different failure modes.
+They must not share a table. Cursor is the case that proves it: the registry's
+`cursor` is the `cursor-agent` CLI, while `cursor` in belt's own naming is the
+IDE, and one table would have to call both by one name.
+
+The installed list is what belt consumes — it decides which agents get hooks
+written. The runtime answer only labels a survey row.
+
+| question | evidence | API |
+|----------|----------|-----|
+| installed here | binary on PATH, well-known bin dir, package registry entry, config directory | `DetectInstalled()` |
+| running inside now | environment variables the surrounding process exported, marker files | `DetectRunning()` |
+
+Detection reports three tiers, because "found" alone hides the difference
+between an agent that can be driven and a directory someone left behind:
+**running** (its variable is set, so belt is a child of it), **installed** (a
+binary or a package registry entry), **configured** (a config directory and
+nothing else — typically an IDE with no CLI).
+
+**Environment evidence alone is not an install.** `Installed()` is a binary or
+a package registry entry, and nothing else; the env-var probe cannot promote an
+agent into the installed list on its own. Being inside an agent says a process
+exists, not that anything is on disk to install into.
+
+#### The installed list claimed two agents that were not there
+
+`--probe detect` runs `DetectInstalled()` inside a container that installed
+exactly one agent, which is the only place the claim can be checked against
+ground truth. It found two false positives, both of which had been shipping:
+
+**opencode, on every Linux and macOS machine.** The config directory was
+derived by taking the first segment of the hook path, which works for `.claude`
+and `.gemini` but truncated `.config/opencode/plugins` to `.config`. Every
+machine has a `~/.config`. Under a shared root — `.config`, `.local`, `.cache`
+— detection now keeps the segment that actually names the agent.
+
+**cursor, on every machine with grok.** Cursor's binary was recorded as
+`agent`, and grok installs `~/.grok/bin/agent`, which is one of the well-known
+bin directories the search walks. The binary is `cursor-agent`.
+
+Both are the same shape of mistake: a name generic enough to belong to someone
+else. Neither would have been found by reading the code, and both were found on
+the first run that asked the question out loud. 16/16 clean since.
+
+#### Three agents export nothing that names them
+
+`--probe env` dumps the environment an agent hands its hooks. A hook is a child
+process of the agent, so this is the only place an agent's exported variables
+can be observed rather than guessed, and it is where the registry's
+`DetectEnvVars` entries come from.
+
+Measured 2026-09: opencode 1.18.31 exports 13 variables and not one names it —
+the `OPENCODE_CLIENT` belt had been checking for is never set. kimi 0.43.1
+exports 12, the only `KIMI_*` one being the base URL this suite configured.
+omp 18.2.1 exports `__PI_NATIVE_VARIANT_CACHE`, a pi-family internal whose
+value does not name omp.
+
+All three run belt from a TS plugin rather than a command hook, so the
+generated plugin is the natural place to say which agent it is, and belt's
+generated config for those three declares `AI_AGENT` itself. It is deliberately
+not every agent: claude and pi set `AI_AGENT` themselves and carry their
+version in it, and overwriting that would throw the version away.
+
+The three are listed in `UndetectableByEnv` so the gap is a recorded
+measurement rather than an entry someone later "fixes" with a guess.
+
+**An artefact in an environment dump may have been put there by the thing
+running the test.** This suite sets `AI_AGENT` itself when driving belt's real
+hooks, so a variable found in a dump is not automatically the agent's. The pi
+observation above survived that check; it was made in mock mode, where the
+suite sets nothing.
+
+#### A version suffix that changed under us
+
+Some runtimes put `<name>_<version>_<surface>` in `AI_AGENT`, e.g.
+`claude-code_2-1-220_agent`. The trailing word is not stable: Claude Code
+2.1.263 emits `_agent` and 2.1.278 emits `_harness`. A pattern anchored on
+`_agent` stops matching at that upgrade, the whole string becomes the name, and
+every version silently opens its own survey row. The pattern accepts any
+trailing word.
+
+#### Shipped paths are not named after this suite
+
+goose's hooks were being installed into `.agents/plugins/belt-test`, a
+directory named after this test suite, on real machines. They go to
+`.agents/plugins/belt`, and the install removes the old directory. A test
+harness that writes its own name into a user's config is a bug with a long
+tail, because the wrong path keeps working.
+
 ### Cursor hooks are requested by the backend
 
 The Cursor CLI runs every hook through one dispatcher that answers a backend request: `ExecServerMessage` field 27 `execute_hook_args { request: ExecuteHookRequest }`, whose oneof names the hook (`pre_compact` 1, `pre_tool_use` 4, `post_tool_use` 5, `before_submit_prompt` 7, `stop` 11), answered by `ExecClientMessage` field 27 `execute_hook_result` (agent.v1 schema, Cursor CLI 2026.09). The mock sends those requests, listed per mode in `Harness.ServerRequestedHooks`: the TUI runs the prompt and stop hooks itself as well, so in interactive mode the mock requests only compaction, while in headless it requests all three. Before this, the mock requested none, and "Cursor never runs the prompt or stop hook in headless" sat in the known-issue table.
