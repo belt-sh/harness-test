@@ -636,6 +636,38 @@ ordinary user message rather than compacting". That was the missing filler:
 their sessions were too short to be worth compacting, and the agent forwarded
 the command. The reading was of the probe, not of the agent.
 
+#### goose's plugin manifest is better left unwritten
+
+The registry carries a `PluginManifest` field for goose, documented as "write
+plugin.json here on install", pointing at `.agents/plugins/belt/plugin.json`.
+Nothing has ever written it: the only code that touches it is the `os.Remove`
+in `Uninstall`, so uninstall deletes a file install never created. Measured
+2026-09 on goose 1.51, that turns out to be the right behaviour by accident.
+
+goose finds hooks and skills under `.agents/plugins/<name>/` by directory
+convention, with or without a manifest. A manifest whose component paths are
+malformed silently disables them:
+
+| `.agents/plugins/belt/plugin.json` | skill in `skills/` discovered |
+|------------------------------------|:-----------------------------:|
+| absent | yes |
+| `{"skills": "./skills"}` | yes |
+| `{"skills": "skills"}` | **no** |
+| `{"hooks": "hooks"}` | yes |
+| not valid JSON | **no** |
+
+Component paths must start with `./` and stay inside the plugin directory
+(`crates/goose/src/plugins/formats/open_plugins.rs`). A path that does not is
+rejected, and so is an unparseable file — in both cases the component vanishes
+from `goose skills list` with no error, no warning and no non-zero exit. The
+skill is simply not there.
+
+So the unimplemented field was a hazard, not a gap: writing the manifest buys
+nothing that convention does not already give, and writing it slightly wrong
+removes belt's skills from goose with nothing to say so. The field and its
+`os.Remove` should go, or the field should be documented as deliberately
+unused.
+
 ### Two questions about an agent, and they are not the same question
 
 "Is this agent installed on this machine" and "am I running inside it right
