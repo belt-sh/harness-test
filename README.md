@@ -359,9 +359,9 @@ here from the client's side.
 
 `--probe tools` prints what each agent offered the model on the turn the mock
 served, read off the wire rather than out of documentation. 12 agents measured
-in ACP, claude/codex/pi in headless. cursor is absent because the reader walks
-JSON and cursor declares its tools as a protobuf enum, which is a gap in this
-suite rather than in cursor — see "what the packages contain" below.
+in ACP, claude/codex/pi in headless. cursor is absent because it declares no
+tools on the protocol path this suite drives — see "what the packages contain"
+below for where its declaration lives and what it would take to read it.
 
 | capability | claude | codex | copilot | droid | gemini | goose | grok | hermes | kilo | kimi | kiro | omp | opencode | pi | qwen |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -470,7 +470,7 @@ the matrix above.
 | agent | declared on a turn | found in the package and not declared | version read |
 |-------|--------------------|----------------------------------------|--------------|
 | claude | 27 | `Glob` `Grep` `Cd` `MultiEdit` `NotebookRead` `BashOutput` `KillShell` `TodoWrite` `Task` `LS` `ExitPlanMode` | 2.1.278 |
-| cursor | nothing readable | 53 `ClientSideToolV2` enum entries | 2026.05.16 |
+| cursor | not on this path | 53 `ClientSideToolV2` enum entries (protocol vocabulary, not cursor-agent's set) | 2026.05.16 |
 | droid | 15 (17 after expansion) | `ApplyPatch` `AskUser` `slack_post_message` `ProposeMission` `StartMissionRun` `EndFeatureRun` `DismissHandoffItems` `GenerateDroid` | 0.223 |
 | opencode | 10 | `apply_patch` | 1.18.31 |
 | codex, hermes | 13, 15 | method does not apply — compiled binaries whose strings are dominated by runtime internals | — |
@@ -482,15 +482,46 @@ The matrix row above is still right about what claude offered — it searched
 through `Bash` on that turn — but "claude has no Glob" would be wrong, and the
 declared set is a configured subset of the implemented one.
 
-**cursor declares its tools after all, and this suite could not read them.**
-The request message carries `supported_tools`, a repeated
-`aiserver.v1.ClientSideToolV2` enum. It is on the wire; it is protobuf enum
-numbers rather than JSON names, and the declaration reader only walks JSON.
-Decoding that field would give cursor a measured row like every other agent.
-The 53 enum entries are the protocol's whole vocabulary and include IDE-only
-entries the CLI cannot run — `computer_use`, `record_screen`,
-`background_composer_followup`, `ai_attribution` — so the enum is an upper
-bound and `supported_tools` is the answer.
+**cursor has a tool declaration, and it is not on the path this suite drives.**
+`supported_tools` is a repeated `aiserver.v1.ClientSideToolV2` enum, and it is
+carried by `aiserver.v1.StreamUnifiedChatRequest` and
+`aiserver.v1.ConversationMessage`. The mock implements the `agent.v1`
+RunSSE + BidiAppend flow instead, and those messages do not carry the field: a
+run was captured with every request body dumped, every packed-varint run
+decoded, and `supported_tools` appears in none of them.
+
+So cursor is still unmeasured, for a narrower reason than "protobuf". The CLI
+bundle references `StreamUnifiedChat` 34 times and `ConversationMessage` 64,
+against `AgentClientMessage` once — the chat path exists in the CLI and the
+mock steers it onto the other one. Teaching the mock `StreamUnifiedChat` and
+reading field 29 is what would give cursor a measured row.
+
+Until then the enum below is the protocol's whole vocabulary, which is an upper
+bound and not an answer: it includes entries the CLI cannot run at all
+(`computer_use`, `record_screen`, `background_composer_followup`,
+`ai_attribution`), and the ids skip 2, 4, 10, 13, 14, 17, 20-22, 36 and 37,
+which are retired.
+
+| id | tool | id | tool | id | tool |
+|---:|------|---:|------|---:|------|
+| 1 | `read_semsearch_files` | 30 | `read_lints` | 47 | `update_project` |
+| 3 | `ripgrep_search` | 31 | `go_to_definition` | 48 | `task_v2` |
+| 5 | `read_file` | 32 | `task` | 49 | `call_mcp_tool` |
+| 6 | `list_dir` | 33 | `await_task` | 50 | `apply_agent_diff` |
+| 7 | `edit_file` | 34 | `todo_read` | 51 | `ask_question` |
+| 8 | `file_search` | 35 | `todo_write` | 52 | `switch_mode` |
+| 9 | `semantic_search_full` | 38 | `edit_file_v2` | 53 | `generate_image` |
+| 11 | `delete_file` | 39 | `list_dir_v2` | 54 | `computer_use` |
+| 12 | `reapply` | 40 | `read_file_v2` | 55 | `write_shell_stdin` |
+| 15 | `run_terminal_command_v2` | 41 | `ripgrep_raw_search` | 56 | `record_screen` |
+| 16 | `fetch_rules` | 42 | `glob_file_search` | 57 | `web_fetch` |
+| 18 | `web_search` | 43 | `create_plan` | 58 | `report_bugfix_results` |
+| 19 | `mcp` | 44 | `list_mcp_resources` | 59 | `ai_attribution` |
+| 23 | `search_symbols` | 45 | `read_mcp_resource` | 60 | `mcp_auth` |
+| 24 | `background_composer_followup` | 46 | `read_project` | 61 | `reflect` |
+| 25 | `knowledge_base` | 26 | `fetch_pull_request` | 62 | `await` |
+| 27 | `deep_search` | 28 | `create_diagram` | 63 | `get_mcp_tools` |
+| 29 | `fix_lints` | | | | |
 
 **The method checks out against a known result.** droid's package contains
 `FetchUrl`, `WebSearch`, `Loop` and `slack_post_file`, which are exactly the
