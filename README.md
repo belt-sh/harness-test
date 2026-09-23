@@ -38,7 +38,7 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 | [Codex](https://github.com/openai/codex) | 0.155.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
 | [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | oai completions |
 | [Cursor](https://cursor.com/docs/cli) | 2026.09.18 | ✅ | ✅ | — | — | JSONFlat | cursor⁶ |
-| [Droid](https://docs.factory.ai/cli) | 0.223.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
+| [Droid](https://docs.factory.ai/cli) | 0.225.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.60.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
 | [Goose](https://github.com/block/goose) | 1.51.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
 | [Grok](https://x.ai/grok-build) | 1.0.4x | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
