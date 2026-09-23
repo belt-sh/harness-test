@@ -786,13 +786,12 @@ seeds twice: a session built from nothing, and a real session read back with a
 turn appended, so a failure of the first alone names vendor state the writer
 does not produce.
 
-Measured 2026-09 against agentprotocol v0.6.2 and transcript/sqlite v0.2.0:
+Measured 2026-09 against agentprotocol v0.6.3 and transcript/sqlite v0.2.1:
 
 | | agents |
 |---|---|
 | round-trip decodes the turn | all 16, headless and ACP |
-| both seeds load and the fact arrives | droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen |
-| only the appended seed works | copilot — its writer passes foreign entry ids through, and copilot requires every event id to be a UUID |
+| both seeds load and the fact arrives | copilot, droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen — every ACP agent but gemini |
 | neither loads | gemini — its `session/load` is unreliable on every path |
 
 The first run of these probes found the codecs overwriting and corrupting real
@@ -803,6 +802,12 @@ supply and cascades deletes — a session the agent could load stopped loading
 after a no-op rewrite. The probe now fails if a new session is given an id the
 store already held. Every SQLite codec now has to leave an unchanged session
 row-identical.
+
+The seed probe gives its hand-built entries ids like `seed-1`, the way a
+transcript imported from another agent carries that agent's ids, and copilot
+rejected them: it requires every event id to be a UUID. Every writer now maps
+an id its agent's scheme does not accept to a fresh one and remaps the parent
+links with it.
 
 Two results here were this suite's own doing, and the probe says so rather than
 blaming the agent: pi runs headless with `--no-session`, so the runner drops it

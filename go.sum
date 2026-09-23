@@ -8,10 +8,10 @@ github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17k
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e/go.mod h1:boTsfXsheKC2y+lKOCMpSfarhxDeIzfZG1jqGcPl3cA=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/inference-sh/agentprotocol v0.6.2 h1:IWgsYnsHLey91YM6/5OrvfzFgJcdyCtBD6EqlVLB8BM=
-github.com/inference-sh/agentprotocol v0.6.2/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
-github.com/inference-sh/agentprotocol/transcript/sqlite v0.2.0 h1:E0p4wcekP5e7oU9XT2yO7TT61x7cLD0xLEiva921N1U=
-github.com/inference-sh/agentprotocol/transcript/sqlite v0.2.0/go.mod h1:Yfl1fwCc7T72/giPdJfpcGnHGwwN0u9aCHIPCqnqDik=
+github.com/inference-sh/agentprotocol v0.6.3 h1:yQZyin0y/AW04RF4JcXjMHHkD+CKGBwZdpVgND99K5A=
+github.com/inference-sh/agentprotocol v0.6.3/go.mod h1:8D17Ciz5DeCSZhSev99+IS8dKqve/R/mWE3+7EwYevA=
+github.com/inference-sh/agentprotocol/transcript/sqlite v0.2.1 h1:3cVF7r/pzlo3f6APYzbAtM/6vRXRqqqAbT3+pyGs3+k=
+github.com/inference-sh/agentprotocol/transcript/sqlite v0.2.1/go.mod h1:KR3UDIfGWQCXrRIPXyFslCGdR678UNeFmrR2NPPoxv4=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdhx/f4=
