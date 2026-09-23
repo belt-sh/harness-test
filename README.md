@@ -786,13 +786,13 @@ seeds twice: a session built from nothing, and a real session read back with a
 turn appended, so a failure of the first alone names vendor state the writer
 does not produce.
 
-Measured 2026-09 against agentprotocol v0.6.1 and transcript/sqlite v0.1.0:
+Measured 2026-09 against agentprotocol v0.6.2 and transcript/sqlite v0.2.0:
 
 | | agents |
 |---|---|
-| round-trip decodes the turn | all 16 but kiro in headless |
-| both seeds load and the fact arrives | droid, goose, grok, kilo, kimi, kiro, omp, opencode, qwen |
-| only the appended seed works | copilot (hand-built is not found), hermes (hand-built loads, fact absent) |
+| round-trip decodes the turn | all 16, headless and ACP |
+| both seeds load and the fact arrives | droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen |
+| only the appended seed works | copilot — its writer passes foreign entry ids through, and copilot requires every event id to be a UUID |
 | neither loads | gemini — its `session/load` is unreliable on every path |
 
 The first run of these probes found the codecs overwriting and corrupting real
