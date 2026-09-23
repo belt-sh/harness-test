@@ -74,7 +74,9 @@ func (r *TestRunner) probeDeferredTools(phase string) {
 	}
 	r.pass(fmt.Sprintf("deferred tools: %s declares %s(%s) — asking it to expand", r.harness.Name, name, arg))
 
-	r.runTurnFor()
+	if !r.runTurnFor(phase) {
+		return
+	}
 
 	revealed := added(before, r.server.DeclaredTools())
 	if len(revealed) == 0 {
@@ -99,11 +101,24 @@ func (r *TestRunner) probeDeferredTools(phase string) {
 }
 
 // runTurnFor runs one more turn so the agent gets a chance to call the armed
-// tool. Headless only: the expansion happens inside the agent, so the mode it
-// was driven in does not change what a search reveals, and headless is the one
-// mode all three deferred-tool agents have.
-func (r *TestRunner) runTurnFor() {
+// tool.
+//
+// The expansion happens inside the agent, so the mode does not change what a
+// search reveals — but a probe that only runs in one mode is silently
+// inapplicable to an agent that has the other. All three agents with a search
+// tool today have headless, which is exactly why the gap would not have shown
+// up until an ACP-only agent shipped one.
+func (r *TestRunner) runTurnFor(phase string) bool {
+	if phase == "acp" {
+		d, _, ok := r.startProbeTurn("deferred tools")
+		if !ok {
+			return false
+		}
+		d.Close()
+		return true
+	}
 	r.runOneShot("deferred-tools turn", r.harness.HeadlessCmd, r.harness.HeadlessModelArgs)
+	return true
 }
 
 func findDeferredTool(declared []string) (string, bool) {

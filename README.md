@@ -443,6 +443,13 @@ re-reads the declarations. Measured 2026-09 in Docker, headless:
 | grok | `search_tool(query)` | declared nothing new |
 | qwen | `tool_search(query)` | declared nothing new |
 
+The probe runs in headless and in ACP, and the two disagree. droid declares 17
+tools in headless after expansion and 20 in ACP — `ConnectorSearch`,
+`ExitSpecMode` and `TodoWrite` exist only over ACP, and nothing is headless-only.
+So an agent's tool surface is a property of the mode it was driven in, not of
+the agent, and the matrix above is the headless answer for claude, codex and pi
+and the ACP answer for the rest.
+
 **These are two different architectures, not one working agent and two failures.**
 droid expands the declaration, so its real surface is 17 tools and the matrix
 above undercounts it by four. grok and qwen return search results to the model

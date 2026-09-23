@@ -267,6 +267,9 @@ func (r *TestRunner) Run() Result {
 			r.resetPhase(ModeACP)
 			r.probeCompactedResume()
 		}
+		if r.probes.Deferred {
+			r.probeDeferredTools("acp")
+		}
 	}
 	if r.mode == ModeSDK {
 		r.resetPhase(ModeSDK)
@@ -1176,9 +1179,13 @@ func (r *TestRunner) acpInvocationGated() (bin string, args []string, dir string
 // openers is what the agent sent before the turn — the yardstick a replay has
 // to beat. ok is false when the probe should give up; the skip has been
 // recorded.
+//
+// The caller arms whatever tool call it wants served. This used to arm the
+// default one here, which silently overwrote a probe that had armed its own —
+// the deferred-tools probe arms a tool-search call and would have had it
+// replaced by Read before the turn ran.
 func (r *TestRunner) startProbeTurn(label string) (d *ACPDriver, openers []string, ok bool) {
 	bin, args, dir := r.acpInvocation()
-	r.armToolCall(ModeACP)
 
 	d = NewACPDriver(bin, args, dir, r.envIn(dir))
 	if err := d.Start(); err != nil {
@@ -1242,6 +1249,7 @@ func (r *TestRunner) probeSessionLoad() {
 	how := r.probes.How()
 	fmt.Printf("[probe] session/load (resume after the first process was %s)\n", how)
 
+	r.armToolCall(ModeACP)
 	first, openers, ok := r.startProbeTurn("session/load")
 	if !ok {
 		return
@@ -1447,6 +1455,7 @@ func (r *TestRunner) probeCompactedResume() {
 	}
 	fmt.Println("[probe] resuming a session the agent compacted")
 
+	r.armToolCall(ModeACP)
 	first, _, ok := r.startProbeTurn("compaction")
 	if !ok {
 		return

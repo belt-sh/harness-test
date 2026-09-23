@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/belt-sh/harness-test/server"
@@ -94,3 +95,32 @@ func TestDeferredProbeParsesFromTheFlag(t *testing.T) {
 		t.Error("a typo must be an error, not silence")
 	}
 }
+
+// The probe was headless-only, which is a silent gap rather than a loud one:
+// all three agents with a search tool have headless today, so nothing would
+// fail until an ACP-only agent shipped one. Guard both phases are wired.
+func TestTheDeferredProbeRunsInBothPhases(t *testing.T) {
+	src := readSource(t, "testrunner.go")
+	for _, want := range []string{`r.probeDeferredTools("headless")`, `r.probeDeferredTools("acp")`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("%s is not wired into the run loop", want)
+		}
+	}
+}
+
+// startProbeTurn used to arm the default tool call itself, which silently
+// overwrote a probe that had armed its own — the deferred probe arms a
+// tool-search call and would have had it replaced by Read before the turn ran.
+// Arming belongs to the caller.
+func TestTheSharedTurnDoesNotArmATheCallersToolCall(t *testing.T) {
+	src := readSource(t, "testrunner.go")
+	i := strings.Index(src, "func (r *TestRunner) startProbeTurn(")
+	if i < 0 {
+		t.Fatal("startProbeTurn is gone")
+	}
+	body := src[i:strings.Index(src[i:], "\n}\n")+i]
+	if strings.Contains(body, "r.armToolCall(") {
+		t.Error("startProbeTurn arms a tool call, overwriting whatever the caller armed")
+	}
+}
+
