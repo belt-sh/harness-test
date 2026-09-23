@@ -20,13 +20,14 @@ package server
 // to read a file (tool hooks), then streams the canned answer and ends the turn.
 
 import (
-	"crypto/sha256"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"strings"
@@ -294,6 +295,7 @@ type cursorSession struct {
 	prompt   string
 	model    string
 	toolPath string // path the mock asked the client to read, "" when no tool was served
+	toolID   string // its call id, in real cursor's form
 	toolOut  string // what the client returned for it
 	execID   uint64
 	pending  uint64 // exec id whose reply advances the current stage
@@ -541,8 +543,9 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 				path = a.Path
 			}
 			cs.toolPath = path
+			cs.toolID = "tool_" + uuid.NewString()
 			cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)),
-				pbMsg(7, pbString(1, path), pbString(2, "call-1"))))
+				pbMsg(7, pbString(1, path), pbString(2, cs.toolID))))
 			go s.cursorFallback(cs, "tool")
 			return
 		}
@@ -611,6 +614,11 @@ func (s *MockServer) cursorFinish(cs *cursorSession) {
 func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
 	msgs := []map[string]any{{"role": "user", "content": cs.prompt}}
 	if cs.toolPath != "" {
+		// Names and ids follow a real cursor session's store.db: tools are
+		// PascalCase ("Read", "Write", "StrReplace", "Grep") and call ids are
+		// "tool_" plus a UUID. The mock used "read_file" and "call-1" until
+		// that was checked, which made samples look plausible and wrong.
+		//
 		// A tool turn is three messages in the AI SDK shape cursor stores: the
 		// call, the result, then the answer. Cursor's own transcript writer
 		// renders the call as {"type":"tool_use","name","input"} with no id and
@@ -619,11 +627,11 @@ func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
 		// where a reader that wants results has to look.
 		msgs = append(msgs,
 			map[string]any{"role": "assistant", "content": []map[string]any{{
-				"type": "tool-call", "toolCallId": "call-1", "toolName": "read_file",
+				"type": "tool-call", "toolCallId": cs.toolID, "toolName": "Read",
 				"args": map[string]any{"path": cs.toolPath},
 			}}},
 			map[string]any{"role": "tool", "content": []map[string]any{{
-				"type": "tool-result", "toolCallId": "call-1", "toolName": "read_file",
+				"type": "tool-result", "toolCallId": cs.toolID, "toolName": "Read",
 				"result": cs.toolOut,
 			}}},
 		)

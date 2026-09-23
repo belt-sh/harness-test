@@ -71,7 +71,7 @@ func TestCursorCheckpointStoresBlobsBeforeNamingThem(t *testing.T) {
 func TestCursorCheckpointCarriesATheToolTurn(t *testing.T) {
 	s := &MockServer{}
 	cs := &cursorSession{frames: make(chan []byte, 12), closed: make(chan struct{}),
-		prompt: "p", toolPath: "README.md", toolOut: "test"}
+		prompt: "p", toolPath: "README.md", toolOut: "test", toolID: "tool_x"}
 	s.cursorCheckpoint(cs)
 
 	var roles []string
@@ -86,6 +86,10 @@ func TestCursorCheckpointCarriesATheToolTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 		roles = append(roles, m["role"].(string))
+		if m["role"] != "user" && bytes.Contains(data, []byte("toolCallId")) &&
+			(!bytes.Contains(data, []byte(`"toolName":"Read"`)) || !bytes.Contains(data, []byte(`"toolCallId":"tool_x"`))) {
+			t.Errorf("tool message does not use cursor's names and the served id: %s", data)
+		}
 		if m["role"] == "tool" && !bytes.Contains(data, []byte(`"result":"test"`)) {
 			t.Errorf("tool result does not carry what the client returned: %s", data)
 		}
