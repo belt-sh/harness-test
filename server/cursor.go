@@ -293,6 +293,8 @@ type cursorSession struct {
 	stage    string // "", "context", "tool", "done"
 	prompt   string
 	model    string
+	toolPath string // path the mock asked the client to read, "" when no tool was served
+	toolOut  string // what the client returned for it
 	execID   uint64
 	pending  uint64 // exec id whose reply advances the current stage
 	lastSeen time.Time
@@ -425,6 +427,17 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 		if hook, ok := pbPath(msg, 2, 27); ok {
 			entry["hook_result"] = pbToJSON(hook, 0)
 		}
+		// The read result comes back on the field its request went out on:
+		// ReadResult { 1 success: ReadSuccess { 1 path, 2 content } }. Read
+		// the content by field number. An earlier version took the longest
+		// string in the reply, which was the path — longer than a four-byte
+		// file — and stored it as the result.
+		if content, ok := pbPath(msg, 2, 7, 1, 2); ok {
+			entry["read_result"] = string(content)
+			s.mu.Lock()
+			cs.toolOut = string(content)
+			s.mu.Unlock()
+		}
 	case "5": // exec_client_control_message: heartbeat / stream_close / throw
 		entry["exec_control"] = true
 	}
@@ -527,6 +540,7 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 			if json.Unmarshal([]byte(args), &a) == nil && a.Path != "" {
 				path = a.Path
 			}
+			cs.toolPath = path
 			cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)),
 				pbMsg(7, pbString(1, path), pbString(2, "call-1"))))
 			go s.cursorFallback(cs, "tool")
@@ -595,10 +609,26 @@ func (s *MockServer) cursorFinish(cs *cursorSession) {
 // checkpoint that names them after a pause for the blob manager, which runs on
 // its own consumer.
 func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
-	msgs := []map[string]any{
-		{"role": "user", "content": cs.prompt},
-		{"role": "assistant", "content": []map[string]any{{"type": "text", "text": s.getResponse()}}},
+	msgs := []map[string]any{{"role": "user", "content": cs.prompt}}
+	if cs.toolPath != "" {
+		// A tool turn is three messages in the AI SDK shape cursor stores: the
+		// call, the result, then the answer. Cursor's own transcript writer
+		// renders the call as {"type":"tool_use","name","input"} with no id and
+		// writes nothing for the result — a tool-result part yields no text, so
+		// the tool message produces no row. The blob is still stored, which is
+		// where a reader that wants results has to look.
+		msgs = append(msgs,
+			map[string]any{"role": "assistant", "content": []map[string]any{{
+				"type": "tool-call", "toolCallId": "call-1", "toolName": "read_file",
+				"args": map[string]any{"path": cs.toolPath},
+			}}},
+			map[string]any{"role": "tool", "content": []map[string]any{{
+				"type": "tool-result", "toolCallId": "call-1", "toolName": "read_file",
+				"result": cs.toolOut,
+			}}},
+		)
 	}
+	msgs = append(msgs, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": s.getResponse()}}})
 	var ids [][]byte
 	for i, m := range msgs {
 		data, _ := json.Marshal(m)
@@ -615,4 +645,3 @@ func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
 	}
 	cs.send(pbMsg(3, state...)) // AgentServerMessage.conversation_checkpoint_update
 }
-

@@ -64,3 +64,39 @@ func TestCursorCheckpointStoresBlobsBeforeNamingThem(t *testing.T) {
 		}
 	}
 }
+
+// A turn where the mock served a tool call checkpoints four messages in
+// order — the prompt, the call, its result, the answer — so a codec reading
+// cursor's output sees tool_use rows the way a real session writes them.
+func TestCursorCheckpointCarriesATheToolTurn(t *testing.T) {
+	s := &MockServer{}
+	cs := &cursorSession{frames: make(chan []byte, 12), closed: make(chan struct{}),
+		prompt: "p", toolPath: "README.md", toolOut: "test"}
+	s.cursorCheckpoint(cs)
+
+	var roles []string
+	for len(cs.frames) > 0 {
+		msg := readFrame(t, cs)
+		data, ok := pbPath(msg, 4, 3, 2)
+		if !ok {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		roles = append(roles, m["role"].(string))
+		if m["role"] == "tool" && !bytes.Contains(data, []byte(`"result":"test"`)) {
+			t.Errorf("tool result does not carry what the client returned: %s", data)
+		}
+	}
+	want := []string{"user", "assistant", "tool", "assistant"}
+	if len(roles) != len(want) {
+		t.Fatalf("roles %v, want %v", roles, want)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Fatalf("roles %v, want %v", roles, want)
+		}
+	}
+}
