@@ -238,6 +238,9 @@ func (r *TestRunner) Run() Result {
 			if r.probes.Deferred {
 				r.probeDeferredTools("headless")
 			}
+			if r.probes.Transcript {
+				r.probeTranscriptRoundTrip("headless")
+			}
 		} else {
 			r.skip(r.harness.Name + " has no headless mode")
 		}
@@ -253,6 +256,9 @@ func (r *TestRunner) Run() Result {
 		r.requestHooksFor(ModeACP)
 		r.runACP()
 		r.runChecks("acp")
+		if r.probes.Transcript {
+			r.probeTranscriptRoundTrip("acp")
+		}
 		// After the checks, because the probes run turns of their own and the
 		// checks read the same mock log and hook log.
 		if r.probes.Resume {
@@ -269,6 +275,10 @@ func (r *TestRunner) Run() Result {
 		}
 		if r.probes.Deferred {
 			r.probeDeferredTools("acp")
+		}
+		if r.probes.Seed {
+			r.resetPhase(ModeACP)
+			r.probeTranscriptSeed()
 		}
 	}
 	if r.mode == ModeSDK {
@@ -825,6 +835,13 @@ func (r *TestRunner) runOneShot(label string, cmdSlice, extraArgs []string) []by
 		args = append(args, prompt)
 	}
 	for _, a := range extraArgs {
+		// The transcript probe reads the session the agent saved, so a flag
+		// this suite passes to stop it saving defeats the probe. pi runs
+		// headless with --no-session, and its store had never been sampled
+		// because of it.
+		if a == "--no-session" && r.probes.Transcript {
+			continue
+		}
 		args = append(args, r.expand(a))
 	}
 

@@ -472,6 +472,14 @@ func (s *MockServer) handleKiroRuntime(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Response is the canned answer, read without counting it as served —
+// getResponse counts, and the runner waits on that count to know a turn ended.
+func (s *MockServer) Response() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.response
+}
+
 // --- Internal helpers ---
 
 func (s *MockServer) getResponse() string {

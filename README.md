@@ -775,6 +775,41 @@ in plain `exec` or over ACP; PreCompact fires only in the TUI. Measured on
 with the source for each. Written up for the vendor in
 [docs/droid-hooks.md](docs/droid-hooks.md).
 
+### Reading and writing agents' own session stores
+
+`--probe transcript` decodes the session an agent saved after a turn, with the
+codecs in `agentprotocol/transcript`, and checks it holds the prompt the runner
+sent and the answer the mock gave. `--probe seed` writes a session the agent
+never had with a fact planted in it, loads it over ACP, and checks whether the
+fact reaches the model — the proof that importing someone's history works. It
+seeds twice: a session built from nothing, and a real session read back with a
+turn appended, so a failure of the first alone names vendor state the writer
+does not produce.
+
+Measured 2026-09 against agentprotocol v0.6.1 and transcript/sqlite v0.1.0:
+
+| | agents |
+|---|---|
+| round-trip decodes the turn | all 16 but kiro in headless |
+| both seeds load and the fact arrives | droid, goose, grok, kilo, kimi, kiro, omp, opencode, qwen |
+| only the appended seed works | copilot (hand-built is not found), hermes (hand-built loads, fact absent) |
+| neither loads | gemini — its `session/load` is unreliable on every path |
+
+The first run of these probes found the codecs overwriting and corrupting real
+sessions: goose's writer reused an existing session id and replaced the agent's
+own session, and the goose, hermes and opencode writers deleted and reinserted
+every row with `INSERT OR REPLACE`, which nulls every column the writer does not
+supply and cascades deletes — a session the agent could load stopped loading
+after a no-op rewrite. The probe now fails if a new session is given an id the
+store already held. Every SQLite codec now has to leave an unchanged session
+row-identical.
+
+Two results here were this suite's own doing, and the probe says so rather than
+blaming the agent: pi runs headless with `--no-session`, so the runner drops it
+when the transcript probe is on; and agents with `ACPNeedsTempHome` run under a
+temp `HOME`, so stores are opened at the HOME the agent was given, not the
+runner's.
+
 ### Cursor saves a conversation only when the backend checkpoints it
 
 Under the mock, cursor wrote one line per session in every mode —

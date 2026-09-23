@@ -38,6 +38,12 @@ type Probes struct {
 	// that declare such a tool have anything to reveal.
 	Deferred bool
 
+	// Transcript decodes the session the agent wrote after a turn and checks it
+	// holds that turn. Seed writes a session the agent never had, with a fact
+	// planted in it, loads it over ACP and checks the fact reaches the model.
+	Transcript bool
+	Seed       bool
+
 	// Detect checks what harness.DetectInstalled() claims against the agent
 	// this run actually installed. The installed list is what belt consumes;
 	// a container that installs exactly one agent is the only place the
@@ -54,7 +60,7 @@ type Probes struct {
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, deferred, env, detect
+//	tools, deferred, transcript, seed, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -91,12 +97,16 @@ func ParseProbes(spec string) (Probes, error) {
 			p.DumpTools = true
 		case "deferred":
 			p.Deferred = true
+		case "transcript":
+			p.Transcript = true
+		case "seed":
+			p.Seed = true
 		case "env":
 			p.DumpEnv = true
 		case "detect":
 			p.Detect = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, deferred, env or detect)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, deferred, transcript, seed, env or detect)", name)
 		}
 	}
 	return p, nil

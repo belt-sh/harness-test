@@ -5,3 +5,5 @@ tests/belt
 # created by the driver tests
 runner/test-repo/
 driver/README.md
+go.work
+go.work.sum
