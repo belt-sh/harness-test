@@ -767,6 +767,14 @@ directory named after this test suite, on real machines. They go to
 harness that writes its own name into a user's config is a bug with a long
 tail, because the wrong path keeps working.
 
+### droid runs its prompt hook in two of four modes
+
+UserPromptSubmit fires in droid's TUI and in `exec -o stream-jsonrpc`, and not
+in plain `exec` or over ACP; PreCompact fires only in the TUI. Measured on
+0.225.2, unchanged since 0.217, and recorded in the registry's `KnownIssues`
+with the source for each. Written up for the vendor in
+[docs/droid-hooks.md](docs/droid-hooks.md).
+
 ### Cursor saves a conversation only when the backend checkpoints it
 
 Under the mock, cursor wrote one line per session in every mode —
