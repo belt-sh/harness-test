@@ -20,6 +20,7 @@ package server
 // to read a file (tool hooks), then streams the canned answer and ends the turn.
 
 import (
+	"crypto/sha256"
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
@@ -510,6 +511,7 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 		s.cursorAdvance(cs)
 	case "hook:stop":
 		cs.stage = "done"
+		s.cursorCheckpoint(cs)
 		cs.send(pbMsg(1, pbMsg(14, pbUint(1, 10), pbUint(2, 5)))) // interaction_update.turn_ended
 		cs.close()
 	case "context":
@@ -575,3 +577,42 @@ func (s *MockServer) cursorFinish(cs *cursorSession) {
 	cs.stage = "hook:compact"
 	s.cursorAdvance(cs)
 }
+
+// cursorCheckpoint does what cursor's backend does at the end of a turn so the
+// client persists the conversation.
+//
+// Without it cursor writes one line per session — {"type":"turn_ended"} — and
+// nothing else, in every mode. Its transcript is not built from the streamed
+// text: TranscriptStore.writeFromStateIncremental reads a
+// ConversationStateStructure, takes root_prompt_messages_json as a list of
+// blob ids, fetches each from the client's local blob store, and writes one row
+// per message. The backend fills that store through kv_server_message
+// set_blob_args and then names the ids in a conversation_checkpoint_update. The
+// mock sent neither, so there was never anything to write.
+//
+// A blob is the UTF-8 JSON of an AI SDK message, {role, content}. The client
+// skips an id it cannot find rather than failing, so the blobs go first and the
+// checkpoint that names them after a pause for the blob manager, which runs on
+// its own consumer.
+func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
+	msgs := []map[string]any{
+		{"role": "user", "content": cs.prompt},
+		{"role": "assistant", "content": []map[string]any{{"type": "text", "text": s.getResponse()}}},
+	}
+	var ids [][]byte
+	for i, m := range msgs {
+		data, _ := json.Marshal(m)
+		sum := sha256.Sum256(data)
+		id := sum[:]
+		ids = append(ids, id)
+		// AgentServerMessage.kv_server_message { id, set_blob_args { blob_id, blob_data } }
+		cs.send(pbMsg(4, pbUint(1, uint64(1000+i)), pbMsg(3, pbBytes(1, id), pbBytes(2, data))))
+	}
+	time.Sleep(300 * time.Millisecond)
+	var state [][]byte
+	for _, id := range ids {
+		state = append(state, pbBytes(1, id)) // root_prompt_messages_json, repeated
+	}
+	cs.send(pbMsg(3, state...)) // AgentServerMessage.conversation_checkpoint_update
+}
+

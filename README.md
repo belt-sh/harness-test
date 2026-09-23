@@ -767,6 +767,28 @@ directory named after this test suite, on real machines. They go to
 harness that writes its own name into a user's config is a bug with a long
 tail, because the wrong path keeps working.
 
+### Cursor saves a conversation only when the backend checkpoints it
+
+Under the mock, cursor wrote one line per session in every mode —
+`{"type":"turn_ended","status":"success"}` — and no messages. The transcript
+is not built from the text the client streams. `TranscriptStore` reads a
+`ConversationStateStructure`, treats `root_prompt_messages_json` as a list of
+blob ids, fetches each from the client's local blob store and writes one row
+per message, skipping any id it cannot find. The backend fills that store with
+`kv_server_message` `set_blob_args` and then names the ids in a
+`conversation_checkpoint_update`. The mock sent neither, so cursor had nothing
+to write, and nothing said so.
+
+The mock now does both at the end of a turn — the user message and the answer
+as UTF-8 JSON `{role, content}` blobs keyed by their sha256, then a
+checkpoint naming them — and cursor writes the user and assistant rows plus
+its `store.db` in headless and interactive. Blobs go first because the client
+drops a named id it has not stored rather than failing.
+
+This does not answer the tool question. cursor's `supported_tools` sits on
+`StreamUnifiedChatRequest`, which the CLI does not send on this path, so its
+row in the tool matrix stays empty.
+
 ### Cursor hooks are requested by the backend
 
 The Cursor CLI runs every hook through one dispatcher that answers a backend request: `ExecServerMessage` field 27 `execute_hook_args { request: ExecuteHookRequest }`, whose oneof names the hook (`pre_compact` 1, `pre_tool_use` 4, `post_tool_use` 5, `before_submit_prompt` 7, `stop` 11), answered by `ExecClientMessage` field 27 `execute_hook_result` (agent.v1 schema, Cursor CLI 2026.09). The mock sends those requests, listed per mode in `Harness.ServerRequestedHooks`: the TUI runs the prompt and stop hooks itself as well, so in interactive mode the mock requests only compaction, while in headless it requests all three. Before this, the mock requested none, and "Cursor never runs the prompt or stop hook in headless" sat in the known-issue table.
