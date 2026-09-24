@@ -47,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
+        id: build
         # tests/belt is the released belt CLI from dist.inference.sh; the
         # --hooks belt run installs its real hook commands through the package.
         run: |
@@ -56,6 +57,7 @@ jobs:
         run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} ${{ needs.plan.outputs.flags }}
         timeout-minutes: 8
       - name: Test ${{ matrix.mode }} (belt hooks)
-        if: success() || failure()
+        # Runs when the mock-hooks step failed too, not when there is no image.
+        if: (success() || failure()) && steps.build.outcome == 'success'
         run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} --hooks belt ${{ needs.plan.outputs.flags }}
         timeout-minutes: 8
