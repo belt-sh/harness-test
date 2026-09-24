@@ -109,28 +109,28 @@ func (r *TestRunner) probeTranscriptSeed() {
 	}
 	ctx := context.Background()
 
+	// The base for the appended variant is chosen from the sessions that
+	// existed before any seeding. Loading the hand-built session can make the
+	// agent write sessions of its own (gemini starts a fresh one when a load
+	// fails), and those are newer than the ACP phase's conversation.
+	earlier, err := st.List(ctx, r.workDir())
+	if err != nil {
+		r.fail(fmt.Sprintf("seed: list %s sessions: %v", r.harness.Name, err))
+		return
+	}
+
 	fact := "SEED-" + randomHex(4)
 	now := time.Now().UTC()
 	built := &transcript.Session{
 		Agent: r.harness.Name, CWD: r.workDir(), Created: now, Updated: now,
 		Entries: seedTurn(fact, now, "seed-1", "seed-2"),
 	}
-	seeded := r.seedAndLoad(st, "hand-built", built, fact)
+	r.seedAndLoad(st, "hand-built", built, fact)
 
-	infos, err := st.List(ctx, r.workDir())
-	if err != nil || len(infos) == 0 {
-		r.skip(fmt.Sprintf("seed (appended): %s has no earlier session to append to", r.harness.Name))
-		return
-	}
-	// The newest session may be the hand-built one just written; append to a
-	// session the agent wrote itself. Skip it by the id Write returned as well
-	// as by content, since a codec may decode the seed's text into blocks the
-	// content check does not see.
+	// Skip sessions holding a seed by content: an earlier seed run may have
+	// left one in the same store.
 	var base *transcript.Session
-	for _, in := range infos {
-		if in.ID == seeded {
-			continue
-		}
+	for _, in := range earlier {
 		if s, err := st.Read(ctx, in.ID); err == nil && !holdsSeed(s) {
 			base = s
 			break
