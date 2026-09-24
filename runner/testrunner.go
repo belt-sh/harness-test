@@ -2187,10 +2187,27 @@ func (r *TestRunner) agentEnv() []string {
 	)
 }
 
+// run runs a command in dir without the caller's GIT_* variables. Inside a
+// git hook (the pre-push hook runs go test) GIT_DIR names the repository
+// being pushed, and in a linked worktree it is absolute, so the test repo's
+// git init, config and commit went to that repository instead: its HEAD
+// moved to an "init" commit that deleted every file, its config gained
+// user t@t and core.bare = true.
 func run(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Env = withoutGitEnv(os.Environ())
 	return cmd.Run()
+}
+
+func withoutGitEnv(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "GIT_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // copyTree copies a file or directory tree; missing sources are ignored.
