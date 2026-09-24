@@ -17,7 +17,11 @@ func TestTestRepoIgnoresCallerGitDir(t *testing.T) {
 		t.Skip("no git")
 	}
 	outer := t.TempDir()
-	if out, err := exec.Command("git", "init", "-q", outer).CombinedOutput(); err != nil {
+	// This test runs under the pre-push hook too, whose GIT_DIR would turn
+	// its own git init into a reinit of the repository being pushed.
+	initCmd := exec.Command("git", "init", "-q", outer)
+	initCmd.Env = withoutGitEnv(os.Environ())
+	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	t.Setenv("GIT_DIR", filepath.Join(outer, ".git"))
