@@ -11,6 +11,11 @@ on:
       harness:
         required: true
         type: string
+      agent_version:
+        # Installs this exact version instead of the latest (--agent-version).
+        required: false
+        type: string
+        default: ""
 
 jobs:
   plan:
@@ -54,10 +59,15 @@ jobs:
           tests/fetch-belt.sh
           docker build -f tests/Dockerfile -t harness-test .
       - name: Test ${{ matrix.mode }} (mock hooks)
-        run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} ${{ needs.plan.outputs.flags }}
+        # The version reaches the shell as a variable, never as workflow text.
+        env:
+          AGENT_VERSION: ${{ inputs.agent_version }}
+        run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} ${{ needs.plan.outputs.flags }} ${AGENT_VERSION:+--agent-version "$AGENT_VERSION"}
         timeout-minutes: 8
       - name: Test ${{ matrix.mode }} (belt hooks)
         # Runs when the mock-hooks step failed too, not when there is no image.
         if: (success() || failure()) && steps.build.outcome == 'success'
-        run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} --hooks belt ${{ needs.plan.outputs.flags }}
+        env:
+          AGENT_VERSION: ${{ inputs.agent_version }}
+        run: docker run --rm ${{ needs.plan.outputs.docker }} harness-test --harness ${{ inputs.harness }} --mode ${{ matrix.mode }} --hooks belt ${{ needs.plan.outputs.flags }} ${AGENT_VERSION:+--agent-version "$AGENT_VERSION"}
         timeout-minutes: 8

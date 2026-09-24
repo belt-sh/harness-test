@@ -86,6 +86,7 @@ type TestRunner struct {
 	probes           Probes
 	section          string         // the phase checks are filed under in the report
 	seen             map[string]int // check ids recorded so far, for repeats
+	agentVersion     string         // --agent-version: install this version, not the latest
 }
 
 func (r *TestRunner) entries() []server.LogEntry {
@@ -463,6 +464,10 @@ func (r *TestRunner) setupHome() {
 
 func (r *TestRunner) checkBinary() {
 	fmt.Println("[phase 1] prerequisites")
+	if r.agentVersion != "" {
+		r.installPinned()
+		return
+	}
 	if _, err := exec.LookPath(r.harness.Binary); err != nil {
 		if len(r.harness.InstallCmd) == 0 {
 			r.fail("binary", r.harness.Binary+" not found (no install command)")

@@ -1120,6 +1120,21 @@ IMAGE=tests-test tests/nightly.sh probes <agent>              # run again: must 
 IMAGE=tests-test tests/nightly.sh surface <agent> --update
 ```
 
+#### A given agent version (`--agent-version`)
+
+Without it every run installs the latest release through the registry's `InstallCmd`, and skips the install when the binary is already on PATH. `--agent-version <v>` (one `--harness` only) installs exactly `v`, whatever is on PATH, then fails the `binary` check unless the installed agent's `--version` reports that version. The report records the installed version as before.
+
+| mechanism | agents | how `v` is installed |
+|---|---|---|
+| npm | claude, codex, copilot, droid, gemini, kilo, kimi, omp, opencode, pi, qwen | `npm install -g <pkg>@v` |
+| pip | hermes | `pip install --break-system-packages hermes-agent[acp]==v` |
+| cursor installer | cursor | `https://cursor.com/install` carries its build id; it is fetched and the id replaced. `v` is a build id as `cursor-agent --version` prints it (`2026.07.23-e383d2b`); published ids: `downloads.cursor.com/lab/<id>/linux/x64/agent-cli-package.tar.gz` |
+| installer argument | grok | `curl -fsSL https://x.ai/cli/install.sh \| bash -s v` |
+| release zip | kiro | `prod.download.cli.kiro.dev/stable/v/kirocli-<arch>-linux.zip` and the `install.sh` inside it, as kiro's installer does for `latest`. There is no per-version manifest (403), so the checksum is not verified |
+| release tag | goose | the GitHub release tagged `v<v>` instead of `stable` |
+
+Any other install command is refused, naming it: it has no way to select a version. In CI, `gh workflow run pinned.yml -f harness=<agent> -f version=<v>` runs the agent's usual jobs (every mode, mock and belt hooks) with the version pinned; a green run is what extends agentprotocol's `Tested.Min`.
+
 ### Mock server
 
 ```bash

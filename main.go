@@ -292,6 +292,8 @@ func main() {
 		}
 	}
 
+	checkAgentVersion(targets)
+
 	totalPassed, totalFailed, totalSkipped, totalFound := 0, 0, 0, 0
 	var failed []string
 	var results []runner.Result
@@ -316,6 +318,7 @@ func main() {
 		r := runner.New(h, srv, baseURL)
 		r.SetMode(runMode)
 		r.SetProbes(probes)
+		r.SetAgentVersion(*agentVersion)
 		if *hooks == "belt" {
 			r.SetHookSource(runner.HooksBelt)
 		}

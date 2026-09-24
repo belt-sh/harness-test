@@ -1,0 +1,27 @@
+name: Pinned agent version
+
+# The agent's usual jobs (every mode, mock and belt hooks) with an exact
+# version installed instead of the latest: harness-test --agent-version. A
+# green run is the evidence that extends agentprotocol's Tested.Min.
+#   gh workflow run pinned.yml -f harness=hermes -f version=0.14.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      harness:
+        description: agent name, as in the registry
+        required: true
+        type: string
+      version:
+        description: exact version (cursor takes a build id, e.g. 2026.07.23-e383d2b)
+        required: true
+        type: string
+
+run-name: ${{ inputs.harness }} ${{ inputs.version }}
+
+jobs:
+  test:
+    uses: ./.github/workflows/test-harness.yml
+    with:
+      harness: ${{ inputs.harness }}
+      agent_version: ${{ inputs.version }}
