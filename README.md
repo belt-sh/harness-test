@@ -837,14 +837,15 @@ after the write), so "the agent dropped it" is told apart from "the codec never
 kept it". A missing kind is a finding.
 
 Measured 2026-09-24, agentprotocol v0.9.4 and transcript/sqlite v0.4.1, 14
-agents (pi has no session driver; cursor's ACP session loads only from its own
-`~/.cursor/acp-sessions/<id>/store.db`, which the transcript codec does not
-write, so a seeded session is "not found"):
+agents; cursor and pi added with v0.10.x (cursor-agent acp keeps its sessions in
+`~/.cursor/acp-sessions/<id>/store.db`, which the cursor codec reads and writes
+from transcript/sqlite v0.4.2; pi's writer puts `usage` on assistant rows from
+v0.10.0, without which pi crashed on a seeded history):
 
 | Kind | Reached the model |
 |------|-------------------|
-| first user message, assistant text, tool call arguments, tool result, second turn (both sides) | all 14 |
-| reasoning | codex, goose, grok, kimi, omp, qwen |
+| first user message, assistant text, tool call arguments, tool result, second turn (both sides) | all 16 |
+| reasoning | codex, cursor, goose, grok, kimi, omp, pi, qwen |
 
 Where reasoning does not arrive, the agent itself would not send it, and the
 codec now says so rather than writing what would be dropped:
@@ -869,7 +870,7 @@ every string at any depth.
 
 So an imported conversation carries everything a person saw, plus tool calls
 and their results, into every agent measured; the model's earlier reasoning
-survives in the six agents that replay it.
+survives in the eight agents that replay it.
 
 ### Cursor saves a conversation only when the backend checkpoints it
 
