@@ -1,0 +1,27 @@
+# droid: top-level commands and long flags from --help (regenerate: see README, CI)
+[commands]
+computer
+daemon
+doctor
+exec
+help
+mcp
+plugin
+resume
+search
+update
+[flags]
+--append-system-prompt
+--append-system-prompt-file
+--auto
+--cwd
+--disable-builtin-skills
+--fork
+--help
+--last
+--resume
+--settings
+--use-spec
+--version
+--worktree
+--worktree-dir

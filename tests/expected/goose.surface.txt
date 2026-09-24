@@ -1,0 +1,24 @@
+# goose: top-level commands and long flags from --help (regenerate: see README, CI)
+[commands]
+acp
+completion
+configure
+doctor
+gateway
+help
+info
+local-models
+mcp
+plugin
+recipe
+review
+run
+schedule
+serve
+session
+skills
+term
+update
+[flags]
+--help
+--version
