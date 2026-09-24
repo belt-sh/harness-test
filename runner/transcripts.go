@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/belt-sh/harness-test/server"
 	"github.com/inference-sh/agentprotocol/transcript"
 	"github.com/inference-sh/agentprotocol/transcript/all"
 	_ "github.com/inference-sh/agentprotocol/transcript/sqlite/registrar"
@@ -172,16 +173,37 @@ func holdsSeed(s *transcript.Session) bool {
 // seedAndLoad writes s, loads it, and reports whether the fact arrived. It
 // returns the id Write gave the session, "" when nothing was written.
 func (r *TestRunner) seedAndLoad(st transcript.Store, variant string, s *transcript.Session, fact string) string {
+	id, ok := r.writeSeed(st, variant, s)
+	if !ok {
+		return id
+	}
+	sent, ok := r.loadSeed(variant, id)
+	if !ok {
+		return id
+	}
+	// The mock answers with canned text, so asking the model for the fact
+	// proves nothing. What the agent sent the model is the answer.
+	if entriesContain(sent, fact) {
+		r.pass(fmt.Sprintf("seed (%s): %s loaded %s and the planted fact reached the model", variant, r.harness.Name, id))
+		return id
+	}
+	r.finding(fmt.Sprintf("seed (%s): %s loaded %s, and the planted fact never reached the model", variant, r.harness.Name, id))
+	return id
+}
+
+// writeSeed writes s and reports the id it was given. ok is false when
+// nothing was written, and the reason has been reported.
+func (r *TestRunner) writeSeed(st transcript.Store, variant string, s *transcript.Session) (string, bool) {
 	name := r.harness.Name
 	before := sessionIDs(st, r.workDir())
 	id, err := st.Write(context.Background(), s)
 	if errors.Is(err, transcript.ErrReadOnly) {
 		r.skip(fmt.Sprintf("seed (%s): %s's store is read-only, so nothing can be seeded", variant, name))
-		return ""
+		return "", false
 	}
 	if err != nil {
 		r.fail(fmt.Sprintf("seed (%s): write %s session: %v", variant, name, err))
-		return ""
+		return "", false
 	}
 	// A hand-built session is new, so its id must not be one the store
 	// already held — goose's writer reused the agent's own session id and
@@ -189,12 +211,18 @@ func (r *TestRunner) seedAndLoad(st transcript.Store, variant string, s *transcr
 	if s.ID == "" && before[id] {
 		r.fail(fmt.Sprintf("seed (%s): %s's writer gave the new session the id %s, which already belonged to a session in the store — the write replaced it", variant, name, id))
 	}
+	return id, true
+}
 
+// loadSeed loads a written session, sends one prompt and returns what the
+// agent sent the model from then on. ok is false when the load was refused,
+// and the refusal has been reported.
+func (r *TestRunner) loadSeed(variant, id string) ([]server.LogEntry, bool) {
 	d := r.resumeSession(id, false, false)
 	if err := d.Start(); err != nil {
 		d.Close()
-		r.finding(fmt.Sprintf("seed (%s): %s rejected %s of %s: %v", variant, name, r.resumeLabel(), id, err))
-		return id
+		r.finding(fmt.Sprintf("seed (%s): %s rejected %s of %s: %v", variant, r.harness.Name, r.resumeLabel(), id, err))
+		return nil, false
 	}
 	defer d.Close()
 
@@ -202,20 +230,10 @@ func (r *TestRunner) seedAndLoad(st transcript.Store, variant string, s *transcr
 	answered := r.server.AnswersServed()
 	if err := d.SendPrompt(promptText); err != nil {
 		r.fail(fmt.Sprintf("seed (%s): prompt after load: %v", variant, err))
-		return id
+		return nil, false
 	}
 	d.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)
-
-	// The mock answers with canned text, so asking the model for the fact
-	// proves nothing. What the agent sent the model is the answer.
-	for _, e := range r.server.Log()[logFrom:] {
-		if strings.Contains(string(e.Body), fact) {
-			r.pass(fmt.Sprintf("seed (%s): %s loaded %s and the planted fact reached the model", variant, name, id))
-			return id
-		}
-	}
-	r.finding(fmt.Sprintf("seed (%s): %s loaded %s, and the planted fact never reached the model", variant, name, id))
-	return id
+	return r.server.Log()[logFrom:], true
 }
 
 func sessionIDs(st transcript.Store, cwd string) map[string]bool {

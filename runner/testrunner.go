@@ -282,6 +282,10 @@ func (r *TestRunner) Run() Result {
 			r.resetPhase(ModeACP)
 			r.probeTranscriptSeed()
 		}
+		if r.probes.SeedKinds {
+			r.resetPhase(ModeACP)
+			r.probeSeedKinds()
+		}
 	}
 	if r.mode == ModeSDK {
 		r.resetPhase(ModeSDK)

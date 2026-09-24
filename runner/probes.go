@@ -52,6 +52,11 @@ type Probes struct {
 	Transcript bool
 	Seed       bool
 
+	// SeedKinds writes one session with a different fact in each kind of
+	// content (user and assistant text, reasoning, a tool call's arguments, a
+	// tool result, a second turn), loads it, and reports which reach the model.
+	SeedKinds bool
+
 	// Detect checks what harness.DetectInstalled() claims against the agent
 	// this run actually installed. The installed list is what belt consumes;
 	// a container that installs exactly one agent is the only place the
@@ -68,7 +73,7 @@ type Probes struct {
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, resumeafter=65s, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, deferred, transcript, seed, env, detect
+//	tools, deferred, transcript, seed, seedkinds, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -115,12 +120,14 @@ func ParseProbes(spec string) (Probes, error) {
 			p.Transcript = true
 		case "seed":
 			p.Seed = true
+		case "seedkinds":
+			p.SeedKinds = true
 		case "env":
 			p.DumpEnv = true
 		case "detect":
 			p.Detect = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, resumeafter, inflight, compact, tools, deferred, transcript, seed, env or detect)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, resumeafter, inflight, compact, tools, deferred, transcript, seed, seedkinds, env or detect)", name)
 		}
 	}
 	return p, nil

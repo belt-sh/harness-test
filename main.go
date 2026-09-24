@@ -24,7 +24,7 @@ func main() {
 		installScope = flag.String("scope", "user", "install scope: user or project")
 		serverOnly   = flag.Bool("server", false, "run mock server only (no tests)")
 		intercept    = flag.Bool("intercept", false, "intercept all LLM traffic via /etc/hosts + TLS (requires root/Docker)")
-		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], resumeafter=<duration>, inflight[=approve|cancel|hold], compact, tools, deferred, transcript, seed, env, detect")
+		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], resumeafter=<duration>, inflight[=approve|cancel|hold], compact, tools, deferred, transcript, seed, seedkinds, env, detect")
 	)
 	flag.Parse()
 
