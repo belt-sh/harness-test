@@ -146,8 +146,10 @@ func (r *TestRunner) seedKindsEntries(facts []seedFact, at time.Time) []transcri
 }
 
 // seedToolCall is the agent's own session-phase tool with the fact added to
-// every string argument, so the fact sits in the arguments whatever the tool's
-// schema calls them.
+// every string argument, at any depth, so the fact sits in the arguments
+// whatever the tool's schema calls them (kiro's read nests them:
+// {"operations":[{"path":...}]}). Arguments with no string at all get the
+// fact under a key of its own, so the tool call always carries it.
 func (r *TestRunner) seedToolCall(fact string) (string, json.RawMessage) {
 	name, args := r.harness.ToolCallName, r.harness.ToolCallArgs
 	if o, ok := r.harness.ToolCallByMode[ModeACP]; ok {
@@ -156,17 +158,47 @@ func (r *TestRunner) seedToolCall(fact string) (string, json.RawMessage) {
 	if name == "" {
 		name, args = server.DefaultToolName, server.DefaultToolArgs
 	}
-	var m map[string]any
-	if json.Unmarshal([]byte(r.expand(args)), &m) != nil || len(m) == 0 {
-		m = map[string]any{"path": "notes.txt"}
+	var v any
+	if json.Unmarshal([]byte(r.expand(args)), &v) != nil {
+		v = map[string]any{}
 	}
-	for k, v := range m {
-		if s, ok := v.(string); ok {
-			m[k] = s + "-" + fact
+	v, planted := plantInStrings(v, fact)
+	if !planted {
+		m, ok := v.(map[string]any)
+		if !ok {
+			m = map[string]any{}
 		}
+		m["note"] = fact
+		v = m
 	}
-	out, _ := json.Marshal(m)
+	out, _ := json.Marshal(v)
 	return name, out
+}
+
+// plantInStrings appends fact to every string in v and reports whether there
+// was one.
+func plantInStrings(v any, fact string) (any, bool) {
+	switch x := v.(type) {
+	case string:
+		return x + "-" + fact, true
+	case map[string]any:
+		planted := false
+		for k, e := range x {
+			var p bool
+			x[k], p = plantInStrings(e, fact)
+			planted = planted || p
+		}
+		return x, planted
+	case []any:
+		planted := false
+		for i, e := range x {
+			var p bool
+			x[i], p = plantInStrings(e, fact)
+			planted = planted || p
+		}
+		return x, planted
+	}
+	return v, false
 }
 
 // contextHolds reports whether any block of the context carries s, in text,

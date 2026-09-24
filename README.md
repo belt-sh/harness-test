@@ -839,7 +839,7 @@ session driver):
 | Kind | Reached the model |
 |------|-------------------|
 | first user message, assistant text, tool result, second turn (both sides) | all 14 |
-| tool call arguments | 13; kiro's codec does not keep them |
+| tool call arguments | all 14 |
 | reasoning | codex, omp, qwen |
 
 Reasoning is the one kind most agents do not replay:
@@ -849,6 +849,11 @@ Reasoning is the one kind most agents do not replay:
   take earlier turns' reasoning back, and some reject unsigned thinking.
 - **dropped by the codec** (not in the session's context after the write):
   claude, copilot, droid, goose, grok, kimi, kiro.
+
+The first run reported kiro dropping tool call arguments. That was the probe:
+it planted the fact only in top-level string arguments, and kiro's `read` nests
+them (`{"operations":[{"path":...}]}`), so nothing was planted. It now plants in
+every string at any depth.
 
 So an imported conversation carries everything a person saw, plus tool calls
 and their results, into every agent measured; the model's earlier reasoning

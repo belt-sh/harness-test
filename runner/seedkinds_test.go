@@ -34,3 +34,20 @@ func TestSeedKindsPlantsEachFactOnce(t *testing.T) {
 		t.Errorf("tool call = %+v", use)
 	}
 }
+
+func TestPlantInStringsReachesNestedArguments(t *testing.T) {
+	cases := map[string]string{
+		"kiro":   `{"operations":[{"mode":"Line","path":"README.md"}]}`,
+		"flat":   `{"file_path":"/repo/a.txt"}`,
+		"empty":  `{}`,
+		"number": `{"n":1}`,
+	}
+	for name, args := range cases {
+		r := &TestRunner{}
+		r.harness.ToolCallName, r.harness.ToolCallArgs = "t", args
+		_, out := r.seedToolCall("SEED-X")
+		if !strings.Contains(string(out), "SEED-X") {
+			t.Errorf("%s: fact not planted: %s", name, out)
+		}
+	}
+}
