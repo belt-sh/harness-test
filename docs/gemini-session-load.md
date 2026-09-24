@@ -1,72 +1,78 @@
-# gemini-cli: ACP `session/load` fails with "Invalid session identifier" for sessions the same process just created
+# gemini-cli 0.61: ACP `session/load` destroys a session created in the same UTC minute
 
-**Version:** gemini-cli 0.60.0 (also seen on 0.57–0.59)
-**Mode:** ACP (`gemini --experimental-acp`), Linux, Docker
-**Impact:** an ACP client cannot reliably reattach to a session. `session/load` is advertised at `initialize` and then rejects ids the agent itself issued.
+Internal record. Not filed upstream.
 
-## What happens
+**Version:** gemini-cli 0.61.0, ACP (`gemini --acp`), Linux, Docker.
+**Effect:** loading a session over ACP in the UTC minute it was created replaces
+its conversation, and the load fails with "Invalid session identifier". Loaded
+any later, the same session resumes on every path, after a clean close and after
+a kill.
 
-1. Client calls `session/new`, gets a session id, runs one prompt turn to completion.
-2. Client closes the session cleanly and ends the process.
-3. A second process calls `session/load` with that id.
-4. The agent answers:
+## Mechanism
+
+From the 0.61.0 bundle (`gemini-*.js` `loadSession`, `ChatRecordingService`):
+
+1. `loadSession` calls `initializeSessionConfig(sessionId, ...)` before
+   `SessionSelector.resolveSession`.
+2. That config starts a fresh recording for the same id, at
+   `chats/session-<new Date() to the minute>-<id8>.jsonl`.
+3. `appendRecord` appends to that path: a new header and a `$set.messages`
+   snapshot holding only gemini's context message.
+4. When the session was created in the same minute, that path is the session's
+   own file. Replaying it, `$set.messages` replaces the conversation, so
+   `hasResumableContent` is false and `getAllSessionFiles` drops the file.
+5. `findSession` finds no session with the id and throws
+   `Invalid session identifier "<uuid>". Searched for sessions in <home>/.gemini/tmp/<project>/chats.`
+
+The failed load has already rewritten the file, so a retry later in the same
+process or a new one fails too. When the minute differs, gemini writes a second
+file for the same id, the original is untouched, and the load succeeds.
+`--list-sessions` dedups the two by `lastUpdated`.
+
+## Measured
+
+2026-09-24, harness-test with agentprotocol v0.9.3, three runs of each:
+
+| first process | load within 20s | first load after 65s (`--probe resumeafter=65s`) |
+|---------------|-----------------|---------------------------------------------------|
+| killed mid-session | 0 of 3 | 3 of 3 |
+| closed cleanly | 1 of 3 | 3 of 3 |
+
+Every delayed load replayed the session and carried the earlier turn to the
+model. A deterministic check on a single hand-written session file: named for the
+current minute, the load failed 3 of 3; named for an earlier minute, it passed
+3 of 3 and replayed both messages.
+
+## What this document used to say, and why it was wrong
+
+Earlier versions (gemini 0.57–0.60) reported that gemini "cannot reliably
+reattach", that the kill path failed seven times in eight, and that `/compress`
+replaced the session. The probes resumed within seconds, so they always loaded
+inside the creation minute:
+
+- the kill and close results were this bug, decided by where the minute boundary fell;
+- over ACP gemini does not run `/compress` as a command at all: it goes to the
+  model as a prompt, so nothing was compacted, and the failed load afterwards was
+  again this bug;
+- the "session file on disk that `--list-sessions` does not offer" was the
+  session's own file after the load had rewritten it.
+
+Also found in the same investigation, and ours: agentprotocol's gemini writer
+once wrote an empty `projectHash`, which gemini treats as a legacy record and
+deletes at startup. Fixed in agentprotocol v0.6.4. The writer now also names a
+session it creates in the current minute for the minute before (v0.7.2), so a
+seeded session does not hit the bug above.
+
+## For a client
+
+- Do not `session/load` a gemini session in the UTC minute it was created.
+- Do not retry a failed gemini load: the failure has already rewritten the file.
+- `initialize` declares `loadSession: true` either way; it says nothing about this.
+
+Reproduce:
 
 ```
-Internal error: {"details":"Invalid session identifier \"81300e32-618c-4717-9018-66d2bf7c6f14\".
-  Searched for sessions in <home>/.gemini/tmp/<project>/chats.
-  Use --list-sessions to see available sessions, then use --resume {number}, --resume {uuid}, or --resume latest."}
+cd harness-test/tests
+docker compose run --build test --harness gemini --mode acp --probe resume=kill
+docker compose run --build test --harness gemini --mode acp --probe resume=kill,resumeafter=65s
 ```
-
-Retried at 0s, 2s, 5s, 10s and 20s. All five return the same error, so this is
-not the session file being written late.
-
-## It is intermittent, and that is the worst part
-
-The same probe, same image, same agent version, run twice on one day:
-
-| run | clean close | after a kill mid-turn | after `/compress` |
-|-----|-------------|-----------------------|-------------------|
-| morning | resumed, 2 updates replayed, 58ms | failed | failed |
-| afternoon | failed, all 5 retries | failed | failed |
-
-So a clean close sometimes works and sometimes does not. The kill and
-compaction paths have never succeeded in any run.
-
-Eleven other ACP agents were measured on the identical probe and all eleven
-resume on every path, so this is not the client.
-
-## The compaction case needs no crash
-
-`--probe compact` fills a session, runs `/compress`, closes the first process
-cleanly, and loads from a second. The compaction itself succeeds — gemini
-reports compressing 12 messages — and the load then fails with the same
-"Invalid session identifier" naming the same `chats` directory. So `/compress`
-appears to replace the session rather than rewrite it, and the id the client
-still holds stops resolving.
-
-## A session file on disk is not evidence it is loadable
-
-After a failed load there is often a `.jsonl` in that `chats` directory whose
-first line carries the very id the load asked for, and `--list-sessions` does
-not offer it, while it does list a session the same run closed cleanly. Two
-files can carry the same session id. We checked for the file first and it
-pointed the wrong way.
-
-## Why it matters
-
-`initialize` advertises `loadSession: true` on every path, including the ones
-that then fail, so a client cannot tell in advance whether reattaching will
-work. Any ACP client that resumes after a disconnect — a closed laptop, a
-crashed editor, a restarted daemon — silently loses the conversation, and a
-pending tool approval parked at the time of the disconnect is lost with it.
-
-## Reproduction
-
-```
-git clone https://github.com/belt-sh/harness-test && cd harness-test/tests
-docker compose run --build test --harness gemini --mode acp \
-  --probe resume,inflight,compact
-```
-
-Probe source: `runner/testrunner.go` (`probeSessionLoad`, `probeToolCallInFlight`,
-`probeCompactedResume`). The client is `github.com/inference-sh/agentprotocol`.

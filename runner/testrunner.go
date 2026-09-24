@@ -1431,6 +1431,7 @@ func (r *TestRunner) attemptResume(sessionID string, open func() *SessionDriver,
 	op := r.resumeLabel()
 	var lastErr error
 	for _, delay := range resumeAttemptDelays {
+		delay += r.probes.ResumeAfter
 		if wait := time.Until(endedAt.Add(delay)); wait > 0 {
 			time.Sleep(wait)
 		}

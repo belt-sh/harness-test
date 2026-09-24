@@ -187,7 +187,7 @@ Two ways a mock quietly changes what it is measuring, both found on gemini in 20
 - **Answering a request that cannot use the answer.** One turn is routed across models with different toolsets, so the prepared tool call is served only to a request that declares that tool. Served to gemini's small flash toolset it came back "Tool `write_file` not found", nothing ran, and both tool hooks were reported missing.
 - **Answering a routing question badly.** Agents ask the model to score a request and pick a tier. `synthFromSchema` answers `responseJsonSchema` requests, and numbers come back at the top of the range, because a low score routes the turn to a cheaper model and a smaller toolset.
 
-### Resuming a session: all 12 after a clean close, 11 after a kill
+### Resuming a session: all 12, after a clean close and after a kill
 
 `--probe resume` adds a probe to the ACP phase: run a turn, end the
 process, then attach to that same session from a second process with
@@ -198,8 +198,8 @@ Measured 2026-09 in Docker, both paths:
 
 | Path | Resumed the conversation | Did not | Passes |
 |------|--------------------------|---------|--------|
-| first process closed its session | 11 always, gemini usually | — | 1 |
-| first process killed | 11, every pass | gemini, 7 times in 8 | 3 |
+| first process closed its session | 11 always; gemini once the minute has turned | — | 1 |
+| first process killed | 11, every pass; gemini once the minute has turned | — | 3 |
 
 Every resume replayed the user's own turn and carried the earlier turn to the
 model. Loads took 15ms to 1.8s, and every session was loadable the instant its
@@ -209,43 +209,42 @@ The kill path was run three times end to end because one run cannot tell a
 property from a coincidence, and the eleven agree with themselves across all
 three. The clean-close pass has been run once and its table is one sample.
 
-**gemini's `session/load` is unreliable on every path.** The kill and
-compaction paths have never succeeded. The clean close usually works and
-sometimes does not: on 2026-09-21 the same probe, same image, same 0.60.0,
-resumed in the morning with 2 updates replayed in 58ms and in the afternoon
-failed all five retries. An earlier eight-run series put the kill path at one
-success in eight. Treat the clean-close row in the table above as "usually",
-not "always" — it was written from a run where it worked. Killed, it usually answers `session/load`
-with `Internal error` at 0s, 2s, 5s, 10s and 20s — and the retries cannot help,
-because the problem is not that the session has not been written yet but that
-it never will be. The error carries the reason in its `data`, which is worth
-reading rather than reporting the bare `Internal error`:
+**gemini resumes on both paths, but not in the UTC minute the session was
+created.** gemini 0.61's ACP `session/load` starts a fresh recording for the
+requested id before it looks the session up, and names that recording
+`session-<current minute>-<id8>.jsonl`. When the session was created in the same
+minute, that is the session's own file: gemini appends a new header and a
+`$set.messages` snapshot holding only its context message, the conversation is
+replaced, and the lookup fails with
 
 ```
 Invalid session identifier "<uuid>".
   Searched for sessions in <home>/.gemini/tmp/<project>/chats.
 ```
 
-**A session file on disk is not evidence the session is recoverable.** After a
-failed load there is often a `.jsonl` in that directory whose first line
-carries the very id the load asked for, and gemini's own `--list-sessions`
-does not offer it — while it does list the session the same run closed
-cleanly. Two files can carry the same session id. Checking for the file is
-what this suite tried first, and it pointed the wrong way.
+The file is damaged by the failed load itself, so retrying later in the same run
+cannot help. Measured 2026-09-24 in Docker, gemini 0.61.0, agentprotocol v0.9.3,
+three runs of each:
 
-**Correction pending (2026-09-24).** This section was written before gemini
-0.61's same-minute bug was found: an ACP `session/load` within the same UTC
-minute as the session's creation appends a fresh recording to the session's own
-file, whose `$set.messages` snapshot replaces the conversation. The probes here
-resume within seconds, so the kill-path results above may be that bug rather
-than a durability defect; the earlier claim that `/compress` loses sessions was
-wrong outright, since over ACP gemini never compacts. The kill path is being
-re-measured across a minute boundary before this section is rewritten.
+| gemini, first process | load within 20s | `resumeafter=65s` |
+|-----------------------|-----------------|-------------------|
+| killed | 0 of 3 | 3 of 3 |
+| closed its session | 1 of 3 | 3 of 3 |
 
-For a runner, until that re-measurement: do not load a gemini session over ACP
-in the same UTC minute it was created.
+Every delayed load replayed the session and carried the earlier turn to the
+model, so gemini persists the session through a kill. The one early pass on the
+close path is a session that happened to cross a minute boundary. The earlier
+readings in this README (clean close "usually", kill "one in eight", `/compress`
+"never") were all this bug: the probe always resumed within seconds.
 
-Written up for the vendor in [docs/gemini-session-load.md](docs/gemini-session-load.md).
+For a runner: do not load a gemini session over ACP in the minute it was
+created, and do not retry a failed load, because the failure has already
+rewritten the file. `--probe resumeafter=<duration>` holds the first attempt
+back, for any agent. The transcript codec names sessions it creates for the
+previous minute, so a seeded session does not hit this; a session gemini
+created itself still does.
+
+Details in [docs/gemini-session-load.md](docs/gemini-session-load.md).
 
 **An agent's own claim is not an answer.** All twelve declare `loadSession` at
 initialize, gemini included, on both paths. The claim is worth showing a
@@ -256,11 +255,12 @@ person; it is not worth gating on.
 Both corrections were the harness, and both came from the probe borrowing the
 phase's session instead of running its own.
 
-- **gemini was recorded as refusing `session/load` for weeks.** It refuses
-  after a kill and resumes after a clean close, and the old probe ran at
-  whatever moment the phase reached it. One attempt cannot tell "will not
-  resume" from "has not finished writing", so the probe now retries at 0s, 2s,
-  5s, 10s and 20s and reports how long the session took to become loadable.
+- **gemini was recorded as refusing `session/load` for weeks.** The probe
+  resumed within seconds, always inside the minute the session was created,
+  which is the one moment gemini 0.61 destroys the session it is asked to load.
+  Retries at 0s, 2s, 5s, 10s and 20s did not help, because the first failed
+  load rewrites the file. `resumeafter` now moves the first attempt past that
+  minute, and gemini resumes on both paths.
 - **qwen was recorded as accepting the load and attaching to nothing** — a
   full-looking replay, three model requests, and the earlier turn in none of
   them. The ACP phase sends qwen `/compress` before the probe ran, so the
@@ -272,12 +272,12 @@ That case is worth keeping for what it shows: a replay can be genuine at the
 protocol level while the model receives a summary instead of the original
 wording. A resume that works is not the same as no context being lost.
 
-- **gemini's kill-path failure was reported as a clean property** — persists at
-  close, never before — from a single run of each path. It is intermittent:
-  one resume in eight. A result measured once is a result measured under
-  whatever the timing happened to be that time, and that applies to a pass as
-  much as to a failure, which is why the kill path now has three passes behind
-  it and the table says how many.
+- **gemini's kill-path failure was reported as a clean property**, then as
+  intermittent (one resume in eight). It was neither: the resume's timing
+  relative to the minute boundary decided every outcome. A result measured once
+  is a result measured under whatever the timing happened to be that time, and
+  repeating it under the same timing only repeats the coincidence. What found it
+  was reading gemini's own code for what the load does before it answers.
 
 #### Counting replayed notifications proves nothing
 
@@ -801,7 +801,7 @@ Measured 2026-09 against agentprotocol v0.6.3 and transcript/sqlite v0.2.1:
 |---|---|
 | round-trip decodes the turn | all 16, headless and ACP |
 | both seeds load and the fact arrives | copilot, droid, goose, grok, hermes, kilo, kimi, kiro, omp, opencode, qwen — every ACP agent but gemini |
-| neither loads | gemini — its `session/load` is unreliable on every path |
+| hand-built loads; appended fails | gemini, when the appended session is gemini's own and the load falls in the minute gemini created it (see the resume section) |
 
 The first run of these probes found the codecs overwriting and corrupting real
 sessions: goose's writer reused an existing session id and replaced the agent's
@@ -937,16 +937,17 @@ in-flight and compaction probes run before it (3 of 3 each).
 
 | Probe | claude (`claude-code`) | codex (`codex`) |
 |-------|------------------------|-----------------|
-| phase checks | all pass, every hook fires | model, streaming, instructions pass; no hook fires |
+| phase checks | all pass, every hook fires | all pass; pre-compact is a known issue (`/compact` over app-server is a prompt) |
 | resume after close / kill | earlier turn reaches the model | earlier turn reaches the model |
-| in-flight (gated tool) | asks for `WebFetch`; after the kill the session is gone ("No conversation found") | asks for `rm -rf …`; resumes, does not re-raise the approval, resumes twice |
+| in-flight (gated tool) | asks for `WebFetch`; killed at once, the session is gone ("No conversation found"): Claude writes the transcript 30–40ms after it asks, and a kill any later resumes | asks for `rm -rf …`; resumes, does not re-raise the approval, resumes twice |
 | compaction | `/compact` compacts (`context.compacted`); the resume carries the summary | `/compact` reaches the model as a user message |
 | transcript, seed (both) | pass | pass |
 
-codex's hooks do not run because `codex app-server` rejects
-`--dangerously-bypass-hook-trust`, ignores `-c bypass_hook_trust=true` as a
-session flag, and `CodexBackend` has no other way to pass it, so the suite's
-hooks stay untrusted.
+codex's hooks run because the suite passes `bypass_hook_trust` as thread
+config (`CodexBackend.Config`, agentprotocol v0.9.3). `codex app-server` rejects
+`--dangerously-bypass-hook-trust` and ignores `-c bypass_hook_trust=true`; thread
+config is the only place it honours the setting. Real users keep codex's
+default, where untrusted hooks do not run.
 
 ## Use cases
 

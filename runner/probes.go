@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Probes are the opt-in measurements a run can make beyond its phases.
@@ -18,6 +19,13 @@ type Probes struct {
 	// ResumeKill ends the first process outright instead of closing it.
 	Resume     bool
 	ResumeKill bool
+
+	// ResumeAfter holds the first resume attempt back until this long after
+	// the first process ended. Zero tries at once. It separates "the agent
+	// cannot resume" from "the agent cannot resume yet": gemini 0.61 clobbers
+	// a session loaded in the UTC minute it was created, and a probe that
+	// always resumes within seconds only ever measures that minute.
+	ResumeAfter time.Duration
 
 	// InFlight parks a permission request, kills the client while the tool
 	// call waits on it, and resumes. Answer says what the resumed session
@@ -59,7 +67,7 @@ type Probes struct {
 
 // ParseProbes reads a comma-separated probe list:
 //
-//	resume, resume=kill, inflight, inflight=cancel, inflight=hold, compact,
+//	resume, resume=kill, resumeafter=65s, inflight, inflight=cancel, inflight=hold, compact,
 //	tools, deferred, transcript, seed, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
@@ -97,6 +105,12 @@ func ParseProbes(spec string) (Probes, error) {
 			p.DumpTools = true
 		case "deferred":
 			p.Deferred = true
+		case "resumeafter":
+			d, err := time.ParseDuration(value)
+			if err != nil || d < 0 {
+				return p, fmt.Errorf("probe resumeafter: want a duration such as 65s, got %q", value)
+			}
+			p.ResumeAfter = d
 		case "transcript":
 			p.Transcript = true
 		case "seed":
@@ -106,7 +120,7 @@ func ParseProbes(spec string) (Probes, error) {
 		case "detect":
 			p.Detect = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, inflight, compact, tools, deferred, transcript, seed, env or detect)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, resumeafter, inflight, compact, tools, deferred, transcript, seed, env or detect)", name)
 		}
 	}
 	return p, nil
