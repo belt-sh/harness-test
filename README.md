@@ -882,24 +882,71 @@ Each check writes a distinct codename into the model's context and looks for it 
 |------|-----------|--------------|
 | **Headless** | CLI args + stdout | `agent -p "prompt"` — fast, deterministic |
 | **Interactive** | PTY terminal | Full TUI flow: onboarding, typing, `/compact`, exit |
-| **ACP** | JSON-RPC over stdio | [Agent Client Protocol](https://agentclientprotocol.com) — programmatic session control |
+| **ACP** (`--mode acp`, alias `--mode session`) | agentprotocol `driver.Backend` | A session: ACP for ACP agents, the native backends for claude and codex |
 | **SDK** | Agent-specific stdio | Claude's `--output-format stream-json` protocol |
 
-### ACP protocol support
+### The session phase
 
-The ACP driver implements ACP v1 with a handler registry:
+`--mode acp` runs every agent whose registry row has a session driver
+(`Harness.DriverKind()` is not empty), through the same contract belt's runner
+uses: agentprotocol's `driver.Backend`. `--mode session` is an alias. The phase
+is still called `acp` in results and `KnownIssues` keys, because every earlier
+result and the registry are written with that name.
 
-| Method | Direction | Handler |
-|--------|-----------|---------|
-| `initialize` | client → agent | Capability exchange |
-| `session/new` | client → agent | Create session (cwd + mcpServers) |
-| `session/prompt` | client → agent | Send prompt (fire-and-forget) |
-| `session/update` | agent → client | Stream content chunks |
-| `session/request_permission` | agent → client | Auto-approve |
-| `fs/write_text_file` | agent → client | Write files to disk |
-| `fs/read_text_file` | agent → client | Read files from disk |
-| `elicitation/create` | agent → client | Auto-confirm |
-| `session/close` | client → agent | End session |
+| DriverKind | Backend | Built from |
+|------------|---------|------------|
+| `acp` | `driver.ACPBackend` | `ACPCmd` + `ACPArgs`, plus `ACPAutoApproveArgs` except in the in-flight probe; `EmitReplay` on for the resume probe |
+| `claude-code` | `driver.ClaudeBackend` | `claude` over stream-json; the mock endpoint from the env the endpoint phase exports (`ANTHROPIC_BASE_URL` and the tokens); `DefaultModel` |
+| `codex` | `driver.CodexBackend` | `codex app-server` with the registry's `-c model_provider="mock"` overrides; `DefaultModel` |
+
+The backends are built here, not with `driver.ForHarness`, which drops the mock
+endpoints by design. `runner/session.go` is the suite's policy on top of a
+session: approve every `approval.required` with `Session.Resolve` (the library
+picks the option), park it or deny it for the in-flight probe, and kill with
+`driver.Killer` (agentprotocol v0.9.2).
+
+What changed for ACP agents when the phase moved off the suite's own ACP
+client:
+
+- The client no longer offers `fs/read_text_file`, `fs/write_text_file` or
+  `elicitation/create`: `ACPBackend` handles none of them, so agents use their
+  own file access.
+- An approval whose options include no `allow_*` kind is cancelled; the old
+  client approved an unrecognised kind unless it read like a refusal.
+- An approval raised during `session/load` is answered after the load returns,
+  because `Open` returns the session only then.
+- The replay counts come from `ACPBackend`'s diagnostic line, and the replayed
+  kinds are the lifecycle events the replay produced, not ACP update kinds. A
+  user turn maps to no event, so the kinds can be empty while the count is not.
+- `ACPBackend` closes its event stream only on `Close` or `Kill`, so an ACP
+  agent that exits on its own still reads as alive to the in-flight hold probe.
+- The loadSession claim needs the `initialize` reply, which `driver.Backend`
+  does not expose, so the resume probe runs one extra `initialize`-only
+  handshake to read it.
+
+Checks that only mean something for ACP are skipped with the reason for the
+native backends: they resume by id and replay nothing to the client, so the
+replay-shape check skips, and the resume is judged by whether the next model
+request carries the earlier turn, as it is for ACP.
+
+Measured 2026-09-24 in Docker (claude 2.1.281, codex-cli 0.156.1, agentprotocol
+v0.9.2). The twelve ACP agents' pass/fail/skip/found counts matched the run
+before the port on the close, kill/cancel and hold paths, except gemini's
+appended seed, which fails with the old client as well when the resume,
+in-flight and compaction probes run before it (3 of 3 each).
+
+| Probe | claude (`claude-code`) | codex (`codex`) |
+|-------|------------------------|-----------------|
+| phase checks | all pass, every hook fires | model, streaming, instructions pass; no hook fires |
+| resume after close / kill | earlier turn reaches the model | earlier turn reaches the model |
+| in-flight (gated tool) | asks for `WebFetch`; after the kill the session is gone ("No conversation found") | asks for `rm -rf …`; resumes, does not re-raise the approval, resumes twice |
+| compaction | `/compact` compacts (`context.compacted`); the resume carries the summary | `/compact` reaches the model as a user message |
+| transcript, seed (both) | pass | pass |
+
+codex's hooks do not run because `codex app-server` rejects
+`--dangerously-bypass-hook-trust`, ignores `-c bypass_hook_trust=true` as a
+session flag, and `CodexBackend` has no other way to pass it, so the suite's
+hooks stay untrusted.
 
 ## Use cases
 
@@ -1014,7 +1061,7 @@ harness-test
 ├── driver/
 │   ├── testrunner.go Test orchestrator (install → config → hooks → run → verify)
 │   ├── driver.go     Driver interface
-│   ├── acp.go        ACP policy over github.com/inference-sh/agentprotocol/acp
+│   ├── session.go    Session policy over github.com/inference-sh/agentprotocol/driver
 │   ├── pty.go        PTY driver (terminal sessions)
 │   └── checks.go     Verification checks
 └── server/

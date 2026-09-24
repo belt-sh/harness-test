@@ -16,7 +16,7 @@ import (
 func main() {
 	var (
 		harnessName  = flag.String("harness", "", "harness to test (or 'all')")
-		mode         = flag.String("mode", "both", "test mode: headless, interactive, both, acp, or sdk")
+		mode         = flag.String("mode", "both", "test mode: headless, interactive, both, acp (alias: session), or sdk")
 		hooks        = flag.String("hooks", "mock", "hook source: mock (test scripts) or belt (real belt hooks)")
 		listFlag     = flag.Bool("list", false, "list available harnesses")
 		detectFlag   = flag.Bool("detect", false, "detect installed harnesses on this system")
@@ -30,6 +30,15 @@ func main() {
 
 	// Rejected here rather than defaulted: an unknown --mode used to fall
 	// through to "both", so a typo ran two phases the caller did not ask for.
+	//
+	// "session" is the acp phase under the name of what it now is: a session
+	// over agentprotocol's driver.Backend, which is ACP for ACP agents and the
+	// native backend for claude and codex. The phase keeps the name acp,
+	// because the registry's KnownIssues keys and every earlier result are
+	// written with it.
+	if *mode == "session" {
+		*mode = string(harness.ModeACP)
+	}
 	runMode, modeErr := harness.ParseMode(*mode)
 	if modeErr != nil {
 		fmt.Fprintln(os.Stderr, modeErr)
@@ -107,7 +116,7 @@ func main() {
 
 	if *listFlag {
 		fmt.Println("Available harnesses:")
-		fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-5s\n", "NAME", "BINARY", "API", "HOOKS", "ACP", "SDK")
+		fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-12s %-5s\n", "NAME", "BINARY", "API", "HOOKS", "ACP", "SESSION", "SDK")
 		names := make([]string, 0, len(harness.All))
 		for name := range harness.All {
 			names = append(names, name)
@@ -123,8 +132,12 @@ func main() {
 			if len(h.SDKCmd) > 0 {
 				sdk = "✓"
 			}
-			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-5s\n",
-				name, h.Binary, h.APIFormat, h.HookFormat, acp, sdk)
+			session := h.DriverKind()
+			if session == "" {
+				session = "—"
+			}
+			fmt.Printf("  %-12s %-10s %-8s %-10s %-5s %-12s %-5s\n",
+				name, h.Binary, h.APIFormat, h.HookFormat, acp, session, sdk)
 		}
 		return
 	}
@@ -223,7 +236,14 @@ func main() {
 
 	for _, name := range targets {
 		h := harness.All[name]
-		if reason, detail := h.SkipFor(*mode); reason != harness.SkipNone {
+		reason, detail := h.SkipFor(*mode)
+		if runMode == harness.ModeACP && reason == harness.SkipNoMode && h.DriverKind() != "" {
+			// The acp phase runs every agent with a session driver, and
+			// SkipFor only knows about ACP commands: claude and codex have
+			// native backends instead.
+			reason = harness.SkipNone
+		}
+		if reason != harness.SkipNone {
 			// Only a typed skip: "cannot be tested" is not a failure, and the
 			// summary says why. Explicitly named harnesses still skip, loudly.
 			fmt.Printf("=== %s ===\n  ○ skipped [%s]: %s\n\n", name, reason, detail)

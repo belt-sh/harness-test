@@ -94,7 +94,7 @@ func (r *TestRunner) probeTranscriptRoundTrip(phase string) {
 // state a real session has. Hand-built failing where appended works names
 // state the agent requires and the codec's writer does not produce.
 func (r *TestRunner) probeTranscriptSeed() {
-	if len(r.harness.ACPCmd) == 0 {
+	if r.harness.DriverKind() == "" {
 		return
 	}
 	fmt.Println("[probe] transcript seed (a session the agent never had)")
@@ -190,12 +190,10 @@ func (r *TestRunner) seedAndLoad(st transcript.Store, variant string, s *transcr
 		r.fail(fmt.Sprintf("seed (%s): %s's writer gave the new session the id %s, which already belonged to a session in the store — the write replaced it", variant, name, id))
 	}
 
-	bin, args, dir := r.acpInvocation()
-	d := NewACPDriver(bin, args, dir, r.envIn(dir))
-	d.ResumeSessionID = id
+	d := r.resumeSession(id, false, false)
 	if err := d.Start(); err != nil {
 		d.Close()
-		r.finding(fmt.Sprintf("seed (%s): %s rejected session/load of %s: %v", variant, name, id, err))
+		r.finding(fmt.Sprintf("seed (%s): %s rejected %s of %s: %v", variant, name, r.resumeLabel(), id, err))
 		return id
 	}
 	defer d.Close()

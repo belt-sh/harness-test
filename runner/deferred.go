@@ -110,7 +110,7 @@ func (r *TestRunner) probeDeferredTools(phase string) {
 // up until an ACP-only agent shipped one.
 func (r *TestRunner) runTurnFor(phase string) bool {
 	if phase == "acp" {
-		d, _, ok := r.startProbeTurn("deferred tools")
+		d, ok := r.startProbeTurn("deferred tools")
 		if !ok {
 			return false
 		}
