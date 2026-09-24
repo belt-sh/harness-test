@@ -623,13 +623,13 @@ wider than the turn before, and the width check alone passed three agents that
 never compacted.
 
 Four of the twelve ACP agents have a compaction command in the registry. Over
-ACP only qwen treats it as one (2026-09):
+ACP two of them compact and two forward the command to the model (2026-09):
 
 | Agent | Command | Over ACP | What the resume carried |
 |-------|---------|----------|-------------------------|
 | droid | `/compress` | forwarded to the model as a prompt | — |
 | gemini | `/compress` | forwarded to the model as a prompt | — |
-| grok | `/compact` | forwarded to the model as a prompt | — |
+| grok | `/compact` | compacted 14 messages | a summary: 9 messages, not the original wording |
 | qwen | `/compress` | compacted 12 messages | a summary: 6 messages, not the original wording |
 
 gemini's ACP commands are about, extensions, help, init, memory and restore;
@@ -638,10 +638,15 @@ list to a summary, an acknowledgement and the last ~30% verbatim. droid's ACP
 is `droid exec`, and its TUI `/compress` starts a new session whose header
 names the old one as parent.
 
-An earlier version of this table had droid, gemini and grok compacting and
-droid and grok keeping "the original wording". Both readings were the probe:
-the forwarded command passed the width check, and the resume carried the
-original wording because nothing had been compacted. gemini's row blamed
+The mock answers every compaction step with a summary of several hundred
+characters. Its usual one-line answer is too short for grok, which rejects it
+("Compaction produced only degenerate summaries after max retries") and keeps
+the history, so with that answer grok looked like it never compacted.
+
+An earlier version of this table had droid and gemini compacting and droid
+keeping "the original wording". That was the probe: the forwarded command
+passed the width check, and the resume carried the original wording because
+nothing had been compacted. gemini's row blamed
 `/compress` for a session that would not load back; that was gemini 0.61's
 same-minute `session/load` bug (the load's new recording lands in the session's
 own file when both are named for the same minute), which any load within a

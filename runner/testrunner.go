@@ -888,9 +888,11 @@ func (r *TestRunner) runOneShotPhase(banner, label string, cmd, args []string) {
 	// unset, and the step then expanded to nothing and failed as a
 	// configuration error rather than testing compaction.
 	r.resolveSessionID(out)
-	for _, step := range r.harness.PostHeadlessCmd {
-		r.runPostHeadless(r.workDir(), step)
-	}
+	r.answeringWithSummary(func() {
+		for _, step := range r.harness.PostHeadlessCmd {
+			r.runPostHeadless(r.workDir(), step)
+		}
+	})
 }
 
 // Run already skips the phase when there is no headless command.
@@ -1045,14 +1047,16 @@ func (r *TestRunner) runInteractive() {
 		r.waitTurnSettled(mark, 60*time.Second)
 		r.step("second turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
 		compactMark := r.markTurn(false)
-		r.sendLine(session, r.harness.CompactCommand)
-		session.WaitForAny([]string{"compact", "Compact", "compress", "Compress", "summar"}, 15*time.Second)
-		if r.harness.CompactConfirm {
-			if _, ok := session.WaitForAny([]string{"Enter to confirm", "confirm"}, 10*time.Second); ok {
-				session.SendLine("")
+		r.answeringWithSummary(func() {
+			r.sendLine(session, r.harness.CompactCommand)
+			session.WaitForAny([]string{"compact", "Compact", "compress", "Compress", "summar"}, 15*time.Second)
+			if r.harness.CompactConfirm {
+				if _, ok := session.WaitForAny([]string{"Enter to confirm", "confirm"}, 10*time.Second); ok {
+					session.SendLine("")
+				}
 			}
-		}
-		r.waitTurnSettled(compactMark, 30*time.Second)
+			r.waitTurnSettled(compactMark, 30*time.Second)
+		})
 		r.step("compaction settled (requests %d)", r.server.LogCount())
 	}
 	if !r.harness.InteractivePromptInArgs && r.harness.ExitCommand != "" {
@@ -1150,8 +1154,10 @@ func (r *TestRunner) runACP() {
 	driver.WaitIdle(2 * time.Second)
 
 	if r.harness.CompactCommand != "" {
-		driver.SendCommand(r.harness.CompactCommand)
-		driver.WaitIdle(3 * time.Second)
+		r.answeringWithSummary(func() {
+			driver.SendCommand(r.harness.CompactCommand)
+			driver.WaitIdle(3 * time.Second)
+		})
 	}
 
 	r.lastOutput = driver.Output()
@@ -1494,8 +1500,10 @@ func (r *TestRunner) probeCompactedResume() {
 	// what compaction costs, and a kill would confound it with durability.
 	before := r.entryCount()
 	widestBefore := widestRequest(r.entries())
-	first.SendCommand(r.harness.CompactCommand)
-	first.WaitIdle(4 * time.Second)
+	r.answeringWithSummary(func() {
+		first.SendCommand(r.harness.CompactCommand)
+		first.WaitIdle(4 * time.Second)
+	})
 	sent := r.entries()
 	if len(sent) <= before {
 		// Nothing reached the model, so the agent did not compact. Reporting
@@ -1518,7 +1526,9 @@ func (r *TestRunner) probeCompactedResume() {
 	// not tell them apart: such a prompt carries the whole history plus one
 	// message, wider than the turn before.
 	for _, e := range sent[before:] {
-		if strings.Contains(server.LastUserText(e.Body), r.harness.CompactCommand) {
+		// Starts with, not contains: a real compaction request may quote the
+		// conversation, and the command is the last thing in it.
+		if strings.HasPrefix(strings.TrimSpace(server.LastUserText(e.Body)), r.harness.CompactCommand) {
 			first.Close()
 			r.finding(fmt.Sprintf("compaction: %s sent %s to the model as a user message, so over ACP it is a prompt, not a command, and nothing was compacted",
 				r.harness.Name, r.harness.CompactCommand))
@@ -1550,6 +1560,31 @@ func (r *TestRunner) probeCompactedResume() {
 	defer resumed.Close()
 	r.reportCompactedContext(resumed)
 }
+
+// answeringWithSummary runs a compaction step with the mock answering
+// compactionSummary. The mock's usual answer is one short line, and an agent
+// that checks its summary rejects that as degenerate and keeps the history:
+// grok logs "Compaction produced only degenerate summaries" and compacts
+// nothing.
+func (r *TestRunner) answeringWithSummary(step func()) {
+	answer := r.server.Response()
+	r.server.SetResponse(compactionSummary)
+	defer r.server.SetResponse(answer)
+	step()
+}
+
+// compactionSummary is what the mock answers a compaction with: long enough
+// that no agent's degenerate-summary check rejects it (grok wants more than
+// 500 characters), and free of the probe's prompt wording, so a resume that
+// carries it is told apart from one that carries the original turn.
+var compactionSummary = "Summary of the conversation so far. The user opened a session in a small " +
+	"git repository and asked a series of questions about it. The assistant listed the files in " +
+	"the repository, described the work done up to that point, and recalled the first request " +
+	"when asked. A file named test-output.txt was written with the content test. No errors " +
+	"occurred, no changes are pending review, and no follow-up work was requested. The session " +
+	"was then compacted at the user's request so that further turns start from this summary " +
+	"instead of the full history. Nothing in the conversation depends on exact wording, and " +
+	"the next turn may ask about anything covered above."
 
 // compactionFillers give the session enough history to be worth compacting.
 // The content does not matter; the number of turns does.
