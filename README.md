@@ -833,22 +833,29 @@ what the codec says the model should be given (`Session.Context()` read back
 after the write), so "the agent dropped it" is told apart from "the codec never
 kept it". A missing kind is a finding.
 
-Measured 2026-09-24, agentprotocol v0.9.3, 14 agents (cursor and pi have no
-session driver):
+Measured 2026-09-24, agentprotocol v0.9.4 and transcript/sqlite v0.4.1, 14
+agents (cursor and pi have no session driver):
 
 | Kind | Reached the model |
 |------|-------------------|
-| first user message, assistant text, tool result, second turn (both sides) | all 14 |
-| tool call arguments | all 14 |
-| reasoning | codex, omp, qwen |
+| first user message, assistant text, tool call arguments, tool result, second turn (both sides) | all 14 |
+| reasoning | codex, goose, grok, kimi, omp, qwen |
 
-Reasoning is the one kind most agents do not replay:
+Where reasoning does not arrive, the agent itself would not send it, and the
+codec now says so rather than writing what would be dropped:
 
-- **dropped by the agent** (the codec kept it; the requests do not carry it):
-  gemini, hermes, kilo, opencode. Likely deliberate: providers generally do not
-  take earlier turns' reasoning back, and some reject unsigned thinking.
-- **dropped by the codec** (not in the session's context after the write):
-  claude, copilot, droid, goose, grok, kimi, kiro.
+- **claude:** unsigned thinking is rejected by the API, so a foreign reasoning
+  block is not written.
+- **kiro:** needs the provider's signature on reasoning.
+- **copilot:** strips reasoning when it loads a session.
+- **droid:** replays reasoning only on chat-completions models with thinking on;
+  this suite's droid runs on the Responses API.
+- **gemini** (stripThoughts), **hermes** (echoes reasoning only for DeepSeek,
+  Kimi and MiMo), **opencode** and **kilo** (by resume model and SDK): the
+  agent drops earlier reasoning from the request.
+
+v0.9.3 had reasoning reaching the model in codex, omp and qwen only; goose, grok
+and kimi were codec gaps, fixed in v0.9.4.
 
 The first run reported kiro dropping tool call arguments. That was the probe:
 it planted the fact only in top-level string arguments, and kiro's `read` nests
@@ -857,7 +864,7 @@ every string at any depth.
 
 So an imported conversation carries everything a person saw, plus tool calls
 and their results, into every agent measured; the model's earlier reasoning
-survives only in codex, omp and qwen.
+survives in the six agents that replay it.
 
 ### Cursor saves a conversation only when the backend checkpoints it
 
