@@ -233,17 +233,17 @@ does not offer it — while it does list the session the same run closed
 cleanly. Two files can carry the same session id. Checking for the file is
 what this suite tried first, and it pointed the wrong way.
 
-**A clean close is not sufficient either, once the session has been compacted.**
-The compaction probe closes the first process rather than killing it, and
-gemini still could not load the session back, with the same
-`Invalid session identifier` naming the same `chats` directory. So there are
-two ways to lose a gemini session and only one of them is a crash: killing the
-process mid-turn, and running `/compress`. A plain session, closed cleanly,
-resumes every time at 0s — which is what makes the other two easy to miss.
+**Correction pending (2026-09-24).** This section was written before gemini
+0.61's same-minute bug was found: an ACP `session/load` within the same UTC
+minute as the session's creation appends a fresh recording to the session's own
+file, whose `$set.messages` snapshot replaces the conversation. The probes here
+resume within seconds, so the kill-path results above may be that bug rather
+than a durability defect; the earlier claim that `/compress` loses sessions was
+wrong outright, since over ACP gemini never compacts. The kill path is being
+re-measured across a minute boundary before this section is rewritten.
 
-For a runner: a gemini session that ends in a crash or a compaction is usually
-gone, a clean close is only usually safe, you cannot tell by looking for its
-file, and the remaining eleven agents are unaffected.
+For a runner, until that re-measurement: do not load a gemini session over ACP
+in the same UTC minute it was created.
 
 Written up for the vendor in [docs/gemini-session-load.md](docs/gemini-session-load.md).
 
@@ -613,35 +613,39 @@ conversation is gone.
 This probe needs two guards, and without either it passes on nothing. A single
 exchange is below every agent's compaction threshold, so the probe fills the
 session first. And a request to the model is not a compaction: over ACP a slash
-command can arrive as an ordinary user message — the registry already records
-that codex treats `/compact` that way — so the probe requires the request to
-carry summarisation instructions before it believes a compaction happened.
-Both were added after the first run reported a cheerful "nothing was lost" for
-every agent, which meant only that nothing had happened.
+command can arrive as an ordinary user message, and the request it produces
+looks like any other turn. So the probe checks the last user message of every
+request after the command. A compaction request ends with the agent's own
+summarising instruction; a command that arrived as a prompt ends with the
+command itself, and that is recorded as a finding. Width does not tell them
+apart: a forwarded command carries the whole history plus one message, which is
+wider than the turn before, and the width check alone passed three agents that
+never compacted.
 
-Four of the twelve ACP agents have a compaction command. With the session
-filled first, all four compact for real (2026-09, one pass):
+Four of the twelve ACP agents have a compaction command in the registry. Over
+ACP only qwen treats it as one (2026-09):
 
-| Agent | Command | Compacted over | What the resume carried |
-|-------|---------|----------------|-------------------------|
-| droid | `/compress` | 10 messages | the original wording |
-| gemini | `/compress` | 12 messages | nothing — the session could not be loaded back |
-| grok | `/compact` | 14 messages | the original wording |
-| qwen | `/compress` | 12 messages | a summary: 6 messages, not the original wording |
+| Agent | Command | Over ACP | What the resume carried |
+|-------|---------|----------|-------------------------|
+| droid | `/compress` | forwarded to the model as a prompt | — |
+| gemini | `/compress` | forwarded to the model as a prompt | — |
+| grok | `/compact` | forwarded to the model as a prompt | — |
+| qwen | `/compress` | compacted 12 messages | a summary: 6 messages, not the original wording |
 
-gemini's row is not a compaction result. It compacted 12 messages and then
-failed `session/load` with `Invalid session identifier`, the same error its
-killed sessions give and pointing at the same `.gemini/tmp/<project>/chats`
-directory. The compaction probe closes the first process cleanly, so this is
-the same session-durability defect reached without a crash — `/compress`
-appears to replace the session rather than rewrite it, and the id the client
-holds stops resolving. Whether gemini's compaction preserves the conversation
-is still unmeasured here, because nothing survives to read.
+gemini's ACP commands are about, extensions, help, init, memory and restore;
+compression happens only in its TUI, where `/compress` rewrites the message
+list to a summary, an acknowledgement and the last ~30% verbatim. droid's ACP
+is `droid exec`, and its TUI `/compress` starts a new session whose header
+names the old one as parent.
 
-An earlier run had droid and gemini "sending `/compress` to the model as an
-ordinary user message rather than compacting". That was the missing filler:
-their sessions were too short to be worth compacting, and the agent forwarded
-the command. The reading was of the probe, not of the agent.
+An earlier version of this table had droid, gemini and grok compacting and
+droid and grok keeping "the original wording". Both readings were the probe:
+the forwarded command passed the width check, and the resume carried the
+original wording because nothing had been compacted. gemini's row blamed
+`/compress` for a session that would not load back; that was gemini 0.61's
+same-minute `session/load` bug (the load's new recording lands in the session's
+own file when both are named for the same minute), which any load within a
+minute of the session's creation hits.
 
 #### goose's plugin manifest is better left unwritten
 

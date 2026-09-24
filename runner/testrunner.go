@@ -1505,21 +1505,29 @@ func (r *TestRunner) probeCompactedResume() {
 		return
 	}
 	// A request is not a compaction. Over ACP a slash command can arrive as an
-	// ordinary user message — the registry already records that codex treats
-	// /compact that way — and the model request it produces looks like any
-	// other turn. Without this the probe passes on a session that was never
-	// compacted, and "nothing was lost" means only that nothing happened.
+	// ordinary user message (codex, gemini and droid all do this with theirs),
+	// and the model request it produces looks like any other turn. Without
+	// these checks the probe passes on a session that was never compacted,
+	// and "nothing was lost" means only that nothing happened.
 	//
-	// The test is structural rather than a search for summarising words: a
-	// compaction sends the thread to the model to be condensed, so its request
-	// carries at least as much history as the turn before it, while a slash
-	// command arriving as a user message carries one more message than that
-	// turn and nothing else. Matching English was a denylist that had to stay
-	// disjoint from the probe's own filler prompts, and would have reported a
-	// reworded agent as one that never compacted.
+	// Both are structural rather than a search for summarising words, which
+	// would be a denylist that had to stay disjoint from the probe's filler
+	// prompts. A compaction request asks the model to condense the thread, so
+	// its last user message is the agent's own instruction; a command that
+	// arrived as a prompt is the last user message itself. Width alone does
+	// not tell them apart: such a prompt carries the whole history plus one
+	// message, wider than the turn before.
+	for _, e := range sent[before:] {
+		if strings.Contains(server.LastUserText(e.Body), r.harness.CompactCommand) {
+			first.Close()
+			r.finding(fmt.Sprintf("compaction: %s sent %s to the model as a user message, so over ACP it is a prompt, not a command, and nothing was compacted",
+				r.harness.Name, r.harness.CompactCommand))
+			return
+		}
+	}
 	if widestRequest(sent[before:]) < widestBefore {
 		first.Close()
-		r.skip(fmt.Sprintf("compaction: %s answered %s with a %d-message request where the turn before carried %d, so it did not compact",
+		r.finding(fmt.Sprintf("compaction: %s answered %s with a %d-message request where the turn before carried %d, so it did not compact",
 			r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:]), widestBefore))
 		return
 	}
