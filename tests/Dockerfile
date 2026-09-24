@@ -1,8 +1,7 @@
-FROM node:22-slim AS builder
-
-RUN apt-get update && apt-get install -y curl git && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://go.dev/dl/go1.24.5.linux-$(dpkg --print-architecture).tar.gz | tar -C /usr/local -xz
-ENV PATH="/usr/local/go/bin:$PATH"
+# The Go version go.mod asks for, from the image rather than go.dev: the old
+# go1.24.5 tarball then made go download the go.mod toolchain as well, and
+# either download failing mid-stream failed CI jobs (2026-09-24).
+FROM golang:1.26.7-bookworm AS builder
 
 COPY . /build
 WORKDIR /build

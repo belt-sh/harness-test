@@ -1068,6 +1068,12 @@ func (r *TestRunner) runInteractive() {
 		r.sendLine(session, "Tell me more about the project.")
 		r.waitTurnSettled(mark, 60*time.Second)
 		r.step("second turn settled (served %d, requests %d)", r.server.AnswersServed(), r.server.LogCount())
+		// The stop hook ends the wait above, and codex runs it before its
+		// task is over: a /compact typed then is refused with "'/compact' is
+		// disabled while a task is in progress" and nothing compacts (1 run
+		// in 8 locally, 1 in 3 in CI). A TUI still working redraws its
+		// spinner, so a quiet screen is the task being over.
+		waitScreenQuiet(session, 1500*time.Millisecond, 20*time.Second)
 		compactMark := r.markTurn(false)
 		r.answeringWithSummary(func() {
 			r.sendLine(session, r.harness.CompactCommand)
