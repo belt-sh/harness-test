@@ -334,9 +334,6 @@ func (r *TestRunner) armToolCall(mode Mode) bool {
 // anything.
 func (r *TestRunner) armGatedToolCall() (tool string, gated bool) {
 	tc := r.harness.ToolCallGated
-	if tc.Name == "" {
-		tc = nativeGatedTools[r.harness.DriverKind()]
-	}
 	if tc.Name != "" && r.armTool(tc.Name, tc.Args) {
 		return tc.Name, true
 	}
@@ -344,18 +341,6 @@ func (r *TestRunner) armGatedToolCall() (tool string, gated bool) {
 		return "", false
 	}
 	return r.toolMatcher(), false
-}
-
-// nativeGatedTools are, for the native backends, a tool the agent asks its
-// client about, as ToolCallGated names one for ACP agents. They belong in the
-// registry; until agentprotocol carries them for claude and codex they live
-// here. claude: this suite's settings allow Bash, Read and Write outright, so
-// the gated tool has to be one outside that list, and WebFetch is declared on
-// every turn. codex: its default approval policy (untrusted) asks before any
-// command outside its known-safe set, and the path exists nowhere.
-var nativeGatedTools = map[string]harness.ToolCall{
-	harness.DriverClaudeCode: {Name: "WebFetch", Args: `{"url":"https://gated-probe.invalid/","prompt":"Summarise the page."}`},
-	harness.DriverCodex:      {Name: "exec_command", Args: `{"cmd":"rm -rf /tmp/gated-probe-does-not-exist"}`},
 }
 
 func (r *TestRunner) armTool(name, args string) bool {
@@ -1231,7 +1216,8 @@ func (r *TestRunner) acpInvocationGated() (bin string, args []string, dir string
 //     tokens), the same variables headless mode uses; the model is set per
 //     session.
 //   - codex: CodexBackend, with the registry's -c provider overrides that
-//     point codex at the mock, taken from its SDK arguments.
+//     point codex at the mock, taken from its SDK arguments, and
+//     bypass_hook_trust in the thread config so this suite's hooks run.
 //
 // gated only matters to ACP: the native backends never skip approvals, and
 // this suite answers them through Resolve.
@@ -1248,6 +1234,7 @@ func (r *TestRunner) sessionBackend(gated, emitReplay bool) BackendFactory {
 		bin, args := r.harness.Binary, r.codexProviderArgs()
 		return func(diagnose func(string)) driver.Backend {
 			return &driver.CodexBackend{Command: bin, Args: args, Env: env, Stderr: os.Stderr,
+				Config:     codexThreadConfig,
 				ClientName: "harness-test", ClientVersion: "1.0.0", OnDiagnostic: diagnose}
 		}
 	default:
@@ -1268,13 +1255,18 @@ func (r *TestRunner) sessionBackend(gated, emitReplay bool) BackendFactory {
 // them in an unexported list, so they are read back out of SDKArgs, which
 // carries them after flags `codex app-server` does not take.
 //
-// One of those flags has no equivalent here: exec and the TUI get
+// One of those flags has no -c equivalent: exec and the TUI get
 // --dangerously-bypass-hook-trust, which app-server rejects as an argument
 // (codex 0.156.1), and -c bypass_hook_trust=true is "ignored" as a session
-// flag. CodexBackend offers no other way to pass it, so codex runs none of
-// this suite's hooks in this phase, whose trust was never persisted.
-// --dangerously-bypass-approvals-and-sandbox is left out on purpose: it would
-// take the approvals away from the session.
+// flag. app-server honours it only as thread config, which is
+// codexThreadConfig. --dangerously-bypass-approvals-and-sandbox is left out on
+// purpose: it would take the approvals away from the session.
+// codexThreadConfig is the thread config this suite's codex sessions run
+// with. bypass_hook_trust lets the hooks it writes run without the trust
+// codex otherwise asks a person to persist; the test's own hooks are the only
+// ones there. It is set here, for this suite, and never by agentprotocol.
+var codexThreadConfig = map[string]any{"bypass_hook_trust": true}
+
 func (r *TestRunner) codexProviderArgs() []string {
 	var out []string
 	src := r.harness.SDKArgs
