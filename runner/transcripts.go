@@ -31,29 +31,29 @@ func (r *TestRunner) probeTranscriptRoundTrip(phase string) {
 	fmt.Printf("[probe] transcript round-trip (%s)\n", phase)
 	st, ok, err := all.Open(r.harness.Name, r.agentHome())
 	if !ok {
-		r.skip(fmt.Sprintf("transcript: no codec for %s", r.harness.Name))
+		r.skip("transcript:no-codec", fmt.Sprintf("transcript: no codec for %s", r.harness.Name))
 		return
 	}
 	if err != nil {
-		r.fail(fmt.Sprintf("transcript: open %s store: %v", r.harness.Name, err))
+		r.fail("transcript.open", fmt.Sprintf("transcript: open %s store: %v", r.harness.Name, err))
 		return
 	}
 	ctx := context.Background()
 	infos, err := st.List(ctx, r.workDir())
 	if err != nil {
-		r.fail(fmt.Sprintf("transcript: list %s sessions: %v", r.harness.Name, err))
+		r.fail("transcript.list", fmt.Sprintf("transcript: list %s sessions: %v", r.harness.Name, err))
 		return
 	}
 	if len(infos) == 0 {
 		// The agent ran a turn in this directory and the codec finds nothing:
 		// either the agent does not persist in this mode or the codec looks in
 		// the wrong place. Both are worth knowing, neither is untested.
-		r.finding(fmt.Sprintf("transcript: %s stored no session the codec can find for %s", r.harness.Name, r.workDir()))
+		r.finding("transcript:no-session", fmt.Sprintf("transcript: %s stored no session the codec can find for %s", r.harness.Name, r.workDir()))
 		return
 	}
 	s, err := st.Read(ctx, infos[0].ID)
 	if err != nil {
-		r.fail(fmt.Sprintf("transcript: read %s session %s: %v", r.harness.Name, infos[0].ID, err))
+		r.fail("transcript.read", fmt.Sprintf("transcript: read %s session %s: %v", r.harness.Name, infos[0].ID, err))
 		return
 	}
 
@@ -68,15 +68,15 @@ func (r *TestRunner) probeTranscriptRoundTrip(phase string) {
 	}
 	switch {
 	case user && answer:
-		r.pass(fmt.Sprintf("transcript: %s session %s decodes to this turn — the prompt and the answer, %d message(s)",
+		r.pass("transcript", fmt.Sprintf("transcript: %s session %s decodes to this turn — the prompt and the answer, %d message(s)",
 			r.harness.Name, s.ID, len(s.Messages())))
 	case !user && !answer:
-		r.fail(fmt.Sprintf("transcript: %s session %s decodes to %d message(s) and neither is this turn",
+		r.fail("transcript:neither", fmt.Sprintf("transcript: %s session %s decodes to %d message(s) and neither is this turn",
 			r.harness.Name, s.ID, len(s.Messages())))
 	case !user:
-		r.fail(fmt.Sprintf("transcript: %s session %s has the answer but not the prompt that was sent", r.harness.Name, s.ID))
+		r.fail("transcript:no-prompt", fmt.Sprintf("transcript: %s session %s has the answer but not the prompt that was sent", r.harness.Name, s.ID))
 	default:
-		r.fail(fmt.Sprintf("transcript: %s session %s has the prompt but not the answer the model gave", r.harness.Name, s.ID))
+		r.fail("transcript:no-answer", fmt.Sprintf("transcript: %s session %s has the prompt but not the answer the model gave", r.harness.Name, s.ID))
 	}
 }
 
@@ -101,11 +101,11 @@ func (r *TestRunner) probeTranscriptSeed() {
 	fmt.Println("[probe] transcript seed (a session the agent never had)")
 	st, ok, err := all.Open(r.harness.Name, r.agentHome())
 	if !ok {
-		r.skip(fmt.Sprintf("seed: no codec for %s", r.harness.Name))
+		r.skip("seed:no-codec", fmt.Sprintf("seed: no codec for %s", r.harness.Name))
 		return
 	}
 	if err != nil {
-		r.fail(fmt.Sprintf("seed: open %s store: %v", r.harness.Name, err))
+		r.fail("seed.open", fmt.Sprintf("seed: open %s store: %v", r.harness.Name, err))
 		return
 	}
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func (r *TestRunner) probeTranscriptSeed() {
 	// fails), and those are newer than the ACP phase's conversation.
 	earlier, err := st.List(ctx, r.workDir())
 	if err != nil {
-		r.fail(fmt.Sprintf("seed: list %s sessions: %v", r.harness.Name, err))
+		r.fail("seed.list", fmt.Sprintf("seed: list %s sessions: %v", r.harness.Name, err))
 		return
 	}
 
@@ -138,9 +138,17 @@ func (r *TestRunner) probeTranscriptSeed() {
 		}
 	}
 	if base == nil {
-		r.skip(fmt.Sprintf("seed (appended): %s has no session of its own to append to", r.harness.Name))
+		r.skip("seed.appended:no-base", fmt.Sprintf("seed (appended): %s has no session of its own to append to", r.harness.Name))
 		return
 	}
+	// The base is a session the agent wrote, so a load of it is held back
+	// like any other (resumeafter). Its creation time is what gemini names
+	// the file by, so that is where the wait counts from.
+	since := base.Created
+	if since.IsZero() {
+		since = time.Now()
+	}
+	r.probes.holdBack(since)
 	fact = "SEED-" + randomHex(4)
 	// Empty ids and nil Raw: the writer links appended entries to the
 	// session's active leaf.
@@ -184,10 +192,10 @@ func (r *TestRunner) seedAndLoad(st transcript.Store, variant string, s *transcr
 	// The mock answers with canned text, so asking the model for the fact
 	// proves nothing. What the agent sent the model is the answer.
 	if entriesContain(sent, fact) {
-		r.pass(fmt.Sprintf("seed (%s): %s loaded %s and the planted fact reached the model", variant, r.harness.Name, id))
+		r.pass("seed."+variant, fmt.Sprintf("seed (%s): %s loaded %s and the planted fact reached the model", variant, r.harness.Name, id))
 		return id
 	}
-	r.finding(fmt.Sprintf("seed (%s): %s loaded %s, and the planted fact never reached the model", variant, r.harness.Name, id))
+	r.finding("seed."+variant+":not-reached", fmt.Sprintf("seed (%s): %s loaded %s, and the planted fact never reached the model", variant, r.harness.Name, id))
 	return id
 }
 
@@ -198,18 +206,18 @@ func (r *TestRunner) writeSeed(st transcript.Store, variant string, s *transcrip
 	before := sessionIDs(st, r.workDir())
 	id, err := st.Write(context.Background(), s)
 	if errors.Is(err, transcript.ErrReadOnly) {
-		r.skip(fmt.Sprintf("seed (%s): %s's store is read-only, so nothing can be seeded", variant, name))
+		r.skip("seed."+variant+".write:read-only", fmt.Sprintf("seed (%s): %s's store is read-only, so nothing can be seeded", variant, name))
 		return "", false
 	}
 	if err != nil {
-		r.fail(fmt.Sprintf("seed (%s): write %s session: %v", variant, name, err))
+		r.fail("seed."+variant+".write", fmt.Sprintf("seed (%s): write %s session: %v", variant, name, err))
 		return "", false
 	}
 	// A hand-built session is new, so its id must not be one the store
 	// already held — goose's writer reused the agent's own session id and
 	// overwrote it. An appended session keeps its id by design.
 	if s.ID == "" && before[id] {
-		r.fail(fmt.Sprintf("seed (%s): %s's writer gave the new session the id %s, which already belonged to a session in the store — the write replaced it", variant, name, id))
+		r.fail("seed."+variant+".fresh-id", fmt.Sprintf("seed (%s): %s's writer gave the new session the id %s, which already belonged to a session in the store — the write replaced it", variant, name, id))
 	}
 	return id, true
 }
@@ -221,7 +229,7 @@ func (r *TestRunner) loadSeed(variant, id string) ([]server.LogEntry, bool) {
 	d := r.resumeSession(id, false, false)
 	if err := d.Start(); err != nil {
 		d.Close()
-		r.finding(fmt.Sprintf("seed (%s): %s rejected %s of %s: %v", variant, r.harness.Name, r.resumeLabel(), id, err))
+		r.finding("seed."+variant+":load-rejected", fmt.Sprintf("seed (%s): %s rejected %s of %s: %v", variant, r.harness.Name, r.resumeLabel(), id, err))
 		return nil, false
 	}
 	defer d.Close()
@@ -229,7 +237,7 @@ func (r *TestRunner) loadSeed(variant, id string) ([]server.LogEntry, bool) {
 	logFrom := r.server.LogCount()
 	answered := r.server.AnswersServed()
 	if err := d.SendPrompt(promptText); err != nil {
-		r.fail(fmt.Sprintf("seed (%s): prompt after load: %v", variant, err))
+		r.fail("seed."+variant+".prompt", fmt.Sprintf("seed (%s): prompt after load: %v", variant, err))
 		return nil, false
 	}
 	d.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)

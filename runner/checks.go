@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
+	"github.com/inference-sh/agentprotocol/harness"
 )
 
 // runChecks runs all verification checks for a phase.
@@ -55,13 +55,13 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 	}
 	fmt.Printf("[check] hook injection (%s)\n", phase)
 	if !r.promptHookFired() {
-		r.skip(fmt.Sprintf("%s: prompt hook did not fire, nothing to inject", phase))
+		r.skip("hook-injection:no-prompt-hook", fmt.Sprintf("%s: prompt hook did not fire, nothing to inject", phase))
 		return
 	}
 	wantBytes := []byte(want)
 	for _, e := range entries {
 		if bytes.Contains(e.Body, wantBytes) {
-			r.pass(fmt.Sprintf("%s: prompt hook context reached the model", phase))
+			r.pass("hook-injection", fmt.Sprintf("%s: prompt hook context reached the model", phase))
 			return
 		}
 	}
@@ -72,14 +72,14 @@ func (r *TestRunner) checkHookInjection(phase string, entries []server.LogEntry)
 	// could inject nothing and the run stayed green.
 	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
 	if channel == harness.ContextNone {
-		r.skip(fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, channel))
+		r.skip("hook-injection:no-channel", fmt.Sprintf("%s: prompt hook context not seen (no stdout channel: %s)", phase, channel))
 		return
 	}
 	if note := r.harness.KnownIssues[phase+":prompt-context"]; note != "" {
-		r.skip(fmt.Sprintf("%s: prompt hook context not found in any request — known issue: %s", phase, note))
+		r.skip("hook-injection:known-issue", fmt.Sprintf("%s: prompt hook context not found in any request — known issue: %s", phase, note))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, channel))
+	r.fail("hook-injection", fmt.Sprintf("%s: prompt hook context (%s) not found in any request", phase, channel))
 }
 
 // checkInstructions verifies that the codename from each instruction file
@@ -92,7 +92,7 @@ func (r *TestRunner) checkInstructions(phase string, entries []server.LogEntry) 
 	fmt.Printf("[check] instruction files (%s)\n", phase)
 	if len(entries) == 0 {
 		// checkAPIRequests already failed this phase; don't repeat it.
-		r.skip(fmt.Sprintf("%s: no requests to inspect for instruction files", phase))
+		r.skip("instructions:no-requests", fmt.Sprintf("%s: no requests to inspect for instruction files", phase))
 		return
 	}
 	names := make([]string, 0, len(r.instructionCodes))
@@ -110,9 +110,9 @@ func (r *TestRunner) checkInstructions(phase string, entries []server.LogEntry) 
 			}
 		}
 		if found {
-			r.pass(fmt.Sprintf("%s: %s loaded into context", phase, name))
+			r.pass("instructions."+name, fmt.Sprintf("%s: %s loaded into context", phase, name))
 		} else {
-			r.fail(fmt.Sprintf("%s: %s not found in any request", phase, name))
+			r.fail("instructions."+name, fmt.Sprintf("%s: %s not found in any request", phase, name))
 			if os.Getenv("HARNESS_DEBUG") != "" {
 				dump := fmt.Sprintf("/tmp/harness-%s-%s-requests.json", r.harness.Name, phase)
 				if data, err := json.MarshalIndent(entries, "", "  "); err == nil {
@@ -130,9 +130,9 @@ func (r *TestRunner) checkAPIRequests(phase string, entries []server.LogEntry) {
 	// No requests at all means the agent never reached the mock, so nothing
 	// else this phase checked was actually exercised. Always a failure.
 	if len(entries) > 0 {
-		r.pass(fmt.Sprintf("%s: mock server received %d request(s)", phase, len(entries)))
+		r.pass("requests", fmt.Sprintf("%s: mock server received %d request(s)", phase, len(entries)))
 	} else {
-		r.fail(fmt.Sprintf("%s: mock server received no requests", phase))
+		r.fail("requests", fmt.Sprintf("%s: mock server received no requests", phase))
 	}
 }
 
@@ -146,19 +146,19 @@ func (r *TestRunner) checkStreamingFormat(phase string, entries []server.LogEntr
 	// ever holds a path — could not fire at all.
 	for _, e := range entries {
 		if e.Streamed {
-			r.pass(fmt.Sprintf("%s: streaming enabled in request", phase))
+			r.pass("streaming", fmt.Sprintf("%s: streaming enabled in request", phase))
 			return
 		}
 	}
 	if len(entries) == 0 {
-		r.skip(fmt.Sprintf("%s: no requests to inspect for streaming", phase))
+		r.skip("streaming:no-requests", fmt.Sprintf("%s: no requests to inspect for streaming", phase))
 		return
 	}
 	if reason, ok := r.harness.KnownIssues[phase+":streaming"]; ok {
-		r.skip(fmt.Sprintf("%s: no streaming requests observed — %s", phase, reason))
+		r.skip("streaming:known-issue", fmt.Sprintf("%s: no streaming requests observed — %s", phase, reason))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: no streaming requests observed", phase))
+	r.fail("streaming", fmt.Sprintf("%s: no streaming requests observed", phase))
 }
 
 func (r *TestRunner) checkModelSelection(phase string, entries []server.LogEntry) {
@@ -175,22 +175,22 @@ func (r *TestRunner) checkModelSelection(phase string, entries []server.LogEntry
 	for _, e := range entries {
 		for _, model := range accepted {
 			if e.Model == model || pathNamesModel(e.Path, model) {
-				r.pass(fmt.Sprintf("%s: model %s in request", phase, model))
+				r.pass("model", fmt.Sprintf("%s: model %s in request", phase, model))
 				return
 			}
 		}
 	}
 	if len(entries) == 0 {
-		r.skip(fmt.Sprintf("%s: no requests to inspect for model selection", phase))
+		r.skip("model:no-requests", fmt.Sprintf("%s: no requests to inspect for model selection", phase))
 		return
 	}
 	// The agent ignored the model this harness configures, so the run measured
 	// some other model: a gap in the harness, not a detail to wave through.
 	if reason, ok := r.harness.KnownIssues[phase+":model"]; ok {
-		r.skip(fmt.Sprintf("%s: model %s not found in requests — %s", phase, r.harness.DefaultModel, reason))
+		r.skip("model:known-issue", fmt.Sprintf("%s: model %s not found in requests — %s", phase, r.harness.DefaultModel, reason))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
+	r.fail("model", fmt.Sprintf("%s: model %s not found in requests", phase, r.harness.DefaultModel))
 }
 
 // promptHookFired reports whether the mock prompt hook ran in this phase. Its
@@ -233,23 +233,23 @@ func (r *TestRunner) checkBeltHookShape() {
 	channel := harness.ContextChannelFor(r.harness.Name, "user-prompt-submit")
 	switch {
 	case probe.err != nil:
-		r.skip("belt prompt hook produced no output to inspect: " + probe.err.Error() + " " + probe.stderr)
+		r.skip("belt-hook-shape:no-output", "belt prompt hook produced no output to inspect: "+probe.err.Error()+" "+probe.stderr)
 		return
 	case strings.TrimSpace(probe.stdout) == "":
-		r.skip("belt had no suggestions for the probe prompt, so there is nothing to inspect " + probe.stderr)
+		r.skip("belt-hook-shape:no-suggestions", "belt had no suggestions for the probe prompt, so there is nothing to inspect "+probe.stderr)
 		return
 	}
 
 	text, ok := harness.HookContextText(r.harness.Name, "user-prompt-submit", probe.stdout)
 	if !ok {
-		r.fail(fmt.Sprintf("belt did not print %s's hook shape (%s): %s",
+		r.fail("belt-hook-shape:unshaped", fmt.Sprintf("belt did not print %s's hook shape (%s): %s",
 			r.harness.Name, channel, truncate(strings.TrimSpace(probe.stdout), 100)))
 		return
 	}
 	if _, wrapped := harness.AnyHookContext(text); wrapped {
-		r.fail(fmt.Sprintf("belt wrapped the context twice for %s (%s): the text it handed over is itself an envelope: %s",
+		r.fail("belt-hook-shape:double-wrapped", fmt.Sprintf("belt wrapped the context twice for %s (%s): the text it handed over is itself an envelope: %s",
 			r.harness.Name, channel, truncate(text, 100)))
 		return
 	}
-	r.pass(fmt.Sprintf("belt prompt hook output is shaped for %s (%s)", r.harness.Name, channel))
+	r.pass("belt-hook-shape", fmt.Sprintf("belt prompt hook output is shaped for %s (%s)", r.harness.Name, channel))
 }

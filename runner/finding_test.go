@@ -13,8 +13,8 @@ import (
 // prevent — so the two counters must not be the same counter.
 func TestAFindingIsNotASkip(t *testing.T) {
 	r := &TestRunner{harness: harness.Harness{Name: "test"}}
-	r.skip("could not ask")
-	r.finding("asked, and the answer is no")
+	r.skip("t", "could not ask")
+	r.finding("t", "asked, and the answer is no")
 
 	if r.result.Skipped != 1 {
 		t.Errorf("want 1 skipped, got %d", r.result.Skipped)
@@ -31,7 +31,7 @@ func TestAFindingIsNotASkip(t *testing.T) {
 // "no" is a fact about the agent, not a defect in it or in this suite.
 func TestAFindingDoesNotFailTheRun(t *testing.T) {
 	r := &TestRunner{harness: harness.Harness{Name: "test"}}
-	r.finding("does not re-raise the parked approval on resume")
+	r.finding("t", "does not re-raise the parked approval on resume")
 	if r.failed {
 		t.Error("a finding marked the run failed")
 	}

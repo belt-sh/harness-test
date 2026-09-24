@@ -55,24 +55,24 @@ func (r *TestRunner) probeDeferredTools(phase string) {
 
 	name, ok := findDeferredTool(before)
 	if !ok {
-		r.pass(fmt.Sprintf("deferred tools: %s declares no tool-search tool, so its %d declared tools are the whole surface it offers on a turn",
+		r.pass("deferred.armed:no-search-tool", fmt.Sprintf("deferred tools: %s declares no tool-search tool, so its %d declared tools are the whole surface it offers on a turn",
 			r.harness.Name, len(before)))
 		return
 	}
 
 	arg, argOK := queryArgumentFor(decls[name])
 	if !argOK {
-		r.skip(fmt.Sprintf("deferred tools: %s declares %s but no string argument to query it with (args: %s)",
+		r.skip("deferred.armed:no-query-arg", fmt.Sprintf("deferred tools: %s declares %s but no string argument to query it with (args: %s)",
 			r.harness.Name, name, strings.Join(decls[name].ArgumentNames(), " ")))
 		return
 	}
 
 	args := fmt.Sprintf(`{%q: %q}`, arg, deferredQuery)
 	if !r.armTool(name, args) {
-		r.skip(fmt.Sprintf("deferred tools: %s could not be armed with %s", r.harness.Name, name))
+		r.skip("deferred.armed:unarmed", fmt.Sprintf("deferred tools: %s could not be armed with %s", r.harness.Name, name))
 		return
 	}
-	r.pass(fmt.Sprintf("deferred tools: %s declares %s(%s) — asking it to expand", r.harness.Name, name, arg))
+	r.pass("deferred.armed", fmt.Sprintf("deferred tools: %s declares %s(%s) — asking it to expand", r.harness.Name, name, arg))
 
 	if !r.runTurnFor(phase) {
 		return
@@ -86,15 +86,15 @@ func (r *TestRunner) probeDeferredTools(phase string) {
 		// measurement. Reporting them as one line makes an untested agent look
 		// like a tested one.
 		if !r.server.ToolCallServed() {
-			r.skip(fmt.Sprintf("deferred tools: %s was never offered %s, so its surface is still unmeasured",
+			r.skip("deferred.expanded:not-offered", fmt.Sprintf("deferred tools: %s was never offered %s, so its surface is still unmeasured",
 				r.harness.Name, name))
 			return
 		}
-		r.pass(fmt.Sprintf("deferred tools: %s ran %s and declared nothing new — its search returns results to the model rather than expanding the tool list",
+		r.pass("deferred.expanded:nothing-new", fmt.Sprintf("deferred tools: %s ran %s and declared nothing new — its search returns results to the model rather than expanding the tool list",
 			r.harness.Name, name))
 		return
 	}
-	r.pass(fmt.Sprintf("deferred tools: %s revealed %d tool(s) not visible on a plain turn: %s",
+	r.pass("deferred.expanded:revealed", fmt.Sprintf("deferred tools: %s revealed %d tool(s) not visible on a plain turn: %s",
 		r.harness.Name, len(revealed), strings.Join(revealed, " ")))
 	fmt.Printf("  [tools] %s/%s after expansion (%d total): %s\n",
 		r.harness.Name, phase, len(before)+len(revealed), strings.Join(r.server.DeclaredTools(), " "))

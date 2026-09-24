@@ -20,11 +20,15 @@ type Probes struct {
 	Resume     bool
 	ResumeKill bool
 
-	// ResumeAfter holds the first resume attempt back until this long after
-	// the first process ended. Zero tries at once. It separates "the agent
-	// cannot resume" from "the agent cannot resume yet": gemini 0.61 clobbers
-	// a session loaded in the UTC minute it was created, and a probe that
-	// always resumes within seconds only ever measures that minute.
+	// ResumeAfter holds every load of a session the agent wrote itself back
+	// until this long after the session was left: the resume probe's first
+	// attempt, the in-flight probe's two resumes after the kill, the compaction
+	// probe's resume, and the appended seed (whose base is the agent's own
+	// session). Zero loads at once. It separates "the agent cannot resume"
+	// from "the agent cannot resume yet": gemini 0.61 clobbers a session
+	// loaded in the UTC minute it was created, and a probe that always loads
+	// within seconds only ever measures that minute. Held back on one probe
+	// and not the others, the others' outcomes depended on the clock.
 	ResumeAfter time.Duration
 
 	// InFlight parks a permission request, kills the client while the tool
@@ -139,4 +143,15 @@ func (p Probes) How() string {
 		return "killed"
 	}
 	return "closed"
+}
+
+// holdBack waits until ResumeAfter has passed since the session was left.
+func (p Probes) holdBack(since time.Time) {
+	if p.ResumeAfter <= 0 {
+		return
+	}
+	if wait := time.Until(since.Add(p.ResumeAfter)); wait > 0 {
+		fmt.Printf("  … holding the load back %s (resumeafter)\n", wait.Round(time.Second))
+		time.Sleep(wait)
+	}
 }

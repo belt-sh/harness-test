@@ -31,11 +31,11 @@ func (r *TestRunner) probeSeedKinds() {
 	fmt.Println("[probe] seed kinds (which parts of an imported history reach the model)")
 	st, ok, err := all.Open(r.harness.Name, r.agentHome())
 	if !ok {
-		r.skip(fmt.Sprintf("seed kinds: no codec for %s", r.harness.Name))
+		r.skip("seedkinds:no-codec", fmt.Sprintf("seed kinds: no codec for %s", r.harness.Name))
 		return
 	}
 	if err != nil {
-		r.fail(fmt.Sprintf("seed kinds: open %s store: %v", r.harness.Name, err))
+		r.fail("seedkinds.open", fmt.Sprintf("seed kinds: open %s store: %v", r.harness.Name, err))
 		return
 	}
 
@@ -55,7 +55,7 @@ func (r *TestRunner) probeSeedKinds() {
 	// block, and that is the codec's doing, not the agent's.
 	kept := map[string]bool{}
 	if s, err := st.Read(context.Background(), id); err != nil {
-		r.fail(fmt.Sprintf("seed kinds: read back %s session %s: %v", r.harness.Name, id, err))
+		r.fail("seedkinds.read-back", fmt.Sprintf("seed kinds: read back %s session %s: %v", r.harness.Name, id, err))
 		return
 	} else {
 		for _, f := range facts {
@@ -72,11 +72,11 @@ func (r *TestRunner) probeSeedKinds() {
 		switch {
 		case entriesContain(sent, f.fact):
 			reached = append(reached, f.kind)
-			r.pass(fmt.Sprintf("seed kinds: %s gave the model the %s", r.harness.Name, f.kind))
+			r.pass("seedkinds."+slug(f.kind), fmt.Sprintf("seed kinds: %s gave the model the %s", r.harness.Name, f.kind))
 		case !kept[f.kind]:
-			r.finding(fmt.Sprintf("seed kinds: %s's codec kept no %s in the session's context, so the model could not get it", r.harness.Name, f.kind))
+			r.finding("seedkinds."+slug(f.kind)+":not-kept", fmt.Sprintf("seed kinds: %s's codec kept no %s in the session's context, so the model could not get it", r.harness.Name, f.kind))
 		default:
-			r.finding(fmt.Sprintf("seed kinds: %s loaded the %s and did not give it to the model", r.harness.Name, f.kind))
+			r.finding("seedkinds."+slug(f.kind)+":not-given", fmt.Sprintf("seed kinds: %s loaded the %s and did not give it to the model", r.harness.Name, f.kind))
 		}
 	}
 	fmt.Printf("  seed kinds: %s reached the model: %d of %d (%s)\n", r.harness.Name, len(reached), len(facts), strings.Join(reached, ", "))

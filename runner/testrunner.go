@@ -29,6 +29,7 @@ type Result struct {
 	Failed     int
 	Skipped    int
 	Findings   int
+	Checks     []Check
 	Duration   time.Duration
 	SkipReason harness.SkipReason // set when the whole harness was skipped
 	SkipDetail string
@@ -83,6 +84,8 @@ type TestRunner struct {
 	proxyURL         string            // HTTPS_PROXY value, set only during agent execution
 	testEntries      []server.LogEntry // checks read these when set (unit tests)
 	probes           Probes
+	section          string         // the phase checks are filed under in the report
+	seen             map[string]int // check ids recorded so far, for repeats
 }
 
 func (r *TestRunner) entries() []server.LogEntry {
@@ -177,19 +180,22 @@ func (r *TestRunner) SetProbes(p Probes) {
 	r.probes = p
 }
 
-func (r *TestRunner) pass(msg string) {
+func (r *TestRunner) pass(id, msg string) {
 	r.result.Passed++
+	r.record(OutcomePass, id, msg)
 	fmt.Printf("  ✓ %s\n", msg)
 }
 
-func (r *TestRunner) fail(msg string) {
+func (r *TestRunner) fail(id, msg string) {
 	r.result.Failed++
 	r.failed = true
+	r.record(OutcomeFail, id, msg)
 	fmt.Fprintf(os.Stderr, "  ✗ %s\n", msg)
 }
 
-func (r *TestRunner) skip(msg string) {
+func (r *TestRunner) skip(id, msg string) {
 	r.result.Skipped++
+	r.record(OutcomeSkip, id, msg)
 	fmt.Printf("  ○ %s\n", msg)
 }
 
@@ -200,8 +206,9 @@ func (r *TestRunner) skip(msg string) {
 // untested when in fact they had been asked and had answered. A reader
 // totalling the skips saw holes where there were results. An answer is not a
 // gap, so it gets its own mark and its own column.
-func (r *TestRunner) finding(msg string) {
+func (r *TestRunner) finding(id, msg string) {
 	r.result.Findings++
+	r.record(OutcomeFinding, id, msg)
 	fmt.Printf("  ● %s\n", msg)
 }
 
@@ -230,6 +237,7 @@ func (r *TestRunner) Run() Result {
 	r.writeInstructions()
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
+		r.section = "headless"
 		if len(r.harness.HeadlessCmd) > 0 {
 			r.prepareToolCall(ModeHeadless)
 			r.requestHooksFor(ModeHeadless)
@@ -244,16 +252,18 @@ func (r *TestRunner) Run() Result {
 				r.probeTranscriptRoundTrip("headless")
 			}
 		} else {
-			r.skip(r.harness.Name + " has no headless mode")
+			r.skip("phase:unsupported", r.harness.Name+" has no headless mode")
 		}
 	}
 	if r.mode == ModeBoth || r.mode == ModeInteractive {
+		r.section = "interactive"
 		r.resetPhase(ModeInteractive)
 		r.requestHooksFor(ModeInteractive)
 		r.runInteractive()
 		r.runChecks("interactive")
 	}
 	if r.mode == ModeACP {
+		r.section = "acp"
 		r.resetPhase(ModeACP)
 		r.requestHooksFor(ModeACP)
 		r.runACP()
@@ -288,6 +298,7 @@ func (r *TestRunner) Run() Result {
 		}
 	}
 	if r.mode == ModeSDK {
+		r.section = "sdk"
 		r.resetPhase(ModeSDK)
 		r.requestHooksFor(ModeSDK)
 		r.runSDK()
@@ -443,7 +454,7 @@ func (r *TestRunner) setupHome() {
 	}
 	dir, err := os.MkdirTemp("", "harness-test-"+r.harness.Name+"-")
 	if err != nil {
-		r.fail("create temp home: " + err.Error())
+		r.fail("home", "create temp home: "+err.Error())
 		return
 	}
 	r.home = dir
@@ -454,7 +465,7 @@ func (r *TestRunner) checkBinary() {
 	fmt.Println("[phase 1] prerequisites")
 	if _, err := exec.LookPath(r.harness.Binary); err != nil {
 		if len(r.harness.InstallCmd) == 0 {
-			r.fail(r.harness.Binary + " not found (no install command)")
+			r.fail("binary", r.harness.Binary+" not found (no install command)")
 			return
 		}
 		fmt.Printf("  … installing %s\n", r.harness.Binary)
@@ -462,7 +473,7 @@ func (r *TestRunner) checkBinary() {
 		cmd.Env = os.Environ()
 		out, installErr := cmd.CombinedOutput()
 		if installErr != nil {
-			r.fail(fmt.Sprintf("install %s: %v\n%s", r.harness.Binary, installErr, string(out)))
+			r.fail("binary", fmt.Sprintf("install %s: %v\n%s", r.harness.Binary, installErr, string(out)))
 			return
 		}
 		for _, d := range r.harness.InstallBinDirs {
@@ -472,10 +483,10 @@ func (r *TestRunner) checkBinary() {
 			}
 		}
 		if _, err := exec.LookPath(r.harness.Binary); err != nil {
-			r.fail(r.harness.Binary + " not found after install")
+			r.fail("binary", r.harness.Binary+" not found after install")
 			return
 		}
-		r.pass(r.harness.Binary + " installed")
+		r.pass("binary", r.harness.Binary+" installed")
 		r.detectVersion()
 		r.checkDetection()
 		for _, postCmd := range r.harness.PostInstall {
@@ -485,7 +496,7 @@ func (r *TestRunner) checkBinary() {
 		}
 		return
 	}
-	r.pass(r.harness.Binary + " found")
+	r.pass("binary", r.harness.Binary+" found")
 	r.detectVersion()
 	r.checkDetection()
 }
@@ -503,15 +514,15 @@ func (r *TestRunner) checkDetection() {
 	// An env-var match alone must never reach the installed list, or belt
 	// offers to write hooks for an agent that is not on the machine.
 	if envOnly := (harness.DetectResult{Name: self.Name, Probes: []harness.Probe{harness.ProbeEnvVar}}); envOnly.Installed() || envOnly.Configured() {
-		r.fail("detect: an env-var match alone reports as installed")
+		r.fail("detect.env-only", "detect: an env-var match alone reports as installed")
 	}
 	if self.IsEnvironment() && !self.Installed() && !self.Configured() {
-		r.fail(fmt.Sprintf("detect: %s is only an environment match yet reached the installed list", self.Name))
+		r.fail("detect.env-installed", fmt.Sprintf("detect: %s is only an environment match yet reached the installed list", self.Name))
 	}
 	if self.Installed() {
-		r.pass(fmt.Sprintf("detect: %s found installed (%s)", r.harness.Name, probeNames(self)))
+		r.pass("detect.self", fmt.Sprintf("detect: %s found installed (%s)", r.harness.Name, probeNames(self)))
 	} else {
-		r.fail(fmt.Sprintf("detect: %s is installed but DetectInstalled does not report it (probes: %s)",
+		r.fail("detect.self", fmt.Sprintf("detect: %s is installed but DetectInstalled does not report it (probes: %s)",
 			r.harness.Name, probeNames(self)))
 	}
 	// Another agent reported installed is only a bug when this run's own
@@ -530,7 +541,7 @@ func (r *TestRunner) checkDetection() {
 			continue
 		}
 		if target, err := filepath.EvalSymlinks(d.Binary); err == nil && r.ownsPath(target) {
-			r.fail(fmt.Sprintf("detect: %s is reported installed, but its binary %s resolves to %s, which belongs to %s — the binary name is not specific enough to identify it",
+			r.fail("detect.other."+d.Name, fmt.Sprintf("detect: %s is reported installed, but its binary %s resolves to %s, which belongs to %s — the binary name is not specific enough to identify it",
 				d.Name, d.Binary, target, r.harness.Name))
 		}
 	}
@@ -587,7 +598,7 @@ func (r *TestRunner) detectVersion() {
 	// passed, the version column was blank, the turn exited 127, and the run
 	// reported "prompt hook did not fire" and "mock server received no
 	// requests" — three symptoms of a cause nothing named.
-	r.fail(fmt.Sprintf("%s is installed but will not run: no output from --version, -v or version", r.harness.Binary))
+	r.fail("version", fmt.Sprintf("%s is installed but will not run: no output from --version, -v or version", r.harness.Binary))
 }
 
 func (r *TestRunner) setupEndpoint() {
@@ -600,11 +611,11 @@ func (r *TestRunner) setupEndpoint() {
 	for _, envVar := range keys {
 		val := r.expand(r.harness.EnvVars[envVar])
 		os.Setenv(envVar, val)
-		r.pass(envVar + "=" + val)
+		r.pass("env."+envVar, envVar+"="+val)
 	}
 	if r.harness.APIKeyEnvVar != "" {
 		os.Setenv(r.harness.APIKeyEnvVar, "mock-key")
-		r.pass(r.harness.APIKeyEnvVar + " set")
+		r.pass("env."+r.harness.APIKeyEnvVar, r.harness.APIKeyEnvVar+" set")
 	}
 	r.server.ClearLog()
 }
@@ -652,17 +663,17 @@ func (r *TestRunner) writeHooks() {
 	}
 	res := harness.InstallWithCommand(r.harness.Name, harness.ScopeUser, r.mockHookCommand)
 	if res.Error != nil {
-		r.fail("hook install: " + res.Error.Error())
+		r.fail("hooks.install", "hook install: "+res.Error.Error())
 		return
 	}
 	if res.Inactive != "" {
-		r.fail(fmt.Sprintf("hooks installed but %q is the active agent", res.Inactive))
+		r.fail("hooks.install:inactive", fmt.Sprintf("hooks installed but %q is the active agent", res.Inactive))
 		return
 	}
 	if r.harness.NeedsGitRepo {
 		r.copyHooksToProject(res.HooksPath)
 	}
-	r.pass(fmt.Sprintf("hooks configured (code: %s)", r.injectCode))
+	r.pass("hooks.install", fmt.Sprintf("hooks configured (code: %s)", r.injectCode))
 }
 
 func (r *TestRunner) writeBeltHooks() {
@@ -692,14 +703,14 @@ func (r *TestRunner) writeBeltHooks() {
 
 	result := harness.Install(r.harness.Name, harness.ScopeUser)
 	if result.Error != nil {
-		r.fail("belt hook install: " + result.Error.Error())
+		r.fail("hooks.install", "belt hook install: "+result.Error.Error())
 		return
 	}
 
 	if result.Merged {
-		r.pass(fmt.Sprintf("belt hooks merged into %s", result.HooksPath))
+		r.pass("hooks.install", fmt.Sprintf("belt hooks merged into %s", result.HooksPath))
 	} else {
-		r.pass(fmt.Sprintf("belt hooks created at %s", result.HooksPath))
+		r.pass("hooks.install", fmt.Sprintf("belt hooks created at %s", result.HooksPath))
 	}
 
 	r.probeBeltPromptOutput()
@@ -716,7 +727,7 @@ func (r *TestRunner) writeBeltHooks() {
 		if data, err := os.ReadFile(src); err == nil {
 			dst := filepath.Join(projHookDir, fname)
 			os.WriteFile(dst, data, 0644)
-			r.pass(fmt.Sprintf("belt hooks copied to project (%s)", dst))
+			r.pass("hooks.project-copy", fmt.Sprintf("belt hooks copied to project (%s)", dst))
 		}
 	}
 }
@@ -740,7 +751,7 @@ func (r *TestRunner) setupSkills() {
 	}
 	fmt.Println("[phase 4] skills")
 	os.MkdirAll(filepath.Join(r.home, r.harness.SkillsDir), 0755)
-	r.pass("skills directory created")
+	r.pass("skills", "skills directory created")
 }
 
 const (
@@ -783,7 +794,7 @@ func (r *TestRunner) writeInstructions() {
 		}
 	}
 	for name := range r.instructionCodes {
-		r.pass("instruction file written: " + name)
+		r.pass("instructions.written."+name, "instruction file written: "+name)
 	}
 }
 
@@ -868,13 +879,13 @@ func (r *TestRunner) runOneShot(label string, cmdSlice, extraArgs []string) []by
 		fmt.Printf("    [debug] %s output (%d bytes):\n%s\n", label, len(out), r.lastOutput)
 	}
 	if err != nil && len(out) > 0 {
-		r.pass(fmt.Sprintf("%s produced output (%d bytes, exit: %v)", label, len(out), err))
+		r.pass("turn:nonzero-exit", fmt.Sprintf("%s produced output (%d bytes, exit: %v)", label, len(out), err))
 	} else if err != nil {
-		r.fail(label + ": " + err.Error())
+		r.fail("turn", label+": "+err.Error())
 	} else if len(out) > 0 {
-		r.pass(fmt.Sprintf("%s produced output (%d bytes)", label, len(out)))
+		r.pass("turn", fmt.Sprintf("%s produced output (%d bytes)", label, len(out)))
 	} else {
-		r.fail(label + " produced no output")
+		r.fail("turn:no-output", label+" produced no output")
 	}
 
 	if r.harness.Events.Stop != "" {
@@ -914,7 +925,7 @@ func (r *TestRunner) runPostHeadless(dir string, rawArgs []string) {
 		if expanded == "" {
 			// A registry template that expands to nothing is a configuration
 			// error in this repo, not something the agent did.
-			r.fail("post-headless step not run: template variable expanded to nothing in " + strings.Join(rawArgs, " "))
+			r.fail("post-step", "post-headless step not run: template variable expanded to nothing in "+strings.Join(rawArgs, " "))
 			return
 		}
 		args = append(args, expanded)
@@ -949,7 +960,7 @@ func (r *TestRunner) sendLine(session *PTYSession, text string) {
 
 func (r *TestRunner) runInteractive() {
 	if len(r.harness.InteractiveCmd) == 0 {
-		r.skip(r.harness.Name + " has no interactive mode")
+		r.skip("phase:unsupported", r.harness.Name+" has no interactive mode")
 		return
 	}
 
@@ -972,7 +983,7 @@ func (r *TestRunner) runInteractive() {
 	launchMark := r.markTurn(true)
 	session, err := StartPTY(r.harness.InteractiveCmd[0], iargs, dir, r.envIn(dir))
 	if err != nil {
-		r.fail("PTY start: " + err.Error())
+		r.fail("tui.start", "PTY start: "+err.Error())
 		return
 	}
 	defer session.Close()
@@ -1033,7 +1044,7 @@ func (r *TestRunner) runInteractive() {
 	} else {
 		_, _ = session.WaitForAny([]string{">", "❯", "$", "?", "Type your message"}, 15*time.Second)
 	}
-	r.pass("TUI started")
+	r.pass("tui.start", "TUI started")
 
 	mark := launchMark
 	if !r.harness.InteractivePromptInArgs {
@@ -1098,7 +1109,7 @@ func (r *TestRunner) runInteractive() {
 		fmt.Printf("    [debug] PTY output (%d bytes) head:\n%s\n    [debug] tail:\n%s\n", len(r.lastOutput), head, tail)
 	}
 
-	r.pass("interactive session completed")
+	r.pass("tui.completed", "interactive session completed")
 }
 
 func (r *TestRunner) writeACPConfig() {
@@ -1125,7 +1136,7 @@ func (r *TestRunner) writeACPConfig() {
 func (r *TestRunner) runACP() {
 	kind := r.harness.DriverKind()
 	if kind == "" {
-		r.skip(r.harness.Name + " has no session driver (no ACP command and no native backend)")
+		r.skip("phase:unsupported", r.harness.Name+" has no session driver (no ACP command and no native backend)")
 		return
 	}
 	label := r.sessionLabel()
@@ -1141,11 +1152,11 @@ func (r *TestRunner) runACP() {
 
 	sess := r.newSession(false, false)
 	if err := sess.Start(); err != nil {
-		r.fail(label + " start: " + err.Error())
+		r.fail("session.start", label+" start: "+err.Error())
 		return
 	}
 	defer sess.Close()
-	r.pass(label + " session started")
+	r.pass("session.start", label+" session started")
 
 	// Agents finish loading hooks after session/new returns; a prompt sent
 	// at once can run the hook without its output being attached (grok).
@@ -1154,15 +1165,15 @@ func (r *TestRunner) runACP() {
 	answered := r.server.AnswersServed()
 	prompt := promptText
 	if err := sess.SendPrompt(prompt); err != nil {
-		r.fail(label + " prompt: " + err.Error())
+		r.fail("session.prompt", label+" prompt: "+err.Error())
 		return
 	}
 
 	err := sess.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)
 	if err != nil {
-		r.skip(label + " response: " + err.Error())
+		r.skip("session.answer:no-answer", label+" response: "+err.Error())
 	} else {
-		r.pass(label + " prompt answered")
+		r.pass("session.answer", label+" prompt answered")
 	}
 
 	// Let tool execution and post-tool hooks settle
@@ -1180,7 +1191,7 @@ func (r *TestRunner) runACP() {
 		fmt.Printf("    [debug] %s output (%d bytes):\n%s\n", label, len(r.lastOutput), r.lastOutput)
 	}
 
-	r.pass(label + " session completed")
+	r.pass("session.completed", label+" session completed")
 
 }
 
@@ -1355,7 +1366,7 @@ func (r *TestRunner) resumeLabel() string {
 func (r *TestRunner) startProbeTurn(label string) (d *SessionDriver, ok bool) {
 	d = r.newSession(false, false)
 	if err := d.Start(); err != nil {
-		r.skip(label + ": " + r.sessionLabel() + " start: " + err.Error())
+		r.skip(probeID(label)+".start", label+": "+r.sessionLabel()+" start: "+err.Error())
 		return nil, false
 	}
 	// Agents finish loading hooks after session/new returns; a prompt sent at
@@ -1365,7 +1376,7 @@ func (r *TestRunner) startProbeTurn(label string) (d *SessionDriver, ok bool) {
 	answered := r.server.AnswersServed()
 	if err := d.SendPrompt(promptText); err != nil {
 		d.Kill()
-		r.skip(label + ": " + r.sessionLabel() + " prompt: " + err.Error())
+		r.skip(probeID(label)+".prompt", label+": "+r.sessionLabel()+" prompt: "+err.Error())
 		return nil, false
 	}
 	d.WaitAnswered(r.server.AnswersServed, answered, 60*time.Second)
@@ -1423,7 +1434,7 @@ func (r *TestRunner) probeSessionLoad() {
 		if err := first.Kill(); errors.Is(err, errNoKill) {
 			// Closed instead; reporting the resume as one after a kill would
 			// be reporting the easy case as the hard one.
-			r.skip(fmt.Sprintf("%s after killed: the %s session could not be killed (%v)", op, r.sessionLabel(), err))
+			r.skip("resume.kill:unkillable", fmt.Sprintf("%s after killed: the %s session could not be killed (%v)", op, r.sessionLabel(), err))
 			return
 		}
 	} else {
@@ -1431,7 +1442,7 @@ func (r *TestRunner) probeSessionLoad() {
 	}
 	endedAt := time.Now()
 	if sessionID == "" {
-		r.skip(op + ": the agent reported no session id to resume")
+		r.skip("resume.session-id", op+": the agent reported no session id to resume")
 		return
 	}
 
@@ -1470,24 +1481,24 @@ func (r *TestRunner) attemptResume(sessionID string, open func() *SessionDriver,
 
 		load := resumed.LoadResult()
 		if load.Reported {
-			r.pass(fmt.Sprintf("%s after %s: %s accepted the call %s after the process ended (%s, %d update(s) replayed, answered=%v, %s)",
+			r.pass("resume.load", fmt.Sprintf("%s after %s: %s accepted the call %s after the process ended (%s, %d update(s) replayed, answered=%v, %s)",
 				op, how, r.harness.Name, waited, claim, load.Replayed, load.Answered,
 				load.Elapsed.Round(time.Millisecond)))
 		} else {
-			r.pass(fmt.Sprintf("%s after %s: %s reopened the session %s after the process ended (%s)",
+			r.pass("resume.load:by-id", fmt.Sprintf("%s after %s: %s reopened the session %s after the process ended (%s)",
 				op, how, r.harness.Name, waited, claim))
 		}
 		if lastErr != nil {
 			// The earlier refusals were the agent still writing, not the agent
 			// declining. A probe that asked once would have reported the
 			// refusal as the answer.
-			r.pass(fmt.Sprintf("%s: %s refused until %s had passed, so the session is written after the process ends, not before",
+			r.pass("resume.retried", fmt.Sprintf("%s: %s refused until %s had passed, so the session is written after the process ends, not before",
 				op, r.harness.Name, waited))
 		}
 		if load.Reported {
 			r.reportReplayShape(load, resumed.ReplayedKinds())
 		} else {
-			r.skip(fmt.Sprintf("%s: %s replays nothing to its client (%s resumes by id), so the replay check is ACP's; the next check reads the model request",
+			r.skip("resume.replay:by-id", fmt.Sprintf("%s: %s replays nothing to its client (%s resumes by id), so the replay check is ACP's; the next check reads the model request",
 				op, r.harness.Name, resumed.Kind()))
 		}
 		r.reportResumedContext(resumed)
@@ -1496,7 +1507,7 @@ func (r *TestRunner) attemptResume(sessionID string, open func() *SessionDriver,
 	}
 
 	// Not a failure of this suite or of belt: it is the answer.
-	r.skip(fmt.Sprintf("%s after %s: %s does not resume within %s (%s, %v)",
+	r.skip("resume.load:not-resumed", fmt.Sprintf("%s after %s: %s does not resume within %s (%s, %v)",
 		op, how, r.harness.Name, resumeAttemptDelays[len(resumeAttemptDelays)-1], claim, lastErr))
 }
 
@@ -1514,7 +1525,7 @@ func (r *TestRunner) attemptResume(sessionID string, open func() *SessionDriver,
 // RestoredConversation is true it could not fire.
 func (r *TestRunner) reportReplayShape(load LoadResult, replayed []string) {
 	if load.Replayed == 0 {
-		r.skip("session/load: " + r.harness.Name + " replayed nothing at all")
+		r.skip("resume.replay:nothing", "session/load: "+r.harness.Name+" replayed nothing at all")
 		return
 	}
 	kinds := fmt.Sprintf("%d update(s)", load.Replayed)
@@ -1522,11 +1533,11 @@ func (r *TestRunner) reportReplayShape(load LoadResult, replayed []string) {
 		kinds += ": " + strings.Join(replayed, ", ")
 	}
 	if !load.RestoredConversation {
-		r.skip(fmt.Sprintf("session/load: %s replayed %s — %d of them conversation and none of them the user's turn, which a fresh session cannot replay",
+		r.skip("resume.replay:no-user-turn", fmt.Sprintf("session/load: %s replayed %s — %d of them conversation and none of them the user's turn, which a fresh session cannot replay",
 			r.harness.Name, kinds, load.Conversation))
 		return
 	}
-	r.pass(fmt.Sprintf("session/load: %s replayed the user's own turn (%s), which a fresh session has none of",
+	r.pass("resume.replay", fmt.Sprintf("session/load: %s replayed the user's own turn (%s), which a fresh session has none of",
 		r.harness.Name, kinds))
 }
 
@@ -1539,7 +1550,7 @@ func (r *TestRunner) reportReplayShape(load LoadResult, replayed []string) {
 func (r *TestRunner) askResumed(d *SessionDriver, label string) ([]server.LogEntry, bool) {
 	before := r.entryCount()
 	if err := d.SendPrompt(resumeFollowUp); err != nil {
-		r.skip(label + ": prompting the resumed session failed: " + err.Error())
+		r.skip(probeID(label)+".followup", label+": prompting the resumed session failed: "+err.Error())
 		return nil, false
 	}
 	deadline := time.Now().Add(60 * time.Second)
@@ -1550,7 +1561,7 @@ func (r *TestRunner) askResumed(d *SessionDriver, label string) ([]server.LogEnt
 
 	after := r.entries()
 	if len(after) <= before {
-		r.skip(label + ": the resumed session sent nothing to the model, so there is nothing to read")
+		r.skip(probeID(label)+".followup:nothing-sent", label+": the resumed session sent nothing to the model, so there is nothing to read")
 		return nil, false
 	}
 	return after[before:], true
@@ -1581,7 +1592,7 @@ func (r *TestRunner) reportResumedContext(resumed *SessionDriver) {
 		return
 	}
 	if entriesContain(sent, promptText) {
-		r.pass(fmt.Sprintf("%s: %s carried the earlier turn to the model, so the resume was real", op, r.harness.Name))
+		r.pass("resume.context", fmt.Sprintf("%s: %s carried the earlier turn to the model, so the resume was real", op, r.harness.Name))
 		return
 	}
 	// The load returned without an error, the notifications arrived, and the
@@ -1598,7 +1609,7 @@ func (r *TestRunner) reportResumedContext(resumed *SessionDriver) {
 		}
 		detail = append(detail, fmt.Sprintf("%s with %d message(s)%s", e.Path, strings.Count(body, `"role"`), note))
 	}
-	r.skip(fmt.Sprintf("%s: %s sent %d request(s) after the resume and none carried the earlier turn — %s",
+	r.skip("resume.context:lost", fmt.Sprintf("%s: %s sent %d request(s) after the resume and none carried the earlier turn — %s",
 		op, r.harness.Name, len(sent), strings.Join(detail, "; ")))
 }
 
@@ -1620,7 +1631,7 @@ func (r *TestRunner) probeCompactedResume() {
 		return
 	}
 	if r.harness.CompactCommand == "" {
-		r.skip("compaction: " + r.harness.Name + " has no compaction command, so there is nothing to compact")
+		r.skip("compact:no-command", "compaction: "+r.harness.Name+" has no compaction command, so there is nothing to compact")
 		return
 	}
 	fmt.Println("[probe] resuming a session the agent compacted")
@@ -1656,7 +1667,7 @@ func (r *TestRunner) probeCompactedResume() {
 		// Nothing reached the model, so the agent did not compact. Reporting
 		// the resume anyway would be reporting an uncompacted session.
 		first.Close()
-		r.skip("compaction: " + r.harness.Name + " sent nothing to the model for " + r.harness.CompactCommand + ", so the session was never compacted")
+		r.skip("compact.run:nothing-sent", "compaction: "+r.harness.Name+" sent nothing to the model for "+r.harness.CompactCommand+", so the session was never compacted")
 		return
 	}
 	// A request is not a compaction. Over ACP a slash command can arrive as an
@@ -1690,33 +1701,35 @@ func (r *TestRunner) probeCompactedResume() {
 		// conversation, and the command is the last thing in it.
 		if strings.HasPrefix(strings.TrimSpace(server.LastUserText(e.Body)), r.harness.CompactCommand) {
 			first.Close()
-			r.finding(fmt.Sprintf("compaction: %s sent %s to the model as a user message, so over %s it is a prompt, not a command, and nothing was compacted",
+			r.finding("compact.run:as-prompt", fmt.Sprintf("compaction: %s sent %s to the model as a user message, so over %s it is a prompt, not a command, and nothing was compacted",
 				r.harness.Name, r.harness.CompactCommand, r.sessionLabel()))
 			return
 		}
 	}
 	if compacted {
-		r.pass(fmt.Sprintf("compaction: %s ran %s and reported the compaction (%d-message request, %d before)",
+		r.pass("compact.run:reported", fmt.Sprintf("compaction: %s ran %s and reported the compaction (%d-message request, %d before)",
 			r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:]), widestBefore))
 	} else if widestRequest(sent[before:]) < widestBefore {
 		first.Close()
-		r.finding(fmt.Sprintf("compaction: %s answered %s with a %d-message request where the turn before carried %d, so it did not compact",
+		r.finding("compact.run:not-compacted", fmt.Sprintf("compaction: %s answered %s with a %d-message request where the turn before carried %d, so it did not compact",
 			r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:]), widestBefore))
 		return
 	} else {
-		r.pass(fmt.Sprintf("compaction: %s ran %s over %d message(s)", r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:])))
+		r.pass("compact.run", fmt.Sprintf("compaction: %s ran %s over %d message(s)", r.harness.Name, r.harness.CompactCommand, widestRequest(sent[before:])))
 	}
 
 	sessionID := first.SessionID()
 	first.Close()
+	closedAt := time.Now()
 	if sessionID == "" {
-		r.skip("compaction: the agent reported no session id to resume")
+		r.skip("compact.session-id", "compaction: the agent reported no session id to resume")
 		return
 	}
 
+	r.probes.holdBack(closedAt)
 	resumed := r.resumeSession(sessionID, false, false)
 	if err := resumed.Start(); err != nil {
-		r.skip(fmt.Sprintf("compaction: %s does not resume a compacted session (%v)", r.harness.Name, err))
+		r.skip("compact.resume:refused", fmt.Sprintf("compaction: %s does not resume a compacted session (%v)", r.harness.Name, err))
 		resumed.Close()
 		return
 	}
@@ -1792,13 +1805,13 @@ func (r *TestRunner) reportCompactedContext(resumed *SessionDriver) {
 	case carried:
 		// Either the agent kept the original wording through compaction, or
 		// the compaction did not touch this turn.
-		r.pass(fmt.Sprintf("compaction: %s still sent the original wording after compacting, so nothing was lost", name))
+		r.pass("compact.context:original", fmt.Sprintf("compaction: %s still sent the original wording after compacting, so nothing was lost", name))
 	case widest > 1:
 		// Lossy by design, which is what compaction is for.
-		r.pass(fmt.Sprintf("compaction: %s sent the model %d message(s) but not the original wording, so the resume carries a summary", name, widest))
+		r.pass("compact.context:summary", fmt.Sprintf("compaction: %s sent the model %d message(s) but not the original wording, so the resume carries a summary", name, widest))
 	default:
 		// The dangerous one: the resume worked and the conversation is gone.
-		r.fail(fmt.Sprintf("compaction: %s sent the model only the new prompt, so resuming a compacted session loses the conversation", name))
+		r.fail("compact.context:lost", fmt.Sprintf("compaction: %s sent the model only the new prompt, so resuming a compacted session loses the conversation", name))
 	}
 }
 
@@ -1827,11 +1840,11 @@ func (r *TestRunner) probeToolCallInFlight() {
 	// probe armed with a read measures nothing about gating.
 	tool, gated := r.armGatedToolCall()
 	if tool == "" {
-		r.skip("in-flight: no tool call is defined for " + r.harness.Name + ", so the mock cannot provoke an approval")
+		r.skip("inflight:no-tool", "in-flight: no tool call is defined for "+r.harness.Name+", so the mock cannot provoke an approval")
 		return
 	}
 	if !gated {
-		r.skip("in-flight: no gated tool is known for " + r.harness.Name + ", so this asks it to run " + tool + ", which agents do not gate")
+		r.skip("inflight.gated-tool:unknown", "in-flight: no gated tool is known for "+r.harness.Name+", so this asks it to run "+tool+", which agents do not gate")
 	}
 
 	// Without this the probe would measure the harness, not the agent: the
@@ -1850,21 +1863,21 @@ func (r *TestRunner) probeToolCallInFlight() {
 	first := r.newSession(true, false)
 	first.ParkPermission = true
 	if err := first.Start(); err != nil {
-		r.skip("in-flight: " + label + " start: " + err.Error())
+		r.skip("inflight.start", "in-flight: "+label+" start: "+err.Error())
 		return
 	}
 	if !first.CanKill() {
 		// The probe is a kill with an approval held. Closing instead answers
 		// the held request, which is a different question.
 		first.Close()
-		r.skip(fmt.Sprintf("in-flight: the %s session cannot be killed (%v)", label, errNoKill))
+		r.skip("inflight.kill:unkillable", fmt.Sprintf("in-flight: the %s session cannot be killed (%v)", label, errNoKill))
 		return
 	}
 	sessionID := first.SessionID()
 	time.Sleep(2 * time.Second)
 	if err := first.SendPrompt(promptText); err != nil {
 		first.Kill()
-		r.skip("in-flight: " + label + " prompt: " + err.Error())
+		r.skip("inflight.prompt", "in-flight: "+label+" prompt: "+err.Error())
 		return
 	}
 
@@ -1876,30 +1889,32 @@ func (r *TestRunner) probeToolCallInFlight() {
 			// The turn never reached a tool call, so the agent was never in a
 			// position to ask. A limit of this harness, not a trait of the
 			// agent.
-			r.skip("in-flight: the mock never served " + r.harness.Name + " its " + tool + " call, so no approval was ever due")
+			r.skip("inflight.park:tool-not-served", "in-flight: the mock never served "+r.harness.Name+" its "+tool+" call, so no approval was ever due")
 			return
 		}
 		gated := "with nothing auto-approving for it"
 		if len(ungated) > 0 {
 			gated = "even without " + strings.Join(ungated, " ")
 		}
-		r.skip(fmt.Sprintf("in-flight: %s ran %s without asking the client %s, so there is nothing to park",
+		r.skip("inflight.park:not-gated", fmt.Sprintf("in-flight: %s ran %s without asking the client %s, so there is nothing to park",
 			r.harness.Name, tool, gated))
 		return
 	}
 	parked := lastPermission(first.Permissions())
-	r.pass(fmt.Sprintf("in-flight: %s asked before running %s — parked its approval for %s (%s)",
+	r.pass("inflight.park", fmt.Sprintf("in-flight: %s asked before running %s — parked its approval for %s (%s)",
 		r.harness.Name, tool, orUnnamed(parked.Title), orUnnamed(parked.ToolCallID)))
 
 	// Killed rather than closed: a client that is still holding an approval
 	// does not get to send session/close first.
 	first.Kill()
+	killedAt := time.Now()
 
 	if sessionID == "" {
-		r.skip("in-flight: the agent reported no session id to resume")
+		r.skip("inflight.session-id", "in-flight: the agent reported no session id to resume")
 		return
 	}
 
+	r.probes.holdBack(killedAt)
 	before := r.server.LogCount()
 	// EmitReplay off: a replay is not what this probe reads, and ACPBackend
 	// drops events its buffer cannot hold while the load runs, which must not
@@ -1913,7 +1928,7 @@ func (r *TestRunner) probeToolCallInFlight() {
 	// looked exactly like a client that had deadlocked.
 	resumed.ParkPermission = r.probes.Answer == AnswerParked
 	if err := resumed.Start(); err != nil {
-		r.skip(fmt.Sprintf("in-flight: %s does not resume a session with a tool call in flight (%v)", r.harness.Name, err))
+		r.skip("inflight.resume:refused", fmt.Sprintf("in-flight: %s does not resume a session with a tool call in flight (%v)", r.harness.Name, err))
 		resumed.Close()
 		return
 	}
@@ -1932,16 +1947,20 @@ func (r *TestRunner) probeToolCallInFlight() {
 	// Twice, because a client reconnects more than once over a long session
 	// and an agent may treat the first load as consuming the session.
 	resumed.Close()
+	// The first load wrote a recording of its own, so the second is a load of
+	// a session the agent just wrote, held back like the first (gemini names
+	// that recording for the minute of the load).
+	r.probes.holdBack(time.Now())
 	again := r.resumeSession(sessionID, true, false)
 	if err := again.Start(); err != nil {
-		r.skip(fmt.Sprintf("in-flight: %s resumes once but not twice (%v)", r.harness.Name, err))
+		r.skip("inflight.resume-twice:refused", fmt.Sprintf("in-flight: %s resumes once but not twice (%v)", r.harness.Name, err))
 		return
 	}
 	if l := again.LoadResult(); l.Reported {
-		r.pass(fmt.Sprintf("in-flight: %s resumed the same session twice (%d replayed the second time)",
+		r.pass("inflight.resume-twice", fmt.Sprintf("in-flight: %s resumed the same session twice (%d replayed the second time)",
 			r.harness.Name, l.Replayed))
 	} else {
-		r.pass(fmt.Sprintf("in-flight: %s resumed the same session twice", r.harness.Name))
+		r.pass("inflight.resume-twice:by-id", fmt.Sprintf("in-flight: %s resumed the same session twice", r.harness.Name))
 	}
 	again.Close()
 }
@@ -1952,16 +1971,16 @@ func (r *TestRunner) probeToolCallInFlight() {
 func (r *TestRunner) reportInFlightResume(seen []PermissionObservation, parked PermissionObservation, load LoadResult, requests int) {
 	name := r.harness.Name
 	if load.Reported {
-		r.pass(fmt.Sprintf("in-flight: %s resumed with a tool call parked (%d replayed, answered=%v, %s)",
+		r.pass("inflight.resume", fmt.Sprintf("in-flight: %s resumed with a tool call parked (%d replayed, answered=%v, %s)",
 			name, load.Replayed, load.Answered, load.Elapsed.Round(time.Millisecond)))
 	} else {
-		r.pass(fmt.Sprintf("in-flight: %s resumed with a tool call parked (by id, nothing replayed to the client)", name))
+		r.pass("inflight.resume:by-id", fmt.Sprintf("in-flight: %s resumed with a tool call parked (by id, nothing replayed to the client)", name))
 	}
 
 	if len(seen) == 0 {
 		// The agent rebuilt the session and never mentioned the tool call
 		// again. Nothing errors, and the work is simply gone.
-		r.finding(fmt.Sprintf("in-flight: %s does not re-raise the parked approval on resume", name))
+		r.finding("inflight.reraise:none", fmt.Sprintf("in-flight: %s does not re-raise the parked approval on resume", name))
 		return
 	}
 
@@ -1977,7 +1996,7 @@ func (r *TestRunner) reportInFlightResume(seen []PermissionObservation, parked P
 		case p.ToolCallID == parked.ToolCallID:
 			correlates = "the same toolCallId as the parked call"
 		}
-		r.pass(fmt.Sprintf("in-flight: %s re-raised an approval %s for %s, %s, answered %s",
+		r.pass("inflight.reraise:"+slug(when)+"/"+slug(correlates), fmt.Sprintf("in-flight: %s re-raised an approval %s for %s, %s, answered %s",
 			name, when, orUnnamed(p.Title), correlates, p.Answer))
 	}
 
@@ -1985,9 +2004,9 @@ func (r *TestRunner) reportInFlightResume(seen []PermissionObservation, parked P
 	// question and history: a tool the agent actually runs produces a request
 	// to the model with its result, and a replayed one produces nothing.
 	if requests > 0 {
-		r.pass(fmt.Sprintf("in-flight: answering it made %s run the tool (%d model request(s) after the resume)", name, requests))
+		r.pass("inflight.answer:ran-tool", fmt.Sprintf("in-flight: answering it made %s run the tool (%d model request(s) after the resume)", name, requests))
 	} else {
-		r.pass(fmt.Sprintf("in-flight: %s sent nothing to the model after the answer, so nothing was waiting on it", name))
+		r.pass("inflight.answer:nothing-sent", fmt.Sprintf("in-flight: %s sent nothing to the model after the answer, so nothing was waiting on it", name))
 	}
 }
 
@@ -2001,7 +2020,7 @@ func (r *TestRunner) observeUnansweredApproval(d *SessionDriver) {
 	deadline := time.Now().Add(watch)
 	for time.Now().Before(deadline) {
 		if !d.Alive() {
-			r.pass(fmt.Sprintf("in-flight: %s exited rather than wait on an approval nobody answered", name))
+			r.pass("inflight.unanswered:exited", fmt.Sprintf("in-flight: %s exited rather than wait on an approval nobody answered", name))
 			return
 		}
 		if notes := d.Updates(); len(notes) > before {
@@ -2009,12 +2028,12 @@ func (r *TestRunner) observeUnansweredApproval(d *SessionDriver) {
 			for _, n := range notes[before:] {
 				kinds = append(kinds, n.Kind)
 			}
-			r.pass(fmt.Sprintf("in-flight: %s moved on without its answer, sending %s", name, strings.Join(kinds, ", ")))
+			r.pass("inflight.unanswered:moved-on", fmt.Sprintf("in-flight: %s moved on without its answer, sending %s", name, strings.Join(kinds, ", ")))
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	r.pass(fmt.Sprintf("in-flight: %s waited out %s on an approval nobody answered, saying nothing", name, watch))
+	r.pass("inflight.unanswered:waited", fmt.Sprintf("in-flight: %s waited out %s on an approval nobody answered, saying nothing", name, watch))
 }
 
 // lastPermission is the most recent observation, which for a parking driver is
@@ -2035,7 +2054,7 @@ func orUnnamed(s string) string {
 
 func (r *TestRunner) runSDK() {
 	if len(r.harness.SDKCmd) == 0 {
-		r.skip(r.harness.Name + " does not support SDK mode")
+		r.skip("phase:unsupported", r.harness.Name+" does not support SDK mode")
 		return
 	}
 
@@ -2256,18 +2275,18 @@ func copyTree(src, dst string) {
 // cannot pass as a skip.
 func (r *TestRunner) reportEvent(phase, label, tag string, fired bool, prefix string) {
 	if fired {
-		r.pass(fmt.Sprintf("%s: %s%s hook fired", phase, prefix, label))
+		r.pass(hookID(prefix, label), fmt.Sprintf("%s: %s%s hook fired", phase, prefix, label))
 		return
 	}
 	if (tag == TagPreTool || tag == TagPostTool) && r.server != nil && !r.server.ToolCallServed() {
-		r.skip(fmt.Sprintf("%s: %s%s hook not checked — the agent was never offered the tool call", phase, prefix, label))
+		r.skip(hookID(prefix, label)+":tool-not-offered", fmt.Sprintf("%s: %s%s hook not checked — the agent was never offered the tool call", phase, prefix, label))
 		return
 	}
 	if reason, ok := r.harness.EventKnownMissing(phase, tag); ok {
-		r.skip(fmt.Sprintf("%s: %s%s hook not fired — %s", phase, prefix, label, reason))
+		r.skip(hookID(prefix, label)+":known-missing", fmt.Sprintf("%s: %s%s hook not fired — %s", phase, prefix, label, reason))
 		return
 	}
-	r.fail(fmt.Sprintf("%s: %s%s hook did not fire", phase, prefix, label))
+	r.fail(hookID(prefix, label), fmt.Sprintf("%s: %s%s hook did not fire", phase, prefix, label))
 }
 
 // requestHooksFor tells the mock which hooks this agent needs its backend to

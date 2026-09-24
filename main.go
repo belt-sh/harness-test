@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,8 +10,8 @@ import (
 	"time"
 
 	"github.com/belt-sh/harness-test/runner"
-	"github.com/inference-sh/agentprotocol/harness"
 	"github.com/belt-sh/harness-test/server"
+	"github.com/inference-sh/agentprotocol/harness"
 )
 
 func main() {
@@ -24,6 +25,14 @@ func main() {
 		installScope = flag.String("scope", "user", "install scope: user or project")
 		serverOnly   = flag.Bool("server", false, "run mock server only (no tests)")
 		intercept    = flag.Bool("intercept", false, "intercept all LLM traffic via /etc/hosts + TLS (requires root/Docker)")
+		jsonFlag     = flag.Bool("json", false, "with --list: print the registry as JSON, with each agent's modes and the modes CI runs")
+		modesFor     = flag.String("modes-for", "", "print the modes CI runs for this agent as a JSON array")
+		reportPath   = flag.String("report", "", "write every check (stable id, outcome, message) to this JSON file")
+		runsOf       = flag.String("runs", "", "print the nightly runs of this expected file (name mode probes per line); a missing file gives the defaults")
+		compareWith  = flag.String("compare", "", "compare the reports in --reports with this expected file; exit 1 on any difference")
+		reportsDir   = flag.String("reports", "", "with --compare: directory holding <run>.json for each run")
+		updateTo     = flag.String("update-expected", "", "with --compare: write the expected file these reports describe to this path instead of failing")
+		surfaceDir   = flag.String("surface", "", "install --harness, read its --help, and write <name>.surface.txt, .version and .help.txt into this directory")
 		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], resumeafter=<duration>, inflight[=approve|cancel|hold], compact, tools, deferred, transcript, seed, seedkinds, env, detect")
 	)
 	flag.Parse()
@@ -48,6 +57,59 @@ func main() {
 	if probeErr != nil {
 		fmt.Fprintln(os.Stderr, probeErr)
 		os.Exit(2)
+	}
+
+	if *modesFor != "" {
+		h, ok := harness.All[*modesFor]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown harness: %s\n", *modesFor)
+			os.Exit(2)
+		}
+		data, _ := json.Marshal(nonNil(ciModes(h)))
+		fmt.Println(string(data))
+		return
+	}
+	if *listFlag && *jsonFlag {
+		data, _ := json.MarshalIndent(listJSON(), "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+	if *runsOf != "" {
+		e, err := loadExpected(*runsOf, *harnessName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		printRuns(e)
+		return
+	}
+	if *compareWith != "" {
+		if *reportsDir == "" {
+			fmt.Fprintln(os.Stderr, "--compare needs --reports <dir>")
+			os.Exit(2)
+		}
+		diffs, err := compareExpected(*compareWith, *harnessName, *reportsDir, *updateTo)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		if diffs > 0 && *updateTo == "" {
+			fmt.Printf("%d difference(s) from %s\n", diffs, *compareWith)
+			os.Exit(1)
+		}
+		return
+	}
+	if *surfaceDir != "" {
+		h, ok := harness.All[*harnessName]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "--surface needs --harness <name>, got %q\n", *harnessName)
+			os.Exit(2)
+		}
+		if err := writeSurface(h, *surfaceDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if *detectFlag {
@@ -268,6 +330,13 @@ func main() {
 		totalFound += result.Findings
 		if result.Failed > 0 {
 			failed = append(failed, name)
+		}
+	}
+
+	if *reportPath != "" {
+		if err := writeReport(*reportPath, *mode, *hooks, *probeSpec, results); err != nil {
+			fmt.Fprintf(os.Stderr, "write report: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
