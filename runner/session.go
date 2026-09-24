@@ -19,9 +19,9 @@ import (
 
 // SessionDriver runs one session through agentprotocol's driver.Backend, the
 // contract belt's runner uses for every agent: ACP agents over ACPBackend,
-// Claude Code over ClaudeBackend, Codex over CodexBackend. The probes are
-// written once against this type, so the same measurement runs against each
-// backend.
+// Claude Code over ClaudeBackend, Codex over CodexBackend, pi over PiBackend.
+// The probes are written once against this type, so the same measurement runs
+// against each backend.
 //
 // Transport and protocol quirks belong in the library, so belt inherits them.
 // What stays here is this suite's policy — approve, cancel or park each

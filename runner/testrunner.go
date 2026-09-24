@@ -1219,6 +1219,10 @@ func (r *TestRunner) acpInvocationGated() (bin string, args []string, dir string
 //     environment setupEndpoint exported (ANTHROPIC_BASE_URL and the
 //     tokens), the same variables headless mode uses; the model is set per
 //     session.
+//   - pi: PiBackend, with the registry's --provider from its SDK arguments;
+//     the model is set per session and the intercept carries the requests to
+//     the mock, as in headless mode. --no-session is left out: sessions are
+//     what the probes resume.
 //   - codex: CodexBackend, with the registry's -c provider overrides that
 //     point codex at the mock, taken from its SDK arguments, and
 //     bypass_hook_trust in the thread config so this suite's hooks run.
@@ -1233,6 +1237,11 @@ func (r *TestRunner) sessionBackend(gated, emitReplay bool) BackendFactory {
 		bin := r.harness.Binary
 		return func(diagnose func(string)) driver.Backend {
 			return &driver.ClaudeBackend{Command: bin, Env: env, Stderr: os.Stderr, OnDiagnostic: diagnose}
+		}
+	case harness.DriverPi:
+		bin, args := r.harness.Binary, r.piProviderArgs()
+		return func(diagnose func(string)) driver.Backend {
+			return &driver.PiBackend{Command: bin, Args: args, Env: env, Stderr: os.Stderr, OnDiagnostic: diagnose}
 		}
 	case harness.DriverCodex:
 		bin, args := r.harness.Binary, r.codexProviderArgs()
@@ -1281,6 +1290,17 @@ func (r *TestRunner) codexProviderArgs() []string {
 		}
 	}
 	return out
+}
+
+// piProviderArgs is the --provider pair in the registry's pi arguments.
+func (r *TestRunner) piProviderArgs() []string {
+	src := r.harness.SDKArgs
+	for i := 0; i+1 < len(src); i++ {
+		if src[i] == "--provider" {
+			return []string{"--provider", r.expand(src[i+1])}
+		}
+	}
+	return nil
 }
 
 // newSession is a session driver on this agent's backend, at the working
