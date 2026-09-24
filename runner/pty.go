@@ -64,6 +64,10 @@ func (s *PTYSession) SendCtrlC() {
 	s.ptmx.Write([]byte{0x03})
 }
 
+func (s *PTYSession) SendDown() {
+	s.ptmx.Write([]byte{0x1b, '[', 'B'})
+}
+
 func (s *PTYSession) SendUp() {
 	s.ptmx.Write([]byte{0x1b, '[', 'A'})
 }

@@ -1007,6 +1007,10 @@ func (r *TestRunner) runInteractive() {
 					session.SendUp()
 					time.Sleep(200 * time.Millisecond)
 				}
+				if action.SendDown {
+					session.SendDown()
+					time.Sleep(200 * time.Millisecond)
+				}
 				session.SendLine("")
 				time.Sleep(2 * time.Second)
 				dismissed = true
