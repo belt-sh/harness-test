@@ -884,6 +884,23 @@ checkpoint naming them — and cursor writes the user and assistant rows plus
 its `store.db` in headless and interactive. Blobs go first because the client
 drops a named id it has not stored rather than failing.
 
+The checkpoint now also carries what cursor reads back to show a
+conversation, and what a resume sends: `turns`, blob ids of
+`ConversationTurnStructure` whose user message and steps are blobs of their
+own (the client's `getFullConversation` reads nothing else, so a resumed
+session replayed nothing), and the history the client arrived with ahead of
+the new turn. A turn that serves a tool call is checkpointed before the call
+goes out, with its id in `pending_tool_calls`: cursor writes its session store
+only from a checkpoint, so a client killed mid-turn had nothing to load. On a
+`run_request` the mock asks the client for every message blob its
+`conversation_state` names (`kv_server_message` `get_blob_args`) and logs the
+text it gets back; a resumed session names its history only by hash, so
+without this a resume could never be seen to carry the earlier turn.
+
+A shell tool call is served as `shell_args` with a `parsing_result`
+(`ShellCommandParsingResult`); without it the client answers `spawn_error`
+"Parsing result is required" and never reaches its permission check.
+
 This does not answer the tool question. cursor's `supported_tools` sits on
 `StreamUnifiedChatRequest`, which the CLI does not send on this path, so its
 row in the tool matrix stays empty.

@@ -78,8 +78,8 @@ func TestCursorCheckpointCarriesATheToolTurn(t *testing.T) {
 	for len(cs.frames) > 0 {
 		msg := readFrame(t, cs)
 		data, ok := pbPath(msg, 4, 3, 2)
-		if !ok {
-			continue
+		if !ok || !json.Valid(data) {
+			continue // the checkpoint, or a structured-turn blob (protobuf)
 		}
 		var m map[string]any
 		if err := json.Unmarshal(data, &m); err != nil {
@@ -102,5 +102,61 @@ func TestCursorCheckpointCarriesATheToolTurn(t *testing.T) {
 		if roles[i] != want[i] {
 			t.Fatalf("roles %v, want %v", roles, want)
 		}
+	}
+}
+
+// A resumed session names its history by blob id, and ACP's session/load
+// replays the structured turns, so the checkpoint must carry the turns and
+// keep the history the client arrived with ahead of the new turn.
+func TestCursorCheckpointCarriesTurnsAndPriorHistory(t *testing.T) {
+	s := &MockServer{}
+	prior := bytes.Repeat([]byte{7}, 32)
+	priorTurn := bytes.Repeat([]byte{9}, 32)
+	cs := &cursorSession{frames: make(chan []byte, 16), closed: make(chan struct{}),
+		prompt: "the codename question", priorRoot: [][]byte{prior}, priorTurns: [][]byte{priorTurn}}
+	s.cursorCheckpoint(cs)
+
+	stored := map[string][]byte{}
+	var root, turns [][]byte
+	for len(cs.frames) > 0 {
+		msg := readFrame(t, cs)
+		if id, ok := pbPath(msg, 4, 3, 1); ok {
+			data, _ := pbPath(msg, 4, 3, 2)
+			stored[string(id)] = data
+			continue
+		}
+		fields, _ := pbDecode(msg)
+		for _, f := range fields {
+			if f.No != 3 {
+				continue
+			}
+			inner, _ := pbDecode(f.Data)
+			for _, g := range inner {
+				switch g.No {
+				case 1:
+					root = append(root, g.Data)
+				case 8:
+					turns = append(turns, g.Data)
+				}
+			}
+		}
+	}
+	if len(root) != 3 || !bytes.Equal(root[0], prior) {
+		t.Fatalf("root names %d messages, want the prior one first and then this turn's two", len(root))
+	}
+	if len(turns) != 2 || !bytes.Equal(turns[0], priorTurn) {
+		t.Fatalf("checkpoint names %d turns, want the prior one first and then this one", len(turns))
+	}
+	turn, ok := stored[string(turns[1])]
+	if !ok {
+		t.Fatal("the new turn is named but never stored")
+	}
+	userID, ok := pbPath(turn, 1, 1)
+	if !ok {
+		t.Fatal("turn has no agent_conversation_turn.user_message")
+	}
+	text, ok := pbPath(stored[string(userID)], 1)
+	if !ok || string(text) != cs.prompt {
+		t.Errorf("user message text = %q, want the prompt", text)
 	}
 }

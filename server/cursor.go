@@ -295,11 +295,18 @@ type cursorSession struct {
 	prompt   string
 	model    string
 	toolPath string // path the mock asked the client to read, "" when no tool was served
-	toolID   string // its call id, in real cursor's form
-	toolOut  string // what the client returned for it
-	execID   uint64
-	pending  uint64 // exec id whose reply advances the current stage
-	lastSeen time.Time
+	toolCmd  string // command the mock asked the client to run, "" when it served a read
+	// priorRoot and priorTurns are the blob ids of the conversation so far,
+	// as the client sent them in run_request.conversation_state. A resumed
+	// session sends its history this way, by reference.
+	priorRoot  [][]byte
+	priorTurns [][]byte
+	userMsgID  string
+	toolID     string // its call id, in real cursor's form
+	toolOut    string // what the client returned for it
+	execID     uint64
+	pending    uint64 // exec id whose reply advances the current stage
+	lastSeen   time.Time
 }
 
 func (cs *cursorSession) send(msg []byte) {
@@ -421,6 +428,21 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 			cs.model = string(m)
 			model = cs.model
 		}
+		// AgentRunRequest.conversation_state: ConversationStateStructure
+		// { 1 root_prompt_messages_json (blob ids), 8 turns (blob ids) }.
+		if st, ok := pbPath(msg, 1, 1); ok {
+			if fields, ok := pbDecode(st); ok {
+				for _, f := range fields {
+					switch {
+					case f.No == 1 && f.WT == 2:
+						cs.priorRoot = append(cs.priorRoot, f.Data)
+					case f.No == 8 && f.WT == 2:
+						cs.priorTurns = append(cs.priorTurns, f.Data)
+					}
+				}
+			}
+			entry["history_blob_ids"] = len(cs.priorRoot)
+		}
 	case "2": // exec_client_message: tool / context / hook result
 		entry["exec_result"] = true
 		if ctx, ok := pbPath(msg, 2, 10); ok {
@@ -440,6 +462,14 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 			cs.toolOut = string(content)
 			s.mu.Unlock()
 		}
+		// ShellResult { 1 success, 2 failure, 4 rejected, 7 permission_denied, ... }.
+		if res, ok := pbPath(msg, 2, 2); ok {
+			entry["shell_result"] = pbToJSON(res, 0)
+		}
+	case "3": // kv_client_message { 1 id, 2 get_blob_result { 1 blob_data } }
+		if data, ok := pbPath(msg, 3, 2, 1); ok {
+			entry["history_blob"] = string(data)
+		}
 	case "5": // exec_client_control_message: heartbeat / stream_close / throw
 		entry["exec_control"] = true
 	}
@@ -450,6 +480,7 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 
 	switch kind {
 	case "1":
+		s.cursorFetchHistory(cs)
 		// The backend asks the client to run its prompt hook before the model
 		// sees the turn; the reply's additional_context is recorded in the log,
 		// the way the real backend would hand it to the model.
@@ -478,6 +509,37 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 		if current {
 			s.cursorAdvance(cs)
 		}
+	}
+}
+
+// cursorShellParse is ShellArgs.parsing_result for a plain command:
+// ShellCommandParsingResult { 1 parsing_failed, 2 executable_commands:
+// ExecutableCommand { 1 name, 2 args: ExecutableCommandArg { 1 type, 2 value },
+// 3 full_text } }. The mock's gated commands are single words separated by
+// spaces, so splitting on whitespace is the whole parse.
+func cursorShellParse(command string) []byte {
+	words := strings.Fields(command)
+	if len(words) == 0 {
+		return pbMsg(8, pbBool(1, true))
+	}
+	cmd := [][]byte{pbString(1, words[0])}
+	for _, w := range words[1:] {
+		cmd = append(cmd, pbMsg(2, pbString(1, "word"), pbString(2, w)))
+	}
+	cmd = append(cmd, pbString(3, command))
+	return pbMsg(8, pbBool(1, false), pbMsg(2, cmd...))
+}
+
+// cursorFetchHistory asks the client for every message blob its run_request
+// named, the way the backend reads a conversation it holds only by reference.
+// The replies are logged with the blob's text, so a resumed session's history
+// is visible in the request log if, and only if, the client kept it and can
+// hand it back. Without this a cursor resume could never be seen to carry the
+// earlier turn: the ids are hashes, and the text never travels unasked.
+func (s *MockServer) cursorFetchHistory(cs *cursorSession) {
+	for i, id := range cs.priorRoot {
+		// AgentServerMessage.kv_server_message { 1 id, 2 get_blob_args { 1 blob_id } }
+		cs.send(pbMsg(4, pbUint(1, uint64(2000+i)), pbMsg(2, pbBytes(1, id))))
 	}
 }
 
@@ -534,16 +596,35 @@ func (s *MockServer) cursorAdvance(cs *cursorSession) {
 			cs.stage = "tool"
 			cs.execID++
 			cs.pending = cs.execID
-			_, args := s.getToolCall()
-			path := "README.md"
+			name, args := s.getToolCall()
 			var a struct {
-				Path string `json:"path"`
+				Path    string `json:"path"`
+				Command string `json:"command"`
 			}
-			if json.Unmarshal([]byte(args), &a) == nil && a.Path != "" {
+			json.Unmarshal([]byte(args), &a)
+			cs.toolID = "tool_" + uuid.NewString()
+			if strings.EqualFold(name, "shell") {
+				// ExecServerMessage.shell_args: ShellArgs { 1 command,
+				// 2 working_directory, 3 timeout (ms), 4 tool_call_id,
+				// 8 parsing_result }. A shell command is what cursor asks its
+				// client about; a read it runs without asking. The backend
+				// parses the command: without parsing_result the client
+				// answers spawn_error "Parsing result is required" and never
+				// reaches its permission check.
+				cs.toolCmd = a.Command
+				s.cursorPendingCheckpoint(cs)
+				cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)),
+					pbMsg(2, pbString(1, a.Command), pbUint(3, 30000), pbString(4, cs.toolID),
+						cursorShellParse(a.Command))))
+				go s.cursorFallback(cs, "tool")
+				return
+			}
+			path := "README.md"
+			if a.Path != "" {
 				path = a.Path
 			}
 			cs.toolPath = path
-			cs.toolID = "tool_" + uuid.NewString()
+			s.cursorPendingCheckpoint(cs)
 			cs.send(pbMsg(2, pbUint(1, cs.execID), pbString(15, fmt.Sprintf("exec-%d", cs.execID)),
 				pbMsg(7, pbString(1, path), pbString(2, cs.toolID))))
 			go s.cursorFallback(cs, "tool")
@@ -636,20 +717,80 @@ func (s *MockServer) cursorCheckpoint(cs *cursorSession) {
 			}}},
 		)
 	}
-	msgs = append(msgs, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": s.getResponse()}}})
-	var ids [][]byte
-	for i, m := range msgs {
-		data, _ := json.Marshal(m)
-		sum := sha256.Sum256(data)
-		id := sum[:]
-		ids = append(ids, id)
-		// AgentServerMessage.kv_server_message { id, set_blob_args { blob_id, blob_data } }
-		cs.send(pbMsg(4, pbUint(1, uint64(1000+i)), pbMsg(3, pbBytes(1, id), pbBytes(2, data))))
+	if cs.toolCmd != "" {
+		msgs = append(msgs,
+			map[string]any{"role": "assistant", "content": []map[string]any{{
+				"type": "tool-call", "toolCallId": cs.toolID, "toolName": "Shell",
+				"args": map[string]any{"command": cs.toolCmd},
+			}}},
+			map[string]any{"role": "tool", "content": []map[string]any{{
+				"type": "tool-result", "toolCallId": cs.toolID, "toolName": "Shell",
+				"result": cs.toolOut,
+			}}},
+		)
 	}
+	msgs = append(msgs, map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": s.getResponse()}}})
+	s.cursorSendCheckpoint(cs, msgs, s.getResponse(), "")
+}
+
+// cursorPendingCheckpoint checkpoints a turn whose tool call is still out:
+// the user's message and the call id in pending_tool_calls. Cursor writes its
+// ACP session store (~/.cursor/acp-sessions/<id>/store.db) only from a
+// checkpoint, so without one a client killed mid-turn left meta.json and no
+// store, and session/load answered "Session not found" — about a turn this
+// mock had never let it save. The state schema has a pending_tool_calls field,
+// which exists only for a backend that checkpoints while a call is out.
+func (s *MockServer) cursorPendingCheckpoint(cs *cursorSession) {
+	msgs := []map[string]any{{"role": "user", "content": cs.prompt}}
+	s.cursorSendCheckpoint(cs, msgs, "", cs.toolID)
+}
+
+// cursorSendCheckpoint stores each message as a blob and then names them in
+// a conversation_checkpoint_update, after the history the client arrived
+// with. answer is the assistant step of the structured turn, "" for none;
+// pending is a tool call id still waiting on the client, "" for none.
+func (s *MockServer) cursorSendCheckpoint(cs *cursorSession, msgs []map[string]any, answer, pending string) {
+	n := 0
+	setBlob := func(data []byte) []byte {
+		sum := sha256.Sum256(data)
+		// AgentServerMessage.kv_server_message { id, set_blob_args { blob_id, blob_data } }
+		cs.send(pbMsg(4, pbUint(1, uint64(1000+n)), pbMsg(3, pbBytes(1, sum[:]), pbBytes(2, data))))
+		n++
+		return sum[:]
+	}
+	var ids [][]byte
+	for _, m := range msgs {
+		data, _ := json.Marshal(m)
+		ids = append(ids, setBlob(data))
+	}
+	// The structured turn is what cursor reads back to show a conversation:
+	// ACP's session/load replays it, and without it a resumed session
+	// replays nothing. ConversationTurnStructure { 1 agent_conversation_turn:
+	// AgentConversationTurnStructure { 1 user_message, 2 steps } }, each a
+	// blob id; UserMessage { 1 text, 2 message_id }; ConversationStep
+	// { 1 assistant_message: AssistantMessage { 1 text } }. Tool steps are
+	// left out: the mock's tool calls exist only as exec requests.
+	if cs.userMsgID == "" {
+		cs.userMsgID = uuid.NewString()
+	}
+	user := setBlob(bytes.Join([][]byte{pbString(1, cs.prompt), pbString(2, cs.userMsgID)}, nil))
+	turnParts := [][]byte{pbBytes(1, user)}
+	if answer != "" {
+		turnParts = append(turnParts, pbBytes(2, setBlob(pbMsg(1, pbString(1, answer)))))
+	}
+	turn := setBlob(pbMsg(1, turnParts...))
 	time.Sleep(300 * time.Millisecond)
 	var state [][]byte
-	for _, id := range ids {
+	// A checkpoint is the whole conversation, so the history the client
+	// arrived with comes first.
+	for _, id := range append(append([][]byte{}, cs.priorRoot...), ids...) {
 		state = append(state, pbBytes(1, id)) // root_prompt_messages_json, repeated
+	}
+	for _, id := range append(append([][]byte{}, cs.priorTurns...), turn) {
+		state = append(state, pbBytes(8, id)) // turns, repeated
+	}
+	if pending != "" {
+		state = append(state, pbString(4, pending)) // pending_tool_calls, repeated
 	}
 	cs.send(pbMsg(3, state...)) // AgentServerMessage.conversation_checkpoint_update
 }
