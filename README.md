@@ -1050,6 +1050,17 @@ You're building a new agent CLI and want to verify your hook/API implementation.
 },
 ```
 
+## Agents never run on the host
+
+Every agent this project exercises runs inside its container, against the
+mock model, with pinned versions — never on a developer's machine. That
+includes one-off probes: `--version`, login status checks, timing loops.
+The machine you work on has real logins, real session stores and real
+config, and an agent command that looks harmless can start a billed turn
+(pi 0.80.3 reads `pi auth check` as a prompt) or write into a real
+conversation. If you need to know how an agent behaves, measure it here.
+The same rule is in agentprotocol's CONTRIBUTING.md.
+
 ## Quick start
 
 ```bash
