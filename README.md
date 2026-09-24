@@ -1067,18 +1067,44 @@ harness-test --detect
 
 ### CI
 
-```yaml
-jobs:
-  harness:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        harness: [claude, codex, copilot, grok]
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          docker build -f tests/Dockerfile -t harness-test .
-          docker run --rm harness-test --harness ${{ matrix.harness }} --mode headless
+**On push** (`.github/workflows/<agent>.yml` → `test-harness.yml`): a `plan` job asks the registry which modes the agent has (`harness-test --modes-for <agent>`: headless if `HeadlessCmd`, interactive if `InteractiveCmd`, `acp` (the session phase) if `DriverKind() != ""`, sdk if `SDKCmd`), and one job per mode runs it twice, with the mock hooks and with `--hooks belt` (the released belt CLI from `tests/fetch-belt.sh`). A mode added to an agent in agentprotocol is a CI job on the next push; nothing lists modes by hand. A mode the registry has and CI does not run is in `ciExcluded` in `expect.go`, with the measurement that put it there. `harness-test --list --json` prints both lists.
+
+**Nightly** (`nightly.yml`, 04:00 UTC, or `gh workflow run nightly.yml [-f agents=gemini,kiro]`), three jobs per agent:
+
+| job | runs | fails when |
+|---|---|---|
+| `modes (<agent>)` | every CI mode × {mock, belt} hooks, against that night's releases | any check fails |
+| `probes (<agent>)` | `tests/nightly.sh probes <agent>`: the session phase once per run listed in `tests/expected/<agent>.json`, each in a fresh container | any check differs from the expected file |
+| `surface (<agent>)` | `tests/nightly.sh surface <agent>`: installs the agent, reads `--help` | the command or long-flag list differs from `tests/expected/<agent>.surface.txt` |
+
+The step summary carries the version, the differences and the diff; reports, logs and raw `--help` are uploaded as artifacts.
+
+#### Reports and stable ids
+
+`--report <file.json>` writes every check of a run: `{"id", "outcome", "answer", "message"}` per check, with `outcome` one of `pass`, `fail`, `skip`, `finding`. The id names the question: `<section>/<check>`, where the section is `setup`, `headless`, `interactive`, `acp` or `sdk`, and the check is fixed at its call site (`acp/resume.context`, `acp/seed.hand-built`, `acp/hook.pre-tool`, `setup/instructions.written.~/.claude/CLAUDE.md`). Nothing measured goes into an id — no codename, session id, port, count or duration; `TestCheckIDsAreBuiltFromFixedNames` rejects a call site that builds one from anything but fixed names. A check asked twice in a section gets `#2`. `answer` separates outcomes that mean different things (`pass:waited` and `pass:exited` for an unanswered approval; `finding:not-kept` and `finding:not-given` for a seed kind). `message` is the human line and is never compared.
+
+#### Expected outcomes
+
+`tests/expected/<agent>.json` lists the agent's nightly runs (`name`, `mode`, `probes`, an optional `note`) and, per run, `checks`: id → `outcome[:answer]`. The comparison (`harness-test --compare <expected> --reports <dir>`) fails on any difference: a new failure, a finding that appears or disappears, a pass that becomes a skip, a check that is new or no longer reported, a run that did not finish. The default runs are `resume,inflight,compact,transcript,seed,seedkinds,tools,deferred`, then `resume=kill`, `inflight=cancel` and `inflight=hold` on their own, each time-boxed (`RUN_TIMEOUT`, 900 s).
+
+A check measured to vary between identical runs goes under the run's `nondeterministic`, with the outcomes seen and the reason; `"absent"` is an outcome for a check that is only sometimes asked. A timing dependency is fixed in the run instead where one can be: gemini's runs carry `resumeafter=65s`, because gemini 0.61 clobbers a session loaded in the UTC minute it was created, which made its resume and seed outcomes depend on the clock.
+
+Regenerate after a deliberate change (a new check, a fixed bug, a new agent release that answers differently):
+
+```bash
+cd tests && docker compose build test && cd ..
+IMAGE=tests-test tests/nightly.sh probes <agent> --update     # rewrites tests/expected/<agent>.json
+IMAGE=tests-test tests/nightly.sh probes <agent>              # run again: must compare clean
+```
+
+`--update` keeps the runs and the `nondeterministic` entries and rewrites `checks`. A new agent gets the default runs.
+
+#### Surface snapshots
+
+`harness-test --harness <agent> --surface <dir>` installs the agent and writes `<agent>.surface.txt` (the top-level commands and long flags its `--help` lists, sorted; `--help-all` where `--help` points at it), `<agent>.version` and the raw `<agent>.help.txt`. The snapshot holds no version, so a release that changes nothing on the surface stays green. A changed surface fails the `surface (<agent>)` job: that job is the one signal the nightly already has, it names the agent, the diff is in its summary, and the fix is a one-line commit that records when the capability appeared. An issue would be a second channel for the same fact, and one that can be left open. Regenerate:
+
+```bash
+IMAGE=tests-test tests/nightly.sh surface <agent> --update
 ```
 
 ### Mock server

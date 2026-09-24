@@ -1,89 +1,178 @@
 name: Nightly
 
+# Three measurements per agent, each its own job so each has its own time
+# budget and its own red mark:
+#
+#   modes    every mode the registry gives the agent, mock and belt hooks
+#            (the same runs as the per-agent push workflows, against the
+#            agents' releases of the night)
+#   probes   the session phase with the full probe set, compared with
+#            tests/expected/<agent>.json; any difference fails
+#   surface  the CLI's top-level commands and long flags from --help,
+#            compared with tests/expected/<agent>.surface.txt; any change fails
+#
+# README.md (CI) says how to regenerate the expected files after a deliberate
+# change.
+
 on:
   schedule:
     - cron: '0 4 * * *' # 4 AM UTC daily
-  workflow_dispatch: # manual trigger
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: 'Agents to run (comma separated; empty for all)'
+        required: false
+        default: ''
 
 jobs:
-  compatibility:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      agents: ${{ steps.plan.outputs.agents }}
+      probes: ${{ steps.plan.outputs.probes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: plan
+        # Agents and their modes come from the registry. The probe set runs for
+        # every agent with a session driver and a committed expected file.
+        run: |
+          go run . --list --json > registry.json
+          want='${{ inputs.agents }}'
+          agents=$(jq -c --arg want "$want" '
+            ($want | split(",") | map(select(. != ""))) as $w
+            | [.[] | select((.ci_modes | length) > 0)
+                   | select(($w | length) == 0 or (.name as $n | $w | index($n)))
+                   | {name, modes: (.ci_modes | join(",")), docker: (if .needs_intercept then "--user root" else "" end), flags: (if .needs_intercept then "--intercept" else "" end)}]' registry.json)
+          probes=$(echo "$agents" | jq -c '[.[] | select(.modes | split(",") | index("acp")) | .name]' )
+          probes=$(for a in $(echo "$probes" | jq -r '.[]'); do [ -f "tests/expected/$a.json" ] && echo "$a"; done | jq -R . | jq -sc .)
+          echo "agents=$agents" >> "$GITHUB_OUTPUT"
+          echo "probes=$probes" >> "$GITHUB_OUTPUT"
+          echo "agents: $agents"
+          echo "probes: $probes"
+
+  modes:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - harness: claude
-            modes: headless,sdk
-          - harness: codex
-            modes: headless,sdk
-          - harness: copilot
-            modes: headless,acp
-          - harness: cursor
-            modes: headless,interactive
-          - harness: droid
-            modes: headless,acp,sdk
-          - harness: gemini
-            modes: headless,acp
-          - harness: goose
-            modes: headless,acp
-          - harness: grok
-            modes: headless,acp
-          - harness: hermes
-            modes: headless,acp
-          - harness: kilo
-            modes: headless,acp
-          - harness: kimi
-            modes: headless,acp
-          - harness: opencode
-            modes: headless,acp
-          - harness: kiro
-            modes: headless,interactive,acp
-          - harness: omp
-            modes: headless,acp,sdk
-          - harness: pi
-            modes: headless,sdk
-          - harness: qwen
-            modes: headless,acp
+        include: ${{ fromJson(needs.plan.outputs.agents) }}
+    name: modes (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: |
           tests/fetch-belt.sh
           docker build -f tests/Dockerfile -t harness-test .
-
-      - name: Test ${{ matrix.harness }}
+      - name: Test ${{ matrix.name }} (${{ matrix.modes }})
         id: test
         run: |
           results=""
-          extra=""; user=""
-          if [ "${{ matrix.harness }}" = "kiro" ]; then extra="--intercept"; user="--user root"; fi
           for mode in $(echo "${{ matrix.modes }}" | tr ',' ' '); do
             # Each mode runs twice: the runner's mock hooks, then the released
             # belt CLI's real hook commands (--hooks belt).
             for hooks in mock belt; do
-              echo "=== ${{ matrix.harness }} ($mode, $hooks hooks) ==="
+              echo "=== ${{ matrix.name }} ($mode, $hooks hooks) ==="
               hookflag=""; [ "$hooks" = belt ] && hookflag="--hooks belt"
-              if docker run --rm $user harness-test --harness ${{ matrix.harness }} --mode $mode $hookflag $extra 2>&1 | tee /tmp/out.log; then
+              if timeout 480 docker run --rm ${{ matrix.docker }} harness-test --harness ${{ matrix.name }} --mode $mode $hookflag ${{ matrix.flags }} 2>&1 | tee /tmp/out.log; then
                 results="${results}${mode}/${hooks}:pass,"
               else
                 results="${results}${mode}/${hooks}:fail,"
               fi
-              # Extract version from output
               ver=$(grep -oP '→ version: \K.*' /tmp/out.log | head -1)
               if [ -n "$ver" ]; then
-                echo "version=$ver" >> $GITHUB_OUTPUT
+                echo "version=$ver" >> "$GITHUB_OUTPUT"
               fi
             done
           done
-          echo "results=$results" >> $GITHUB_OUTPUT
+          echo "results=$results" >> "$GITHUB_OUTPUT"
           # Every mode above runs to completion; only now does a failure fail
           # the job, so the summary is complete and the badge is truthful.
-          case "$results" in *:fail*) echo "::error::${{ matrix.harness }}: $results"; exit 1;; esac
-        timeout-minutes: 20
-
+          case "$results" in *:fail*) echo "::error::${{ matrix.name }}: $results"; exit 1;; esac
       - name: Report
         if: always()
         run: |
-          echo "### ${{ matrix.harness }}" >> $GITHUB_STEP_SUMMARY
+          echo "### ${{ matrix.name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: ${{ steps.test.outputs.version || 'unknown' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Results**: ${{ steps.test.outputs.results }}" >> $GITHUB_STEP_SUMMARY
+
+  probes:
+    needs: plan
+    if: needs.plan.outputs.probes != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: ${{ fromJson(needs.plan.outputs.probes) }}
+    name: probes (${{ matrix.agent }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          tests/fetch-belt.sh
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Probes vs tests/expected/${{ matrix.agent }}.json
+        run: |
+          set -o pipefail
+          OUT=$RUNNER_TEMP/probes tests/nightly.sh probes ${{ matrix.agent }} 2>&1 | tee $RUNNER_TEMP/probes.txt
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### probes: ${{ matrix.agent }}"
+            echo '```'
+            sed -n '/^=== ${{ matrix.agent }}\//,$p' $RUNNER_TEMP/probes.txt | grep -v '^reports in'
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probes-${{ matrix.agent }}
+          path: ${{ runner.temp }}/probes
+          retention-days: 14
+
+  surface:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.agents) }}
+    name: surface (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          echo '#!/bin/sh' > tests/belt && chmod +x tests/belt
+          docker build -f tests/Dockerfile -t harness-test .
+      - name: Commands and flags vs tests/expected/${{ matrix.name }}.surface.txt
+        # A changed surface fails this job and nothing else: the version is
+        # printed, never compared, so a release that changes nothing on the
+        # surface stays green.
+        run: |
+          set -o pipefail
+          OUT=$RUNNER_TEMP/surface tests/nightly.sh surface ${{ matrix.name }} 2>&1 | tee $RUNNER_TEMP/surface.txt
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### surface: ${{ matrix.name }}"
+            echo '```'
+            sed -n '/^version:/,$p' $RUNNER_TEMP/surface.txt
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+          if [ -s $RUNNER_TEMP/surface/surface.diff ]; then
+            echo "::error title=${{ matrix.name }} CLI surface changed::$(grep '^[+-][^+-]' $RUNNER_TEMP/surface/surface.diff | tr '\n' ' ')"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: surface-${{ matrix.name }}
+          path: ${{ runner.temp }}/surface
+          retention-days: 14

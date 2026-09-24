@@ -11,4 +11,3 @@ jobs:
     uses: ./.github/workflows/test-harness.yml
     with:
       harness: pi
-      modes: '["headless","sdk"]'
