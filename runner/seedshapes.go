@@ -771,7 +771,13 @@ func shapeRetiredAnswerAsSummary(r *TestRunner, cwd string, at time.Time) shapeS
 		}
 		n := 0
 		for _, e := range s.req {
-			n += bytes.Count(e.Body, []byte(same))
+			c := bytes.Count(e.Body, []byte(same))
+			// The mock logs a cursor history blob twice in one entry: the
+			// blob and the message that carries it.
+			if c > 1 && bytes.Contains(e.Body, []byte(`"history_blob"`)) {
+				c = 1
+			}
+			n += c
 		}
 		switch {
 		case s.sent(user):
