@@ -952,7 +952,7 @@ codec owner.
 
 #### Regression shapes (`--probe seedkinds=shapes`)
 
-`seedkinds=shapes` adds six sessions to the seed kinds probe, one per shape an
+`seedkinds=shapes` adds eleven sessions to the seed kinds probe, one per shape an
 import has broken an agent with, each with facts of its own, each written as a
 foreign session and loaded and prompted on its own (so a shape that makes an
 agent refuse a session costs only its own checks). It is off in the plain
@@ -964,8 +964,13 @@ agent refuse a session costs only its own checks). It is off in the plain
 | `seedkinds.parallel-same-id` | two parallel calls with the same id and input, each with its own result, both results in one tool entry (gemini's shape) | `pass:as-tool`, `pass:as-text`, `finding:dropped-<parts>`, `not-kept-<parts>` (`one-call`, `both-calls`, `first-result`, `second-result`) |
 | `seedkinds.user-attachments.image`, `.pdf` | a prompt with an image and a PDF attached | image: `pass:as-image`, `finding:dropped`, `not-kept`; PDF: `pass:as-document` (its base64), `as-raw-text`, `as-text`, `as-reference` (its name only), `finding:dropped`, `not-kept` |
 | `seedkinds.tool-after-text` | a tool call directly after an assistant text message (two assistant messages in a row) | `pass`, `finding:dropped-<parts>`, `not-kept-<parts>` |
-| `seedkinds.file-uri` | a prompt with an image attached by `file:` URL only, no bytes, as codex records a local image (the file exists) | `pass:as-image` (its bytes), `pass:as-reference` (its path), `finding:dropped`, `not-kept` |
+| `seedkinds.file-uri` | a prompt with an image attached by `file:` URL only, no bytes, as codex records a local image (the file is planted before the write) | `pass:as-image` (its bytes), `pass:as-reference` (its path), `finding:dropped`, `not-kept` |
 | `seedkinds.retired-tool.history`, `.context`, `.request` | before a compaction that keeps nothing: a prompt, a tool call, its result and an answer right before the marker, all `AudienceUser` as a reader gives retired history | history: `pass` (`Linearize()` keeps all four), `finding:dropped-<parts>`, `summary-only`; context: `pass`, `finding:retired-kept-<parts>`, `no-summary`; request: `pass`, `finding:retired-sent-<parts>`, `no-summary` |
+| `seedkinds.image-only-result` | a tool result that is only an image, no text | `pass:as-image`, `finding:call-dropped`, `call-not-kept`, `image-dropped`, `image-not-kept` |
+| `seedkinds.retired-answer-as-summary.history`, `.context`, `.request` | a retired answer right before a compaction whose summary has the same text | history: `pass`, `finding:dropped-answer`, `dropped-user`; context: `pass`, `finding:retired-kept`, `no-summary`; request: `pass` (the text once), `finding:sent-twice`, `retired-sent`, `no-summary` |
+| `seedkinds.untyped-file-path` | a prompt with a local text file attached by bare path, no media type (the file exists) | `pass:as-text`, `as-document` (its base64), `as-reference`, `finding:dropped`, `not-kept` |
+| `seedkinds.trailing-prompt.history`, `.request` | the session ends on an unanswered prompt | history: `pass` (`Linearize()` shows it), `finding:dropped`; request: `pass:sent`, `pass:not-sent` (the session loaded either way) |
+| `seedkinds.trailing-tool-result.history`, `.request` | the session ends on a tool result, before its answer | as `trailing-prompt` |
 
 Every shape's request checks answer `finding:rejected` when the turn ended
 and no request carried the prompt, and `finding:request-failed:<reason>` when

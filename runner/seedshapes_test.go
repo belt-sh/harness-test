@@ -29,9 +29,12 @@ func TestSeedShapesPassOnTheirOwnContext(t *testing.T) {
 		s := (&transcript.Session{Agent: seedAgent, Entries: built.entries}).Portable()
 		body, _ := json.Marshal(s.Context())
 		req := []server.LogEntry{{Body: fmt.Appendf(nil, `{"messages":%s,"prompt":%q}`, body, promptText)}}
-		if sh.name == "file-uri" {
+		switch sh.name {
+		case "file-uri":
 			// An agent that read the file sends its bytes.
 			req = append(req, server.LogEntry{Body: []byte(base64.StdEncoding.EncodeToString(built.content))})
+		case "untyped-file-path":
+			req = append(req, server.LogEntry{Body: built.content})
 		}
 		built.report(r, shapeRun{name: sh.name, back: s, req: req})
 		if len(r.result.Checks) == 0 {
@@ -113,6 +116,9 @@ func TestSeedShapesCodecs(t *testing.T) {
 			}
 			r := &TestRunner{harness: harness.All[name], section: "codec"}
 			built := sh.build(r, cwd, time.Now().UTC())
+			if built.file != "" {
+				os.WriteFile(built.file, built.content, 0o644)
+			}
 			s := &transcript.Session{Agent: seedAgent, CWD: cwd, Created: time.Now(), Updated: time.Now(), Entries: built.entries}
 			id, err := st.Write(context.Background(), s)
 			if err != nil {

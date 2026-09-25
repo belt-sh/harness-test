@@ -52,6 +52,11 @@ var seedShapes = []seedShape{
 	{"tool-after-text", shapeToolAfterText},
 	{"file-uri", shapeFileURI},
 	{"retired-tool", shapeRetiredTool},
+	{"image-only-result", shapeImageOnlyResult},
+	{"retired-answer-as-summary", shapeRetiredAnswerAsSummary},
+	{"untyped-file-path", shapeUntypedFilePath},
+	{"trailing-prompt", shapeTrailingPrompt},
+	{"trailing-tool-result", shapeTrailingToolResult},
 }
 
 func (r *TestRunner) probeSeedShapes() {
@@ -630,13 +635,15 @@ func countCalls(req []server.LogEntry, fact string) (calls, text int) {
 	return calls, text
 }
 
-// shapePNG is a 4x4 PNG of one colour, so each shape's image has bytes of
-// its own.
+// shapePNG is a 64x64 PNG shaded from c, so each shape's image has bytes of
+// its own and is an image an agent's own validation takes (grok replaced a
+// 4x4 one with "[image removed — invalid data]").
 func shapePNG(c color.RGBA) []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 4; y++ {
-			img.Set(x, y, c)
+	const n = 64
+	img := image.NewRGBA(image.Rect(0, 0, n, n))
+	for x := 0; x < n; x++ {
+		for y := 0; y < n; y++ {
+			img.Set(x, y, color.RGBA{c.R ^ uint8(x*2), c.G ^ uint8(y*2), c.B, 255})
 		}
 	}
 	var b bytes.Buffer
@@ -668,4 +675,202 @@ func shapePDF(text string) []byte {
 	}
 	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
 	return b.Bytes()
+}
+
+// 7. A tool result that is only an image: the result block has no text.
+// goose's, pi's and omp's formats need a text field on every text item; an
+// empty one written without it failed goose's load ("Session not found")
+// and crashed pi and omp.
+func shapeImageOnlyResult(r *TestRunner, cwd string, at time.Time) shapeSession {
+	args := shapeFact()
+	tool, input := r.seedToolCall(args)
+	img := shapePNG(color.RGBA{220, 160, 20, 255})
+	const id = "call_image_only"
+	es := timed(at,
+		shapeEntry("shape7-u", transcript.RoleUser, shapeText("Show me the chart.")),
+		shapeEntry("shape7-a", transcript.RoleAssistant, transcript.Block{Kind: transcript.BlockToolUse, ToolID: id, Name: tool, Input: input}),
+		shapeEntry("shape7-t", transcript.RoleTool,
+			transcript.Block{Kind: transcript.BlockToolResult, ToolID: id, Name: tool, Status: transcript.StatusOK},
+			transcript.Block{Kind: transcript.BlockImage, ToolID: id, MediaType: "image/png", Data: img}),
+		shapeEntry("shape7-b", transcript.RoleAssistant, shapeText("That is the chart.")),
+	)
+	return shapeSession{entries: es, report: func(r *TestRunner, s shapeRun) {
+		if reason, msg := s.blocked(r); reason != "" {
+			r.finding("seedkinds.image-only-result:"+reason, msg)
+			return
+		}
+		name := r.harness.Name
+		b64 := base64.StdEncoding.EncodeToString(img)
+		switch {
+		case !s.kept(args):
+			r.finding("seedkinds.image-only-result:call-not-kept", fmt.Sprintf("seed shapes (%s): %s's codec kept no call", s.name, name))
+		case !s.sent(args):
+			r.finding("seedkinds.image-only-result:call-dropped", fmt.Sprintf("seed shapes (%s): %s did not send the call (image sent: %v)", s.name, name, s.sent(b64)))
+		case s.sent(b64):
+			r.pass("seedkinds.image-only-result:as-image", fmt.Sprintf("seed shapes (%s): %s sent the call and the image as image data", s.name, name))
+		case !s.kept(b64):
+			r.finding("seedkinds.image-only-result:image-not-kept", fmt.Sprintf("seed shapes (%s): %s sent the call; its codec kept no image", s.name, name))
+		default:
+			r.finding("seedkinds.image-only-result:image-dropped", fmt.Sprintf("seed shapes (%s): %s sent the call and not the image its codec kept", s.name, name))
+		}
+	}}
+}
+
+// 8. A compaction whose summary has the same text as the retired answer
+// right before it (an agent that summarises with its last answer). The
+// answer stays as history; the model gets the text once, as the summary.
+func shapeRetiredAnswerAsSummary(r *TestRunner, cwd string, at time.Time) shapeSession {
+	user, same := shapeFact(), shapeFact()
+	text := "The review is finished; its reference is " + same + "."
+	es := timed(at,
+		shapeEntry("shape8-u", transcript.RoleUser, shapeText("Finish the review; its label is "+user+".")),
+		shapeEntry("shape8-a", transcript.RoleAssistant, shapeText(text)),
+		transcript.Entry{ID: "shape8-c", Compaction: &transcript.Compaction{
+			Summary: []transcript.Entry{shapeEntry("shape8-c-summary", transcript.RoleUser, shapeText(text))},
+		}},
+		shapeEntry("shape8-v", transcript.RoleUser, shapeText("Carry on.")),
+		shapeEntry("shape8-w", transcript.RoleAssistant, shapeText("Carrying on.")),
+	)
+	for i := range es[:2] {
+		es[i].Audience = transcript.AudienceUser
+	}
+	return shapeSession{entries: es, report: func(r *TestRunner, s shapeRun) {
+		name := r.harness.Name
+		if s.back == nil {
+			r.fail("seedkinds.retired-answer-as-summary.read-back", fmt.Sprintf("seed shapes (%s): %s's session could not be read back", s.name, name))
+			return
+		}
+		answerShown, userShown := false, false
+		for _, e := range s.back.Linearize() {
+			userShown = userShown || contextHolds([]transcript.Entry{e}, user)
+			answerShown = answerShown || e.Role == transcript.RoleAssistant && contextHolds([]transcript.Entry{e}, same)
+		}
+		switch {
+		case answerShown && userShown:
+			r.pass("seedkinds.retired-answer-as-summary.history", fmt.Sprintf("seed shapes (%s): %s's Linearize() keeps the retired prompt and answer", s.name, name))
+		case userShown:
+			r.finding("seedkinds.retired-answer-as-summary.history:dropped-answer", fmt.Sprintf("seed shapes (%s): %s's Linearize() lost the retired answer that matches the summary", s.name, name))
+		default:
+			r.finding("seedkinds.retired-answer-as-summary.history:dropped-user", fmt.Sprintf("seed shapes (%s): %s's Linearize() lost the retired prompt (answer kept: %v)", s.name, name, answerShown))
+		}
+		ctx := s.back.Context()
+		switch {
+		case contextHolds(ctx, user):
+			r.finding("seedkinds.retired-answer-as-summary.context:retired-kept", fmt.Sprintf("seed shapes (%s): %s's Context() holds the retired prompt", s.name, name))
+		case !contextHolds(ctx, same):
+			r.finding("seedkinds.retired-answer-as-summary.context:no-summary", fmt.Sprintf("seed shapes (%s): %s's Context() has no summary", s.name, name))
+		default:
+			r.pass("seedkinds.retired-answer-as-summary.context", fmt.Sprintf("seed shapes (%s): %s's Context() holds the summary and not the retired prompt", s.name, name))
+		}
+		if s.codecOnly {
+			return
+		}
+		if reason, msg := s.blocked(r); reason != "" {
+			r.finding("seedkinds.retired-answer-as-summary.request:"+reason, msg)
+			return
+		}
+		n := 0
+		for _, e := range s.req {
+			n += bytes.Count(e.Body, []byte(same))
+		}
+		switch {
+		case s.sent(user):
+			r.finding("seedkinds.retired-answer-as-summary.request:retired-sent", fmt.Sprintf("seed shapes (%s): %s sent the retired prompt", s.name, name))
+		case n == 0:
+			r.finding("seedkinds.retired-answer-as-summary.request:no-summary", fmt.Sprintf("seed shapes (%s): %s did not send the summary", s.name, name))
+		case n > 1:
+			r.finding("seedkinds.retired-answer-as-summary.request:sent-twice", fmt.Sprintf("seed shapes (%s): %s sent the summary's text %d times", s.name, name, n))
+		default:
+			r.pass("seedkinds.retired-answer-as-summary.request", fmt.Sprintf("seed shapes (%s): %s sent the summary once and nothing retired", s.name, name))
+		}
+	}}
+}
+
+// 9. A prompt with a local text file attached by bare path, no media type
+// (copilot records attachments this way; opencode and kilo need a type).
+func shapeUntypedFilePath(r *TestRunner, cwd string, at time.Time) shapeSession {
+	fileName, content := shapeFact(), shapeFact()
+	path := filepath.Join(cwd, "notes-"+fileName+".txt")
+	es := timed(at,
+		shapeEntry("shape9-u", transcript.RoleUser,
+			shapeText("Read the attached notes."),
+			transcript.Block{Kind: transcript.BlockFile, Name: filepath.Base(path), URI: path}),
+		shapeEntry("shape9-a", transcript.RoleAssistant, shapeText("I read the notes.")),
+	)
+	body := []byte("notes: " + content + "\n")
+	b64 := base64.StdEncoding.EncodeToString(body)
+	return shapeSession{entries: es, file: path, content: body, report: func(r *TestRunner, s shapeRun) {
+		if reason, msg := s.blocked(r); reason != "" {
+			r.finding("seedkinds.untyped-file-path:"+reason, msg)
+			return
+		}
+		name := r.harness.Name
+		switch {
+		case s.sent(content) && !s.codecOnly:
+			r.pass("seedkinds.untyped-file-path:as-text", fmt.Sprintf("seed shapes (%s): %s sent the file's content", s.name, name))
+		case s.sent(b64) && !s.codecOnly:
+			r.pass("seedkinds.untyped-file-path:as-document", fmt.Sprintf("seed shapes (%s): %s sent the file's bytes", s.name, name))
+		case s.sent(fileName) && !s.codecOnly:
+			r.pass("seedkinds.untyped-file-path:as-reference", fmt.Sprintf("seed shapes (%s): %s sent the file's path and not its content", s.name, name))
+		case !s.kept(fileName) && !s.kept(content) && !s.kept(b64):
+			r.finding("seedkinds.untyped-file-path:not-kept", fmt.Sprintf("seed shapes (%s): %s's codec kept no file", s.name, name))
+		case s.codecOnly:
+			r.pass("seedkinds.untyped-file-path:kept", fmt.Sprintf("seed shapes (%s): %s's codec kept the file (bytes inline: %v)", s.name, name, s.kept(b64) || s.kept(content)))
+		default:
+			r.finding("seedkinds.untyped-file-path:dropped", fmt.Sprintf("seed shapes (%s): %s did not send the file its codec kept", s.name, name))
+		}
+	}}
+}
+
+// 10. A session that ends on a prompt no one answered.
+func shapeTrailingPrompt(r *TestRunner, cwd string, at time.Time) shapeSession {
+	last := shapeFact()
+	es := timed(at,
+		shapeEntry("shape10-u", transcript.RoleUser, shapeText("Start the migration.")),
+		shapeEntry("shape10-a", transcript.RoleAssistant, shapeText("The migration is started.")),
+		shapeEntry("shape10-v", transcript.RoleUser, shapeText("Also rename the table to "+last+".")),
+	)
+	return shapeSession{entries: es, report: func(r *TestRunner, s shapeRun) {
+		reportTrailing(r, s, "prompt", last)
+	}}
+}
+
+// 11. A session that ends on a tool result, before the answer to it.
+func shapeTrailingToolResult(r *TestRunner, cwd string, at time.Time) shapeSession {
+	args, result := shapeFact(), shapeFact()
+	tool, input := r.seedToolCall(args)
+	const id = "call_trailing"
+	es := timed(at,
+		shapeEntry("shape11-u", transcript.RoleUser, shapeText("Check the schema.")),
+		shapeEntry("shape11-a", transcript.RoleAssistant, transcript.Block{Kind: transcript.BlockToolUse, ToolID: id, Name: tool, Input: input}),
+		shapeEntry("shape11-t", transcript.RoleTool, transcript.Block{Kind: transcript.BlockToolResult, ToolID: id, Name: tool, Status: transcript.StatusOK, Text: "schema: " + result}),
+	)
+	return shapeSession{entries: es, report: func(r *TestRunner, s shapeRun) {
+		reportTrailing(r, s, "tool result", result)
+	}}
+}
+
+// reportTrailing is the trailing shapes' checks: the session loads, the
+// last message is still shown (Linearize), and whether the first request
+// carries it. Sent and not sent both pass: kiro records it as cancelled
+// and does not send it; an agent that sends it answers it.
+func reportTrailing(r *TestRunner, s shapeRun, label, fact string) {
+	name := r.harness.Name
+	if s.back != nil && contextHolds(s.back.Linearize(), fact) {
+		r.pass("seedkinds.trailing-"+slug(label)+".history", fmt.Sprintf("seed shapes (%s): %s's Linearize() shows the last %s", s.name, name, label))
+	} else {
+		r.finding("seedkinds.trailing-"+slug(label)+".history:dropped", fmt.Sprintf("seed shapes (%s): %s's Linearize() lost the last %s", s.name, name, label))
+	}
+	if s.codecOnly {
+		return
+	}
+	if reason, msg := s.blocked(r); reason != "" {
+		r.finding("seedkinds.trailing-"+slug(label)+".request:"+reason, msg)
+		return
+	}
+	if s.sent(fact) {
+		r.pass("seedkinds.trailing-"+slug(label)+".request:sent", fmt.Sprintf("seed shapes (%s): %s loaded the session and sent the last %s", s.name, name, label))
+	} else {
+		r.pass("seedkinds.trailing-"+slug(label)+".request:not-sent", fmt.Sprintf("seed shapes (%s): %s loaded the session and did not send the last %s", s.name, name, label))
+	}
 }
