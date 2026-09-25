@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,13 +28,11 @@ func TestSeedShapesPassOnTheirOwnContext(t *testing.T) {
 		built := sh.build(r, t.TempDir(), time.Now())
 		s := (&transcript.Session{Agent: seedAgent, Entries: built.entries}).Portable()
 		body, _ := json.Marshal(s.Context())
-		// A request: the context, and the prompt.
-		extra := ""
+		req := []server.LogEntry{{Body: fmt.Appendf(nil, `{"messages":%s,"prompt":%q}`, body, promptText)}}
 		if sh.name == "file-uri" {
-			// An agent that read the file sends its content.
-			extra = built.content
+			// An agent that read the file sends its bytes.
+			req = append(req, server.LogEntry{Body: []byte(base64.StdEncoding.EncodeToString(built.content))})
 		}
-		req := []server.LogEntry{{Body: fmt.Appendf(nil, `{"messages":%s,"prompt":%q,"file":%q}`, body, promptText, extra)}}
 		built.report(r, shapeRun{name: sh.name, back: s, req: req})
 		if len(r.result.Checks) == 0 {
 			t.Errorf("%s: no checks", sh.name)

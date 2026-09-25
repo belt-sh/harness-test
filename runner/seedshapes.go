@@ -41,7 +41,7 @@ type seedShape struct {
 type shapeSession struct {
 	entries []transcript.Entry
 	file    string // written before the load and removed after, when set
-	content string
+	content []byte
 	report  func(r *TestRunner, run shapeRun)
 }
 
@@ -78,7 +78,7 @@ func (r *TestRunner) runSeedShape(st transcript.Store, sh seedShape) {
 	now := time.Now().UTC()
 	built := sh.build(r, cwd, now)
 	if built.file != "" {
-		os.WriteFile(built.file, []byte(built.content), 0o644)
+		os.WriteFile(built.file, built.content, 0o644)
 		defer os.Remove(built.file)
 	}
 	s := &transcript.Session{Agent: seedAgent, CWD: cwd, Created: now, Updated: now, Entries: built.entries}
@@ -454,34 +454,38 @@ func shapeToolAfterText(r *TestRunner, cwd string, at time.Time) shapeSession {
 	}}
 }
 
-// 5. A local file attached by path alone: a file: URL, no bytes. The file
-// exists, so an agent that reads it can.
+// 5. An image attached by path alone: a file: URL, no bytes, as codex
+// records a local image. The file exists, so an agent or a writer that reads
+// it can; opencode and kilo failed the whole request on a file: URL ("URL
+// scheme must be http, https, or data").
 func shapeFileURI(r *TestRunner, cwd string, at time.Time) shapeSession {
-	fileName, content := shapeFact(), shapeFact()
-	path := filepath.Join(cwd, "handoff-"+fileName+".txt")
+	fileName := shapeFact()
+	path := filepath.Join(cwd, "screen-"+fileName+".png")
+	img := shapePNG(color.RGBA{30, 60, 200, 255})
 	es := timed(at,
 		shapeEntry("shape5-u", transcript.RoleUser,
-			shapeText("Read the attached handoff note."),
-			transcript.Block{Kind: transcript.BlockFile, MediaType: "text/plain", Name: filepath.Base(path), URI: "file://" + path}),
-		shapeEntry("shape5-a", transcript.RoleAssistant, shapeText("I read the handoff note.")),
+			shapeText("Look at the attached screenshot."),
+			transcript.Block{Kind: transcript.BlockImage, MediaType: "image/png", URI: "file://" + path}),
+		shapeEntry("shape5-a", transcript.RoleAssistant, shapeText("I looked at the screenshot.")),
 	)
-	return shapeSession{entries: es, file: path, content: "handoff note: " + content + "\n", report: func(r *TestRunner, s shapeRun) {
+	return shapeSession{entries: es, file: path, content: img, report: func(r *TestRunner, s shapeRun) {
 		if reason, msg := s.blocked(r); reason != "" {
 			r.finding("seedkinds.file-uri:"+reason, msg)
 			return
 		}
 		name := r.harness.Name
+		b64 := base64.StdEncoding.EncodeToString(img)
 		switch {
-		case !s.kept(fileName) && !s.kept(content):
-			r.finding("seedkinds.file-uri:not-kept", fmt.Sprintf("seed shapes (%s): %s's codec kept no file attachment", s.name, name))
-		case s.sent(content):
-			r.pass("seedkinds.file-uri:as-text", fmt.Sprintf("seed shapes (%s): %s read the file and sent its content", s.name, name))
-		case s.sent(fileName) && s.codecOnly:
-			r.pass("seedkinds.file-uri:kept", fmt.Sprintf("seed shapes (%s): %s's codec kept the file reference", s.name, name))
-		case s.sent(fileName):
-			r.pass("seedkinds.file-uri:as-reference", fmt.Sprintf("seed shapes (%s): %s sent the file's path and not its content", s.name, name))
+		case s.sent(b64) && !s.codecOnly:
+			r.pass("seedkinds.file-uri:as-image", fmt.Sprintf("seed shapes (%s): %s sent the image's bytes (codec kept them inline: %v)", s.name, name, s.kept(b64)))
+		case s.sent(fileName) && !s.codecOnly:
+			r.pass("seedkinds.file-uri:as-reference", fmt.Sprintf("seed shapes (%s): %s sent the image's path and not its bytes", s.name, name))
+		case !s.kept(fileName) && !s.kept(b64):
+			r.finding("seedkinds.file-uri:not-kept", fmt.Sprintf("seed shapes (%s): %s's codec kept no image", s.name, name))
+		case s.codecOnly:
+			r.pass("seedkinds.file-uri:kept", fmt.Sprintf("seed shapes (%s): %s's codec kept the image (bytes inline: %v)", s.name, name, s.kept(b64)))
 		default:
-			r.finding("seedkinds.file-uri:dropped", fmt.Sprintf("seed shapes (%s): %s accepted the session and did not send the file", s.name, name))
+			r.finding("seedkinds.file-uri:dropped", fmt.Sprintf("seed shapes (%s): %s accepted the session and did not send the image its codec kept", s.name, name))
 		}
 	}}
 }
