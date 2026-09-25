@@ -21,6 +21,9 @@ func TestCheckIDsAreBuiltFromFixedNames(t *testing.T) {
 		"name": true, "variant": true, "envVar": true, "label": true, "prefix": true,
 		"when": true, "correlates": true, "d.Name": true, "f.kind": true,
 		"r.harness.APIKeyEnvVar": true,
+		// seedshapes.go: reason is failReason's fixed name, parts joins
+		// fixed part names.
+		"reason": true, "parts": true,
 	}
 	files, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()

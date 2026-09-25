@@ -296,6 +296,10 @@ func (r *TestRunner) Run() Result {
 		if r.probes.SeedKinds {
 			r.resetPhase(ModeACP)
 			r.probeSeedKinds()
+			if r.probes.SeedShapes {
+				r.resetPhase(ModeACP)
+				r.probeSeedShapes()
+			}
 		}
 	}
 	if r.mode == ModeSDK {

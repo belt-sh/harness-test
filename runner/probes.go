@@ -60,6 +60,10 @@ type Probes struct {
 	// content (user and assistant text, reasoning, a tool call's arguments, a
 	// tool result, a second turn), loads it, and reports which reach the model.
 	SeedKinds bool
+	// SeedShapes (seedkinds=shapes) adds the regression shapes: one more
+	// session per shape an import has broken an agent with (seedshapes.go).
+	// Off in the default seedkinds run until the expected files carry them.
+	SeedShapes bool
 
 	// Detect checks what harness.DetectInstalled() claims against the agent
 	// this run actually installed. The installed list is what belt consumes;
@@ -77,7 +81,7 @@ type Probes struct {
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, resumeafter=65s, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, deferred, transcript, seed, seedkinds, env, detect
+//	tools, deferred, transcript, seed, seedkinds, seedkinds=shapes, env, detect
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -126,6 +130,13 @@ func ParseProbes(spec string) (Probes, error) {
 			p.Seed = true
 		case "seedkinds":
 			p.SeedKinds = true
+			switch value {
+			case "":
+			case "shapes":
+				p.SeedShapes = true
+			default:
+				return p, fmt.Errorf("probe seedkinds: want shapes or nothing, got %q", value)
+			}
 		case "env":
 			p.DumpEnv = true
 		case "detect":

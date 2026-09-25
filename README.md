@@ -950,6 +950,31 @@ image alone did it; the same entries one position earlier did not. Whether
 kiro's writer should merge them or kiro should accept them is open with the
 codec owner.
 
+#### Regression shapes (`--probe seedkinds=shapes`)
+
+`seedkinds=shapes` adds six sessions to the seed kinds probe, one per shape an
+import has broken an agent with, each with facts of its own, each written as a
+foreign session and loaded and prompted on its own (so a shape that makes an
+agent refuse a session costs only its own checks). It is off in the plain
+`seedkinds` run until `tests/expected` carries these ids.
+
+| check | shape | answers |
+|-------|-------|---------|
+| `seedkinds.in-message-result` | opencode's layout: the tool's result and its image inside the assistant message that made the call | `pass:as-image`, `finding:result-dropped`, `image-dropped`, `image-not-kept`, `not-kept` |
+| `seedkinds.parallel-same-id` | two parallel calls with the same id and input, each with its own result, both results in one tool entry (gemini's shape) | `pass:as-tool`, `pass:as-text`, `finding:dropped-<parts>`, `not-kept-<parts>` (`one-call`, `both-calls`, `first-result`, `second-result`) |
+| `seedkinds.user-attachments.image`, `.pdf` | a prompt with an image and a PDF attached | image: `pass:as-image`, `finding:dropped`, `not-kept`; PDF: `pass:as-document` (its base64), `as-raw-text`, `as-text`, `as-reference` (its name only), `finding:dropped`, `not-kept` |
+| `seedkinds.tool-after-text` | a tool call directly after an assistant text message (two assistant messages in a row) | `pass`, `finding:dropped-<parts>`, `not-kept-<parts>` |
+| `seedkinds.file-uri` | a prompt with a local file attached by `file:` URL only, no bytes (the file exists) | `pass:as-text` (its content), `pass:as-reference` (its path), `finding:dropped`, `not-kept` |
+| `seedkinds.retired-tool.history`, `.context`, `.request` | before a compaction that keeps nothing: a prompt, a tool call, its result and an answer right before the marker, all `AudienceUser` as a reader gives retired history | history: `pass` (`Linearize()` keeps all four), `finding:dropped-<parts>`, `summary-only`; context: `pass`, `finding:retired-kept-<parts>`, `no-summary`; request: `pass`, `finding:retired-sent-<parts>`, `no-summary` |
+
+Every shape's request checks answer `finding:rejected` when the turn ended
+and no request carried the prompt, and `finding:request-failed:<reason>` when
+the load, the prompt or the turn failed first (`url-scheme`,
+`session-not-found`, `display-name`, `invalid-image`, else the stage: `load`,
+`prompt`, `turn`, `exited`); the error is in the message.
+`HARNESS_SEEDKINDS_CODECS=1 go test ./runner -run SeedShapesCodecs -v` runs
+the codec half for every codec with no agent.
+
 ### Cursor saves a conversation only when the backend checkpoints it
 
 Under the mock, cursor wrote one line per session in every mode —

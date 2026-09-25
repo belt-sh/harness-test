@@ -16,3 +16,17 @@ func TestParseProbesResumeAfter(t *testing.T) {
 		}
 	}
 }
+
+func TestParseProbesSeedShapes(t *testing.T) {
+	p, err := ParseProbes("seedkinds")
+	if err != nil || !p.SeedKinds || p.SeedShapes {
+		t.Errorf("seedkinds: %+v %v", p, err)
+	}
+	p, err = ParseProbes("seedkinds=shapes")
+	if err != nil || !p.SeedKinds || !p.SeedShapes {
+		t.Errorf("seedkinds=shapes: %+v %v", p, err)
+	}
+	if _, err := ParseProbes("seedkinds=all"); err == nil {
+		t.Error("seedkinds=all accepted")
+	}
+}
