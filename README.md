@@ -955,8 +955,8 @@ codec owner.
 `seedkinds=shapes` adds eleven sessions to the seed kinds probe, one per shape an
 import has broken an agent with, each with facts of its own, each written as a
 foreign session and loaded and prompted on its own (so a shape that makes an
-agent refuse a session costs only its own checks). It is off in the plain
-`seedkinds` run until `tests/expected` carries these ids.
+agent refuse a session costs only its own checks). The nightly's default
+probe run uses `seedkinds=shapes`; plain `seedkinds` leaves the shapes out.
 
 | check | shape | answers |
 |-------|-------|---------|
@@ -979,6 +979,58 @@ the load, the prompt or the turn failed first (`url-scheme`,
 `prompt`, `turn`, `exited`); the error is in the message.
 `HARNESS_SEEDKINDS_CODECS=1 go test ./runner -run SeedShapesCodecs -v` runs
 the codec half for every codec with no agent.
+
+Measured 2026-09-25 in Docker, agentprotocol v0.13.0, transcript/sqlite
+v0.6.0 (the expected files). ✓ is a pass with no answer; (b) and 6 are
+history / context / request, (d) is history / request for both the trailing
+prompt and the trailing tool result.
+
+| agent | 1 in-message | 2 parallel | 3 image / pdf | 4 | 5 file: URL | 6 retired tool | (a) image-only | (b) answer = summary | (c) path | (d) trailing |
+|---|---|---|---|---|---|---|---|---|---|---|
+| claude | image | tool | image / document | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| codex | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| copilot | **image dropped** | tool | image / reference | ✓ | image | ✓ / retired kept / retired sent | **image dropped** | ✓ / retired kept / retired sent | text | ✓ / sent |
+| cursor | image not kept | tool | not kept / not kept | ✓ | reference | summary only / ✓ / ✓ | image not kept | prompt not kept / ✓ / ✓ | text | ✓ / sent |
+| droid | image | tool | image / document | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| gemini | image | tool | image / document | ✓ | image | summary only / ✓ / ✓ | image | prompt not kept / ✓ / ✓ | text | ✓ / sent |
+| goose | image | tool | image / document | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| grok | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| hermes | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| kilo | image | tool | **dropped** / reference | ✓ | **dropped** | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| kimi | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| kiro | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / **not sent** |
+| omp | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| opencode | image | tool | **dropped** / reference | ✓ | **dropped** | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| pi | image | tool | image / not kept | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+| qwen | image | tool | image / dropped | ✓ | image | ✓ ✓ ✓ | image | ✓ ✓ ✓ | text | ✓ / sent |
+
+Every row that is not a pass is a trait or a known limit:
+
+- **PDF not kept** (codex, grok, hermes, kimi, kiro, omp, pi): their formats
+  have no document part the agent sends. **qwen** sends its own
+  `[document: application/pdf]` in place of the PDF.
+- **opencode, kilo** drop user images (shapes 3 and 5) because of this suite's
+  model config for them: the request says `ERROR: Cannot read image (this
+  model does not support image input)`. Tool images reach the model.
+- **copilot** keeps a tool's image and does not send it; its compaction
+  summary lists the earlier prompts, so the retired prompt is in its context
+  and request (its own resume format).
+- **cursor** writes no images; **cursor** and **gemini** writers have no
+  `Compaction`, so retired history is replaced by the summary.
+- **kiro** records a trailing prompt or tool result as cancelled: shown, not
+  sent. Every other agent sends it.
+- A text file (c) reaches every agent as text: `<file name="…">…</file>` for
+  writers without a file part, a native file for claude and droid.
+
+Against v0.12.1 the shapes found: a result inside the assistant message
+dropped, not kept or (kiro) no request in 13 agents; a parallel same-id call
+or result lost in 12;
+opencode and kilo failing the whole request on a `file:` URL ("URL scheme
+must be http, https, or data"); gemini failing on `displayName`; kiro sending
+no request after two assistant messages in a row or a trailing message; goose
+("Session not found"), pi (a crash) and omp (no request) on an image-only
+tool result; codex losing a retired answer that matched the summary; kilo,
+opencode and qwen losing retired tool calls. All are fixed in v0.13.0.
 
 ### Cursor saves a conversation only when the backend checkpoints it
 
@@ -1204,11 +1256,11 @@ The step summary carries the version, the differences and the diff; reports, log
 
 #### Expected outcomes
 
-`tests/expected/<agent>.json` lists the agent's nightly runs (`name`, `mode`, `probes`, an optional `note`) and, per run, `checks`: id → `outcome[:answer]`. The comparison (`harness-test --compare <expected> --reports <dir>`) fails on any difference: a new failure, a finding that appears or disappears, a pass that becomes a skip, a check that is new or no longer reported, a run that did not finish. The default runs are `resume,inflight,compact,transcript,seed,seedkinds,tools,deferred`, then `resume=kill`, `inflight=cancel` and `inflight=hold` on their own, each time-boxed (`RUN_TIMEOUT`, 900 s).
+`tests/expected/<agent>.json` lists the agent's nightly runs (`name`, `mode`, `probes`, an optional `note`) and, per run, `checks`: id → `outcome[:answer]`. The comparison (`harness-test --compare <expected> --reports <dir>`) fails on any difference: a new failure, a finding that appears or disappears, a pass that becomes a skip, a check that is new or no longer reported, a run that did not finish. The default runs are `resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred`, then `resume=kill`, `inflight=cancel` and `inflight=hold` on their own, each time-boxed (`RUN_TIMEOUT`, 900 s).
 
 A check measured to vary between identical runs goes under the run's `nondeterministic`, with the outcomes seen and the reason; `"absent"` is an outcome for a check that is only sometimes asked. A timing dependency is fixed in the run instead where one can be: gemini's runs carry `resumeafter=65s`, because gemini 0.61 clobbers a session loaded in the UTC minute it was created, which made its resume and seed outcomes depend on the clock. `resumeafter` holds back every load of a session the agent wrote (the resume probe, both in-flight resumes, the compacted resume, the appended seed); with it, gemini's `inflight.resume-twice` is still refused 65 s after the first resume (`Invalid session identifier`), in every run: a property of gemini, not of the minute.
 
-The seedkinds checks for another agent's content (foreign tool calls, a compaction, a tool image) were added on 2026-09-25, generated in Docker and compared clean on one further run per agent; nothing else changed with agentprotocol v0.12.1. The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok, kiro and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first.
+The seedkinds regression shapes (`seedkinds=shapes`) were added to the default probe run on 2026-09-25 with agentprotocol v0.13.0 and transcript/sqlite v0.6.0, generated in Docker and compared clean on one further run per agent; no other check changed. The seedkinds checks for another agent's content (foreign tool calls, a compaction, a tool image) were added on 2026-09-25, generated in Docker and compared clean on one further run per agent; nothing else changed with agentprotocol v0.12.1. The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok, kiro and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first.
 
 Regenerate after a deliberate change (a new check, a fixed bug, a new agent release that answers differently):
 
