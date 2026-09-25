@@ -5,6 +5,7 @@
       "name": "probes",
       "mode": "acp",
       "probes": "resume,inflight,compact,transcript,seed,seedkinds,tools,deferred",
+      "note": "No inflight=cancel or inflight=hold runs: this agent runs the gated tool without asking its client (acp/inflight.park = skip:not-gated), so there is no approval for the answer to reach and those runs repeat this one. If inflight.park changes here, add them back.",
       "checks": {
         "acp/compact": "skip:no-command",
         "acp/deferred.armed": "pass:no-search-tool",
@@ -25,11 +26,22 @@
         "acp/seed.appended": "pass",
         "acp/seed.hand-built": "pass",
         "acp/seedkinds.assistant-text": "pass",
+        "acp/seedkinds.compaction.context": "pass",
+        "acp/seedkinds.compaction.history": "pass",
+        "acp/seedkinds.compaction.request": "pass",
         "acp/seedkinds.first-user-message": "pass",
+        "acp/seedkinds.foreign.claude-edit": "pass:as-tool-renamed",
+        "acp/seedkinds.foreign.claude-read": "pass:as-tool-renamed",
+        "acp/seedkinds.foreign.codex-apply_patch": "pass:as-tool-renamed",
+        "acp/seedkinds.foreign.codex-exec_command": "pass:as-tool-renamed",
+        "acp/seedkinds.foreign.gemini-write_file": "pass:as-tool-renamed",
+        "acp/seedkinds.foreign.nested-arguments": "pass:as-tool",
         "acp/seedkinds.reasoning": "finding:not-kept",
         "acp/seedkinds.second-turn-s-answer": "pass",
         "acp/seedkinds.second-turn-s-user-message": "pass",
+        "acp/seedkinds.shown-only": "pass",
         "acp/seedkinds.tool-call-arguments": "pass",
+        "acp/seedkinds.tool-image": "pass:as-image",
         "acp/seedkinds.tool-result": "pass",
         "acp/session.answer": "pass",
         "acp/session.completed": "pass",
@@ -42,8 +54,7 @@
         "setup/instructions.written../.kiro/steering/belt.md": "pass",
         "setup/instructions.written.~/.kiro/steering/belt.md": "pass",
         "setup/skills": "pass"
-      },
-      "note": "No inflight=cancel or inflight=hold runs: this agent runs the gated tool without asking its client (acp/inflight.park = skip:not-gated), so there is no approval for the answer to reach and those runs repeat this one. If inflight.park changes here, add them back."
+      }
     },
     {
       "name": "resume-kill",

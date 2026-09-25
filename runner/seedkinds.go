@@ -40,11 +40,9 @@ func (r *TestRunner) probeSeedKinds() {
 	}
 
 	facts := newSeedFacts()
+	foreign := newForeignSeed()
 	now := time.Now().UTC()
-	built := &transcript.Session{
-		Agent: r.harness.Name, CWD: r.workDir(), Created: now, Updated: now,
-		Entries: r.seedKindsEntries(facts, now),
-	}
+	built := sessionFor(r, facts, foreign, r.workDir(), now)
 	id, ok := r.writeSeed(st, "kinds", built)
 	if !ok {
 		return
@@ -54,19 +52,21 @@ func (r *TestRunner) probeSeedKinds() {
 	// than from what was handed to Write: a writer may drop or reshape a
 	// block, and that is the codec's doing, not the agent's.
 	kept := map[string]bool{}
-	if s, err := st.Read(context.Background(), id); err != nil {
+	back, err := st.Read(context.Background(), id)
+	if err != nil {
 		r.fail("seedkinds.read-back", fmt.Sprintf("seed kinds: read back %s session %s: %v", r.harness.Name, id, err))
 		return
-	} else {
-		for _, f := range facts {
-			kept[f.kind] = contextHolds(s.Context(), f.fact)
-		}
 	}
+	for _, f := range facts {
+		kept[f.kind] = contextHolds(back.Context(), f.fact)
+	}
+	r.reportForeignCodec(foreign, back)
 
 	sent, ok := r.loadSeed("kinds", id)
 	if !ok {
 		return
 	}
+	r.reportForeignRequest(foreign, back, firstTurnRequest(sent, promptText))
 	var reached []string
 	for _, f := range facts {
 		switch {
@@ -127,22 +127,56 @@ func (r *TestRunner) seedKindsEntries(facts []seedFact, at time.Time) []transcri
 	return []transcript.Entry{
 		{ID: "seed-k1", Role: transcript.RoleUser, Time: tick(0),
 			Content: []transcript.Block{text("Remember this for later: the project codename is " + f(kindUser) + ". Then look at the notes file.")}},
-		{ID: "seed-k2", ParentID: "seed-k1", Role: transcript.RoleAssistant, Time: tick(1),
+		{ID: "seed-k2", Role: transcript.RoleAssistant, Time: tick(1),
 			Content: []transcript.Block{
 				{Kind: transcript.BlockReasoning, Text: "The user wants the notes read. Their private tag is " + f(kindReasoning) + "."},
 				text("Noted. My reference for this task is " + f(kindAssistant) + ". Reading the notes now."),
 				{Kind: transcript.BlockToolUse, ToolID: toolID, Name: name, Input: args},
 			}},
-		{ID: "seed-k3", ParentID: "seed-k2", Role: transcript.RoleTool, Time: tick(2),
+		{ID: "seed-k3", Role: transcript.RoleTool, Time: tick(2),
 			Content: []transcript.Block{{Kind: transcript.BlockToolResult, ToolID: toolID, Name: name, Status: transcript.StatusOK,
 				Text: "notes: the deploy key is " + f(kindToolResult)}}},
-		{ID: "seed-k4", ParentID: "seed-k3", Role: transcript.RoleAssistant, Time: tick(3),
+		{ID: "seed-k4", Role: transcript.RoleAssistant, Time: tick(3),
 			Content: []transcript.Block{text("I read the notes.")}},
-		{ID: "seed-k5", ParentID: "seed-k4", Role: transcript.RoleUser, Time: tick(4),
+		{ID: "seed-k5", Role: transcript.RoleUser, Time: tick(4),
 			Content: []transcript.Block{text("One more thing: the release name is " + f(kindSecondUser) + ".")}},
-		{ID: "seed-k6", ParentID: "seed-k5", Role: transcript.RoleAssistant, Time: tick(5),
+		{ID: "seed-k6", Role: transcript.RoleAssistant, Time: tick(5),
 			Content: []transcript.Block{text("Understood, the release ticket is " + f(kindSecondReply) + ".")}},
 	}
+}
+
+// seedKindsSession is the whole hand-built session, in order: the
+// compacted history (a retired turn, a kept turn, a shown-only entry, the
+// compaction marker), the two-turn conversation's first turn with the other
+// agents' tool calls and the image a tool returned after the agent's own
+// tool result, then the second turn.
+// It is list-shaped (no parent links), so every entry is on the branch.
+func (r *TestRunner) seedKindsSession(facts []seedFact, foreign foreignSeed, at time.Time) []transcript.Entry {
+	history := foreign.compactedHistory(at)
+	convo := r.seedKindsEntries(facts, at.Add(10*time.Second))
+	ownTool, ownArgs := r.seedToolCall("image")
+	tools := foreign.foreignTurns(at.Add(20*time.Second), ownTool, ownArgs)
+	// The tool turns go between the agent's own tool result and the
+	// assistant's text after it, so user and assistant still alternate.
+	// After that text they would put two assistant messages in a row, and
+	// kiro 2.22 then loads the session and never sends the model a request
+	// (measured 2026-09-25: every foreign call and the image alone did it;
+	// the same calls one position earlier did not).
+	const pos = 3
+	out := append(history, convo[:pos]...)
+	out = append(out, tools...)
+	out = append(out, convo[pos:]...)
+	// One second apart in store order: a writer may order or date rows by
+	// time.
+	for i := range out {
+		out[i].Time = at.Add(time.Duration(i) * time.Second)
+		if c := out[i].Compaction; c != nil {
+			for j := range c.Summary {
+				c.Summary[j].Time = out[i].Time
+			}
+		}
+	}
+	return out
 }
 
 // seedToolCall is the agent's own session-phase tool with the fact added to
@@ -212,4 +246,14 @@ func contextHolds(ctx []transcript.Entry, s string) bool {
 		}
 	}
 	return false
+}
+
+// sessionFor is the seed kinds session at cwd. Agent is not the target, so
+// the writer takes it through Portable and Lower(caps), as it takes a
+// session another agent wrote.
+func sessionFor(r *TestRunner, facts []seedFact, foreign foreignSeed, cwd string, now time.Time) *transcript.Session {
+	return &transcript.Session{
+		Agent: seedAgent, CWD: cwd, Created: now, Updated: now,
+		Entries: r.seedKindsSession(facts, foreign, now),
+	}
 }

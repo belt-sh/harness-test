@@ -5,8 +5,8 @@ go 1.26.7
 require (
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
-	github.com/inference-sh/agentprotocol v0.10.1
-	github.com/inference-sh/agentprotocol/transcript/sqlite v0.4.2
+	github.com/inference-sh/agentprotocol v0.12.1
+	github.com/inference-sh/agentprotocol/transcript/sqlite v0.5.0
 )
 
 require (

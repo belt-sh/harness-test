@@ -872,6 +872,84 @@ So an imported conversation carries everything a person saw, plus tool calls
 and their results, into every agent measured; the model's earlier reasoning
 survives in the eight agents that replay it.
 
+#### What only another agent's session carries
+
+The seed kinds session is written as a foreign one (`Agent` is not the
+target), so every writer takes it through `Portable()` and `Lower(caps)`, as
+it takes an import. Besides the two-turn conversation it carries, each with
+facts of its own:
+
+- **Other agents' tool calls, each with its result:** claude `Edit` and
+  `Read`, codex `apply_patch` (its input is the patch text, a JSON string,
+  not an object) and `exec_command`, gemini `write_file`, and a `read` with
+  nested arguments (kiro's shape). They sit between the agent's own tool
+  result and the assistant's answer after it.
+- **A compaction in Portable's form:** a retired turn, a kept turn, a
+  shown-only entry (`AudienceUser`), then an opaque marker entry (no role, no
+  content) whose `Compaction.Summary` is one entry for everyone and whose
+  `Keep` names the kept turn.
+- **An image a tool returned:** a 1x1 PNG after the result text of the
+  agent's own tool.
+
+Undone turns are not seeded: `Portable` drops every `AudienceNone` entry
+before a writer sees one, so no writer can do anything with them
+(agentprotocol `TestPortable`, `TestAudience`).
+
+| check | question | answers |
+|-------|----------|---------|
+| `seedkinds.foreign.<tool>` | how the call reached the model: a structured call whose arguments carry its fact, under its own name or another, or only as text | `pass:as-tool`, `pass:as-tool-renamed`, `pass:as-text`, `finding:dropped`, `finding:not-kept` (the codec lost it), `finding:rejected` (no request carried the prompt) |
+| `seedkinds.compaction.context` | (a) the target's `Context()` after the write holds the summary and the kept turn, and no retired turn | `pass`, `finding:no-summary`, `no-kept`, `retired-kept`, `shown-only-kept` |
+| `seedkinds.compaction.history` | (b) its `Linearize()` keeps the retired turn | `pass`, `finding:summary-only` (the writer has no `Compaction` and applied it), `not-kept`, `partly` |
+| `seedkinds.compaction.request` | (c) the first model request has the summary and the kept turn and no retired turn | `pass`, `finding:retired-sent`, `no-summary`, `no-kept`, `rejected` |
+| `seedkinds.shown-only` | the shown-only entry never reaches the model | `pass`, `finding:sent` |
+| `seedkinds.tool-image` | the tool's image reaches the model | `pass:as-image` (its base64 is in the request), `pass:as-reference`, `finding:not-given`, `finding:not-kept` |
+
+The request read is the first one carrying the prompt (cursor's history is
+fetched as blobs, so for cursor every request after the prompt).
+`HARNESS_SEEDKINDS_CODECS=1 go test ./runner -run SeedKindsCodecs -v` runs
+the codec half (a) and (b) for every codec with no agent.
+
+Measured 2026-09-25 in Docker, agentprotocol v0.12.1, transcript/sqlite
+v0.5.0:
+
+| agent | `Edit` | `Read` | `apply_patch` | `exec_command` | `write_file` | nested `read` | (a) context | (b) history | (c) request | shown-only | tool image |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| claude | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| codex | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| copilot | tool | tool | tool | tool | tool | tool | **retired kept** | ✓ | **retired sent** | ✓ | **not sent** |
+| cursor | tool | tool | tool | tool | tool | tool | ✓ | summary only | ✓ | ✓ | **not kept** |
+| droid | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| gemini | tool | tool | tool | tool | tool | tool | ✓ | summary only | ✓ | ✓ | image |
+| goose | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| grok | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | **not sent** |
+| hermes | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| kilo | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | **not sent** |
+| kimi | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| kiro | tool, renamed | tool, renamed | tool, renamed | tool, renamed | tool, renamed | tool | ✓ | ✓ | ✓ | ✓ | image |
+| omp | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| opencode | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| pi | tool | tool | tool | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+| qwen | tool | tool | **dropped** | tool | tool | tool | ✓ | ✓ | ✓ | ✓ | image |
+
+- **copilot** keeps the retired turn in its context and sends it: its
+  compaction summary lists the user's earlier messages (`<user_message>`),
+  which the writer fills from the retired history.
+- **cursor** and **gemini** writers have no `Compaction` capability, so they
+  write the summary in place of the history and the retired turn is gone
+  from `Linearize()` too. cursor's writer keeps no image.
+- **copilot, grok, kilo** keep the image in the session and do not send it.
+- **kiro** sends a tool call it does not declare under the name `dummy`,
+  arguments intact.
+- **qwen** drops codex's `apply_patch`, whose input is a string, and sends
+  its result.
+
+The tool turns once sat after the assistant's answer, which put two
+assistant messages in a row. kiro 2.22 loaded that session and never sent the
+model a request, with no error: every foreign call alone did it, and the
+image alone did it; the same entries one position earlier did not. Whether
+kiro's writer should merge them or kiro should accept them is open with the
+codec owner.
+
 ### Cursor saves a conversation only when the backend checkpoints it
 
 Under the mock, cursor wrote one line per session in every mode —
@@ -1100,7 +1178,7 @@ The step summary carries the version, the differences and the diff; reports, log
 
 A check measured to vary between identical runs goes under the run's `nondeterministic`, with the outcomes seen and the reason; `"absent"` is an outcome for a check that is only sometimes asked. A timing dependency is fixed in the run instead where one can be: gemini's runs carry `resumeafter=65s`, because gemini 0.61 clobbers a session loaded in the UTC minute it was created, which made its resume and seed outcomes depend on the clock. `resumeafter` holds back every load of a session the agent wrote (the resume probe, both in-flight resumes, the compacted resume, the appended seed); with it, gemini's `inflight.resume-twice` is still refused 65 s after the first resume (`Invalid session identifier`), in every run: a property of gemini, not of the minute.
 
-The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok, kiro and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first.
+The seedkinds checks for another agent's content (foreign tool calls, a compaction, a tool image) were added on 2026-09-25, generated in Docker and compared clean on one further run per agent; nothing else changed with agentprotocol v0.12.1. The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok, kiro and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first.
 
 Regenerate after a deliberate change (a new check, a fixed bug, a new agent release that answers differently):
 
