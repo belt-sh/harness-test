@@ -4,7 +4,7 @@
     {
       "name": "probes",
       "mode": "acp",
-      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred",
+      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden",
       "checks": {
         "acp/compact": "skip:no-command",
         "acp/deferred.armed": "pass:no-search-tool",
@@ -73,7 +73,9 @@
         "setup/hooks.install": "pass",
         "setup/instructions.written../AGENTS.md": "pass",
         "setup/instructions.written.~/.config/opencode/AGENTS.md": "pass",
-        "setup/skills": "pass"
+        "setup/skills": "pass",
+        "surface/hidden.auth": "pass:help",
+        "surface/hidden.console": "pass:help"
       }
     },
     {

@@ -76,12 +76,17 @@ type Probes struct {
 	// an agent exports can be observed rather than guessed, and it is where
 	// DetectEnvVars entries come from.
 	DumpEnv bool
+
+	// Hidden runs protocol entry points and the command names registered in
+	// the installed package, and records the ones the CLI accepts and --help
+	// does not list (hidden.go).
+	Hidden bool
 }
 
 // ParseProbes reads a comma-separated probe list:
 //
 //	resume, resume=kill, resumeafter=65s, inflight, inflight=cancel, inflight=hold, compact,
-//	tools, deferred, transcript, seed, seedkinds, seedkinds=shapes, env, detect
+//	tools, deferred, transcript, seed, seedkinds, seedkinds=shapes, env, detect, hidden
 func ParseProbes(spec string) (Probes, error) {
 	var p Probes
 	for _, part := range strings.Split(spec, ",") {
@@ -141,8 +146,10 @@ func ParseProbes(spec string) (Probes, error) {
 			p.DumpEnv = true
 		case "detect":
 			p.Detect = true
+		case "hidden":
+			p.Hidden = true
 		default:
-			return p, fmt.Errorf("unknown probe %q (want resume, resumeafter, inflight, compact, tools, deferred, transcript, seed, seedkinds, env or detect)", name)
+			return p, fmt.Errorf("unknown probe %q (want resume, resumeafter, inflight, compact, tools, deferred, transcript, seed, seedkinds, env, detect or hidden)", name)
 		}
 	}
 	return p, nil

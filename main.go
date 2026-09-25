@@ -33,7 +33,7 @@ func main() {
 		reportsDir   = flag.String("reports", "", "with --compare: directory holding <run>.json for each run")
 		updateTo     = flag.String("update-expected", "", "with --compare: write the expected file these reports describe to this path instead of failing")
 		surfaceDir   = flag.String("surface", "", "install --harness, read its --help, and write <name>.surface.txt, .version and .help.txt into this directory")
-		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], resumeafter=<duration>, inflight[=approve|cancel|hold], compact, tools, deferred, transcript, seed, seedkinds, env, detect")
+		probeSpec    = flag.String("probe", "", "extra measurements, comma separated: resume[=close|kill], resumeafter=<duration>, inflight[=approve|cancel|hold], compact, tools, deferred, transcript, seed, seedkinds, env, detect, hidden")
 	)
 	flag.Parse()
 

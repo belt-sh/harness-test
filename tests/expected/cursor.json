@@ -4,7 +4,7 @@
     {
       "name": "probes",
       "mode": "acp",
-      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred",
+      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden",
       "checks": {
         "acp/compact": "skip:no-command",
         "acp/cursor.exec.adopt_args": "pass",
@@ -140,7 +140,20 @@
         "setup/env.CURSOR_API_KEY": "pass",
         "setup/hooks.install": "pass",
         "setup/instructions.written../.cursor/rules/belt.mdc": "pass",
-        "setup/skills": "pass"
+        "setup/skills": "pass",
+        "surface/hidden.acp": "pass:acp",
+        "surface/hidden.cleanup-install-versions": "pass:help",
+        "surface/hidden.get-channel": "pass:help",
+        "surface/hidden.install": "pass:help",
+        "surface/hidden.local-worker": "pass:help",
+        "surface/hidden.record": "pass:help",
+        "surface/hidden.repaint-debug": "pass:help",
+        "surface/hidden.repo": "pass:help",
+        "surface/hidden.sandbox": "pass:help",
+        "surface/hidden.set-channel": "pass:help",
+        "surface/hidden.shell-integration": "pass:help",
+        "surface/hidden.upgrade": "pass:help",
+        "surface/hidden.worker-server": "pass:help"
       }
     },
     {

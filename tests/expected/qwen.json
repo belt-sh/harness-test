@@ -4,7 +4,7 @@
     {
       "name": "probes",
       "mode": "acp",
-      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred",
+      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden",
       "checks": {
         "acp/compact.context": "pass:summary",
         "acp/compact.run": "pass",
@@ -77,7 +77,9 @@
         "setup/hooks.install": "pass",
         "setup/instructions.written../QWEN.md": "pass",
         "setup/instructions.written.~/.qwen/QWEN.md": "pass",
-        "setup/skills": "pass"
+        "setup/skills": "pass",
+        "surface/hidden.flag.experimental-acp": "pass:acp",
+        "surface/hidden.flag.experimental-acp.registry": "finding:unused"
       }
     },
     {

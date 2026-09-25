@@ -28,6 +28,11 @@ func TestCheckIDsAreBuiltFromFixedNames(t *testing.T) {
 		// negotiation field with its value as the answer. Either changes
 		// only with a CLI release, which is what those checks report.
 		"execType": true, "flag": true,
+		// hidden.go: a candidate from the fixed list or a command name the
+		// package registers, and one of the fixed hidden* outcomes. A mined
+		// name changes only with a CLI release, which is what the check
+		// reports.
+		"entry": true, "c.how": true,
 	}
 	files, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()

@@ -4,7 +4,7 @@
     {
       "name": "probes",
       "mode": "acp",
-      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred",
+      "probes": "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden",
       "checks": {
         "acp/compact.context": "pass:summary",
         "acp/compact.run": "pass:reported",
@@ -76,7 +76,17 @@
         "setup/hooks.install": "pass",
         "setup/instructions.written../CLAUDE.md": "pass",
         "setup/instructions.written.~/.claude/CLAUDE.md": "pass",
-        "setup/skills": "pass"
+        "setup/skills": "pass",
+        "surface/hidden.daemon": "pass:help",
+        "surface/hidden.design-login": "pass:help",
+        "surface/hidden.edit-chrome-settings": "pass:help",
+        "surface/hidden.edit-hook": "pass:help",
+        "surface/hidden.edit-memory-settings": "pass:help",
+        "surface/hidden.edit-permission-rules": "pass:help",
+        "surface/hidden.edit-sandbox-settings": "pass:help",
+        "surface/hidden.edit-skill-overrides": "pass:help",
+        "surface/hidden.import-conversations": "pass:help",
+        "surface/hidden.sandbox": "pass:help"
       }
     },
     {

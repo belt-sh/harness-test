@@ -236,6 +236,9 @@ func (r *TestRunner) Run() Result {
 	}
 	r.setupSkills()
 	r.writeInstructions()
+	if r.probes.Hidden {
+		r.probeHidden()
+	}
 
 	if r.mode == ModeBoth || r.mode == ModeHeadless {
 		r.section = "headless"

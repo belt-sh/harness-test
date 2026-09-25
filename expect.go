@@ -171,7 +171,7 @@ type Nondeterministic struct {
 // because each changes what the first process or the resumed one does.
 func defaultRuns() []ExpectedRun {
 	return []ExpectedRun{
-		{Name: "probes", Mode: "acp", Probes: "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred"},
+		{Name: "probes", Mode: "acp", Probes: "resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden"},
 		{Name: "resume-kill", Mode: "acp", Probes: "resume=kill"},
 		{Name: "inflight-cancel", Mode: "acp", Probes: "inflight=cancel"},
 		{Name: "inflight-hold", Mode: "acp", Probes: "inflight=hold"},
