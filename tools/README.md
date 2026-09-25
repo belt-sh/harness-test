@@ -15,8 +15,12 @@ Turns `--probe tools` output into the capability matrix.
 harness-test --harness all --mode headless --probe tools 2>&1 \
   | grep -o '\[tools\] [a-z]*/[a-z]* wanted "[^"]*", declared: .*' \
   | sed 's/\[tools\] \([a-z]*\)\/[a-z]*.*declared: /\1 /' > tools.txt
-python3 tools/capability-matrix.py tools.txt
+python3 tools/capability-matrix.py tools.txt --snapshot tests/expected/cursor-tools.json
 ```
+
+`--snapshot` adds a column from a committed tool snapshot, for an agent whose
+tools are not on the wire (cursor's backend chooses them). Its header carries
+a `*`.
 
 Each capability lists the tool names that provide it, most specific first, and
 an agent with a shell but no dedicated tool for a file row is marked `↳shell`

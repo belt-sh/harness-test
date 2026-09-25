@@ -24,6 +24,9 @@ func (r *TestRunner) runChecks(phase string) {
 	// Belt runs only: reports once, on the first phase that reaches it.
 	r.checkBeltHookShape()
 	r.dumpDeclaredTools(phase)
+	if r.probes.DumpTools {
+		r.probeCursorTools(phase)
+	}
 }
 
 // dumpDeclaredTools prints what the agent offered the model in this phase.

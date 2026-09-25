@@ -24,6 +24,10 @@ func TestCheckIDsAreBuiltFromFixedNames(t *testing.T) {
 		// seedshapes.go: reason is failReason's fixed name, parts joins
 		// fixed part names.
 		"reason": true, "parts": true,
+		// cursortools.go: an exec type the CLI bundle declares, and a
+		// negotiation field with its value as the answer. Either changes
+		// only with a CLI release, which is what those checks report.
+		"execType": true, "flag": true,
 	}
 	files, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()

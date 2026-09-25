@@ -413,6 +413,9 @@ func (s *MockServer) handleCursorBidiAppend(w http.ResponseWriter, r *http.Reque
 	top, _ := pbDecode(msg)
 
 	entry := map[string]any{"rpc": "BidiAppend", "request_id": reqID, "message": pbToJSON(msg, 0)}
+	if flags := cursorClientFlags(msg); flags != nil {
+		entry["client_flags"] = flags
+	}
 	model := ""
 	kind := ""
 	if len(top) > 0 {

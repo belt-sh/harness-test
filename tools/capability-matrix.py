@@ -11,13 +11,18 @@ when it does all file work through exec_command.
 
 Name matching is case-insensitive. It was not, and claude's WebSearch did not
 match web_search, so an agent was shown lacking a capability it has.
+
+--snapshot FILE adds a column from a tool snapshot (tests/expected/cursor-tools.json),
+for an agent whose tools cannot be read off the wire. Its header is marked with
+a `*`: the column is one recorded answer, not this run's measurement.
 """
+import json
 import sys
 
 CAPS = [
     ("read a file",     ["read", "read_file", "view"]),
     ("write a file",    ["write", "write_file", "create"]),
-    ("edit in place",   ["edit", "replace", "search_replace", "apply_patch", "patch", "code"]),
+    ("edit in place",   ["edit", "replace", "search_replace", "strreplace", "apply_patch", "patch", "code"]),
     ("run a shell cmd", ["bash", "shell", "execute", "exec_command", "run_shell_command",
                          "run_terminal_command", "terminal", "execute_code"]),
     ("find files",      ["glob", "list_dir", "list_directory", "ls", "tree", "search_files"]),
@@ -28,9 +33,9 @@ CAPS = [
     ("skills",          ["load_skill", "activate_skill", "skill_manage", "skills_list", "skill_view", "skill"]),
     ("fetch a url",     ["web_fetch", "webfetch", "fetchurl"]),
     ("web search",      ["google_web_search", "web_search", "websearch"]),
-    ("plan mode",       ["enter_plan_mode", "enterplanmode", "exitspecmode"]),
+    ("plan mode",       ["enter_plan_mode", "enterplanmode", "exitspecmode", "switchmode"]),
     ("ask the user",    ["ask_user_question", "askuserquestion", "request_user_input", "question"]),
-    ("deferred tools",  ["toolsearch", "tool_search", "search_tool", "use_tool", "tool_call"]),
+    ("deferred tools",  ["toolsearch", "tool_search", "search_tool", "getdynamictools", "use_tool", "tool_call"]),
 ]
 
 # Rows an agent with a shell reaches by running a command.
@@ -38,12 +43,15 @@ SHELL_REACHABLE = {"read a file", "write a file", "edit in place", "find files",
 SHELL = dict(CAPS)["run a shell cmd"]
 
 
-def main(path):
+def main(path, snapshots):
     rows = {}
     for line in open(path):
         parts = line.split()
         if parts:
             rows[parts[0]] = {t.lower(): t for t in parts[1:]}
+    for snap in snapshots:
+        s = json.load(open(snap))
+        rows[s["harness"] + "*"] = {t.lower(): t for t in s["modes"]["agent"]}
     order = sorted(rows)
     has_shell = {a: any(n in rows[a] for n in SHELL) for a in order}
 
@@ -67,4 +75,9 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "tools.txt")
+    args, snapshots = sys.argv[1:], []
+    while "--snapshot" in args:
+        i = args.index("--snapshot")
+        snapshots.append(args[i + 1])
+        del args[i:i + 2]
+    main(args[0] if args else "tools.txt", snapshots)
