@@ -79,6 +79,7 @@
         "setup/skills": "pass",
         "surface/hidden.daemon": "pass:help",
         "surface/hidden.design-login": "pass:help",
+        "surface/hidden.drop-worktree-registrations": "pass:help",
         "surface/hidden.edit-chrome-settings": "pass:help",
         "surface/hidden.edit-hook": "pass:help",
         "surface/hidden.edit-memory-settings": "pass:help",

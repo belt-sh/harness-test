@@ -4,6 +4,7 @@ auth
 config
 install
 list
+mcp
 remove
 uninstall
 update

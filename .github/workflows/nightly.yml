@@ -168,7 +168,7 @@ jobs:
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
           if [ -s $RUNNER_TEMP/surface/surface.diff ]; then
-            echo "::error title=${{ matrix.name }} CLI surface changed::$(grep '^[+-][^+-]' $RUNNER_TEMP/surface/surface.diff | tr '\n' ' ')"
+            echo "::error title=${{ matrix.name }} CLI surface changed::$(grep -E '^[+-]' $RUNNER_TEMP/surface/surface.diff | grep -vE '^(\+\+\+|---) ' | tr '\n' ' ')"
           fi
       - uses: actions/upload-artifact@v4
         if: always()

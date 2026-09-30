@@ -35,11 +35,13 @@ update
 --bg
 --brief
 --chrome
+--client-data-url
 --cloud
 --continue
 --dangerously-skip-permissions
 --debug
 --debug-file
+--desktop
 --disable-slash-commands
 --disallowed-tools
 --disallowedTools

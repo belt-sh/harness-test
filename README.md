@@ -1276,6 +1276,8 @@ harness-test --detect
 
 The step summary carries the version, the differences and the diff; reports, logs and raw `--help` are uploaded as artifacts.
 
+A red nightly: [docs/ci-playbook.md](docs/ci-playbook.md). `tests/triage.sh [run-id] [--apply]` classes each failure from the run's artifacts and writes the expected files for pure drift.
+
 #### Reports and stable ids
 
 `--report <file.json>` writes every check of a run: `{"id", "outcome", "answer", "message"}` per check, with `outcome` one of `pass`, `fail`, `skip`, `finding`. The id names the question: `<section>/<check>`, where the section is `setup`, `surface`, `headless`, `interactive`, `acp` or `sdk`, and the check is fixed at its call site (`acp/resume.context`, `acp/seed.hand-built`, `acp/hook.pre-tool`, `setup/instructions.written.~/.claude/CLAUDE.md`). Nothing measured goes into an id — no codename, session id, port, count or duration; `TestCheckIDsAreBuiltFromFixedNames` rejects a call site that builds one from anything but fixed names. A check asked twice in a section gets `#2`. `answer` separates outcomes that mean different things (`pass:waited` and `pass:exited` for an unanswered approval; `finding:not-kept` and `finding:not-given` for a seed kind). `message` is the human line and is never compared.

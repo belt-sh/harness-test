@@ -1,6 +1,7 @@
 # qwen: top-level commands and long flags from --help (regenerate: see README, CI)
 [commands]
 auth
+batch
 board
 channel
 extensions
@@ -14,6 +15,7 @@ update
 [flags]
 --acp
 --add-dir
+--advisor
 --allowed-mcp-server-names
 --allowed-tools
 --append-system-prompt

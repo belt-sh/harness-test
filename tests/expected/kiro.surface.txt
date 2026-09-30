@@ -17,6 +17,7 @@ launch
 login
 logout
 mcp
+powers
 profile
 quit
 restart
