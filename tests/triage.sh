@@ -13,6 +13,7 @@
 # Classes (docs/ci-playbook.md says what to do with each):
 #   auto    surface-added        --help lists new commands or flags, none gone
 #   auto    hidden-new           a new surface/hidden.<name> that works (pass:*)
+#   auto    already-accepted     tests/expected already matches the run (fixed since)
 #   review  surface-removed      a command or flag left --help
 #   review  protocol-unused      a hidden entry point answers a protocol the registry does not drive
 #   review  check-new            a new check id outside surface/hidden.*
@@ -45,7 +46,7 @@ failed=$(jq -r '.jobs[] | select(.conclusion == "failure" or .conclusion == "tim
 item() {
   jq -nc --arg class "$1" --arg agent "$2" --arg job "$3" --arg detail "$4" \
     '{class: $class, agent: $agent, job: $job, detail: $detail,
-      auto: ($class | IN("surface-added", "hidden-new"))}' >> "$OUT/items.jsonl"
+      auto: ($class | IN("surface-added", "hidden-new", "already-accepted"))}' >> "$OUT/items.jsonl"
 }
 
 fetch() { # fetch <artifact>: 0 when downloaded
@@ -69,7 +70,7 @@ printf '%s\n' "$failed" | while IFS="$(printf '\t')" read -r name id; do
       item surface-added "$agent" "$name" "$ver: new: $added"
       [ -z "$apply" ] || [ -n "$removed" ] || cp "$d/$agent.surface.txt" "tests/expected/$agent.surface.txt"
     fi
-    [ -n "$added$removed" ] || item infra "$agent" "$name" "surface failed but matches the snapshot; job $id"
+    [ -n "$added$removed" ] || item already-accepted "$agent" "$name" "$ver: tests/expected matches this run's surface"
     ;;
   probes)
     if ! fetch "probes-$agent"; then
@@ -103,7 +104,7 @@ printf '%s\n' "$failed" | while IFS="$(printf '\t')" read -r name id; do
         item outcome-changed "$agent" "$name" "$r: $cid $want -> $got"; review=1
       fi
     done < "$OUT/$agent.changes.tsv"
-    [ -s "$OUT/$agent.changes.tsv" ] || item infra "$agent" "$name" "probes failed with no check difference; job $id"
+    [ -s "$OUT/$agent.changes.tsv" ] || item already-accepted "$agent" "$name" "tests/expected matches this run's reports"
     # One review item holds the whole file back: the new expected file would
     # accept it along with the drift.
     [ -z "$apply" ] || [ "$review" = 1 ] || [ ! -s "$OUT/$agent.changes.tsv" ] || cp "$new" "tests/expected/$agent.json"
@@ -125,6 +126,11 @@ jq -s --argjson run "$run" --slurpfile meta "$OUT/run.json" \
   echo "| | class | agent | detail |"
   echo "|---|---|---|---|"
   jq -r '.items | sort_by(.auto, .class, .agent)[] | "| \(if .auto then "auto" else "**review**" end) | \(.class) | \(.agent) | \(.detail | gsub("\\|"; "\\\\|")) |"' "$OUT/triage.json"
+  if ls "$OUT"/art/surface-*/*.version >/dev/null 2>&1; then
+    echo
+    echo "Versions of the failed surface jobs (README matrix):"
+    for f in "$OUT"/art/surface-*/*.version; do echo "- $(basename "$f" .version): $(cat "$f")"; done
+  fi
 } > "$OUT/triage.md"
 cat "$OUT/triage.md"
 echo

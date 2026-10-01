@@ -1,0 +1,71 @@
+name: Triage
+
+# A failed Nightly is sorted by tests/triage.sh from its own artifacts
+# (docs/ci-playbook.md). When every failure is drift (auto classes), the new
+# expected files are committed to main and a nightly for those agents confirms
+# them. When any failure needs review, the auto part goes to a triage/<run>
+# branch, the table goes to this job's summary, and this job fails.
+
+on:
+  workflow_run:
+    workflows: [Nightly]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'Nightly run id to triage'
+        required: true
+
+concurrency:
+  group: triage
+  cancel-in-progress: false
+
+permissions:
+  actions: write   # download artifacts, dispatch the confirming nightly
+  contents: write  # commit the accepted drift
+
+jobs:
+  triage:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN: ${{ inputs.run || github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Triage nightly ${{ env.RUN }}
+        id: triage
+        run: |
+          status=0
+          OUT=$RUNNER_TEMP/triage tests/triage.sh "$RUN" --apply || status=$?
+          cat $RUNNER_TEMP/triage/triage.md >> $GITHUB_STEP_SUMMARY
+          echo "status=$status" >> $GITHUB_OUTPUT
+          [ "$status" -le 1 ] || exit "$status"
+      - name: Commit accepted drift
+        run: |
+          git diff --quiet tests/expected && { echo "nothing to commit"; exit 0; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898283+github-actions[bot]@users.noreply.github.com'
+          news=$(jq -r '[.items[] | select(.auto and .class != "already-accepted") | "\(.agent) \(.detail)"] | unique | .[]' $RUNNER_TEMP/triage/triage.json)
+          agents=$(jq -r '[.items[] | select(.auto and .class != "already-accepted") | .agent] | unique | join(",")' $RUNNER_TEMP/triage/triage.json)
+          git add tests/expected
+          git commit -q -m "nightly $RUN: accept drift ($agents)" -m "$news" -m "tests/triage.sh $RUN --apply"
+          if [ "${{ steps.triage.outputs.status }}" = 0 ]; then
+            git push origin HEAD:main
+            gh workflow run nightly.yml -f agents="$agents"
+            echo "committed to main; confirming nightly dispatched for $agents" >> $GITHUB_STEP_SUMMARY
+          else
+            git push -f origin HEAD:refs/heads/triage/$RUN
+            echo "auto part on branch triage/$RUN: https://github.com/${{ github.repository }}/compare/main...triage/$RUN" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Review needed
+        if: steps.triage.outputs.status == '1'
+        run: |
+          echo "::error title=Nightly $RUN needs review::$(jq -r '[.items[] | select(.auto | not) | "\(.class) \(.agent)"] | join(", ")' $RUNNER_TEMP/triage/triage.json) (docs/ci-playbook.md)"
+          exit 1

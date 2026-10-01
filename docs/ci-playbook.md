@@ -20,6 +20,7 @@ when every failure is `auto`, 1 when any needs review.
 |---|---|---|
 | `surface-added` (auto) | `--help` lists new commands or flags, none gone | accept (step 2) |
 | `hidden-new` (auto) | a new `surface/hidden.<name>` that works (`pass:*`) | accept (step 2) |
+| `already-accepted` (auto) | `tests/expected` already matches the run: fixed since | nothing |
 | `surface-removed` | a command or flag left `--help` | check the registry and belt's hooks for it: `grep -rn -- '<flag>' ~/inference/go/agentprotocol`. Used → a break, fix the driver. Unused → accept by hand |
 | `protocol-unused` | a hidden entry point answers ACP/JSON-RPC and the registry does not drive it | the finding that caught cursor's `acp`. Decide whether the registry should use it; record the decision in the README's hidden-command list, then accept |
 | `check-new` | a new check id outside `surface/hidden.*` | expected only after a probe change here. Nightly on unchanged code → the agent took a new path; read the message in `probes.log` |
@@ -82,9 +83,16 @@ Done when that run is green. The next scheduled run is the second confirmation.
 
 ## Automation
 
-`triage.json` is the contract for automating this: a workflow on
-`workflow_run: Nightly, conclusion failure` can run `tests/triage.sh --apply`
-and, when it exits 0, open a PR with the applied files and `triage.md` as the
-body. When it exits 1, it posts `triage.md` for a person, and an agent working
-from this playbook takes the review rows. A new failure mode gets a class here
-first, then a row in the table, then a branch in the script.
+`.github/workflows/triage.yml` runs `tests/triage.sh <run> --apply` after
+every failed Nightly (or `gh workflow run triage.yml -f run=<id>`):
+
+- every failure auto: commits the new expected files to main as
+  `nightly <run>: accept drift (<agents>)` and dispatches a nightly for those
+  agents. The README matrix is left to a person; the versions are in the
+  triage job's summary.
+- any failure needs review: pushes the auto part to `triage/<run>`, writes the
+  table to the job summary and fails, naming the review classes. Work them
+  from this playbook, then merge or drop the branch.
+
+A new failure mode gets a class here first, then a row in the table, then a
+branch in the script.
