@@ -49,6 +49,14 @@ Scan the new commands before committing. A surface change is also news: a new
 `mcp` subcommand, an ACP flag, a `--desktop` mode may be something belt
 should use. Put anything notable in the commit body.
 
+Update the README's compatibility matrix in the same commit when a version
+left its row (`major.minor.x`; cursor is a build date). The versions are in
+the artifacts:
+
+```bash
+for f in $OUT/art/surface-*/*.version; do echo "$(basename $f .version): $(cat $f)"; done
+```
+
 Commit message: `nightly <run-id>: <agent> <version> <what's new>, ...`.
 
 ## 3. Review items
