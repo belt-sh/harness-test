@@ -87,6 +87,7 @@
         "surface/hidden.edit-sandbox-settings": "pass:help",
         "surface/hidden.edit-skill-overrides": "pass:help",
         "surface/hidden.import-conversations": "pass:help",
+        "surface/hidden.project": "pass:help",
         "surface/hidden.sandbox": "pass:help"
       }
     },

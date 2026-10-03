@@ -66,6 +66,7 @@ worktree
 --external-thinking
 --from-claude
 --from-codex
+--goal
 --hide-thinking
 --hook
 --max-time
