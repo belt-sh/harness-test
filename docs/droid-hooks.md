@@ -1,6 +1,10 @@
 # droid: UserPromptSubmit does not fire over ACP or plain `exec`, and PreCompact only fires in the TUI
 
-**Version:** droid 0.225.2 (first measured on 0.217, unchanged since)
+**Version:** droid 0.225.2 (first measured on 0.217, unchanged through 0.235.0)
+
+**Update 2026-10-08:** droid 0.236.0 runs UserPromptSubmit over ACP
+(`--output-format acp`), and the hook's context reaches the model. The rest of
+this write-up describes 0.217 to 0.235.0.
 **Kind:** feature request / parity gap, not a crash
 **Impact:** a hook that adds context to the user's prompt works in the TUI and
 not when droid is driven by an editor over ACP, which is how Zed, JetBrains and

@@ -28,28 +28,28 @@ Built for [belt.sh](https://belt.sh) — connect your agent to skills, knowledge
 
 ## Compatibility matrix
 
-<!-- Updated 2026-09-30. Versions read from the agents themselves in the latest
+<!-- Updated 2026-10-09 from nightly 37768023609. Versions read from the agents themselves in the latest
      nightly (surface-<agent> artifacts, <agent>.version). Several move within a day — grok went 1.0.34 to 1.0.40 in an
      afternoon — so the minor is written as .x and only the shape is stable. -->
 
 | Agent | Version | Headless | Interactive | ACP | SDK | Hook Format | API |
 |-------|---------|:--------:|:-----------:|:---:|:---:|-------------|-----|
 | [Claude Code](https://github.com/anthropics/claude-code) | 2.1.x | ✅ | ✅ | — | ✅¹ | JSONNested | anthropic |
-| [Codex](https://github.com/openai/codex) | 0.159.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
+| [Codex](https://github.com/openai/codex) | 0.161.x | ✅ | ✅ | — | ✅² | JSONNested | oai responses |
 | [Copilot](https://github.com/github/copilot) | 1.0.x | ✅ | ✅ | ✅ | — | JSONCopilot | oai completions |
-| [Cursor](https://cursor.com/docs/cli) | 2026.09.28 | ✅ | ✅ | ✅ | — | JSONFlat | cursor⁶ |
-| [Droid](https://docs.factory.ai/cli) | 0.230.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.62.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
-| [Goose](https://github.com/block/goose) | 1.52.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
+| [Cursor](https://cursor.com/docs/cli) | 2026.10.01 | ✅ | ✅ | ✅ | — | JSONFlat | cursor⁶ |
+| [Droid](https://docs.factory.ai/cli) | 0.236.x | ✅ | ✅ | ✅ | ✅⁵ | JSONNested | oai completions |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 0.63.x | ✅ | ✅ | ✅ | — | JSONNested | gemini |
+| [Goose](https://github.com/block/goose) | 1.53.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
 | [Grok](https://x.ai/grok-build) | 1.0.4x | ✅ | ✅ | ✅ | — | JSONNested | oai responses |
 | [Hermes](https://github.com/hermes-ai/hermes-agent) | 0.19.x | ✅ | ✅ | ✅ | — | YAML | oai completions |
 | [Kilo](https://github.com/nicepkg/kilo) | 7.8.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
 | [Kimi Code](https://github.com/nicepkg/gpt-runner) | 2.1.x | ✅ | ✅ | ✅ | — | TOML | oai completions |
-| [Kiro](https://kiro.dev) | 2.26.x | ✅ | ✅ | ✅ | — | JSONKiro | oai completions |
-| [Oh My Pi](https://omp.sh) | 18.4.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | oai completions |
+| [Kiro](https://kiro.dev) | 2.28.x | ✅ | ✅ | ✅ | — | JSONKiro | oai completions |
+| [Oh My Pi](https://omp.sh) | 18.8.x | ✅ | ✅ | ✅ | ✅⁴ | TSExtension | oai completions |
 | [OpenCode](https://github.com/nicepkg/opencode) | 1.18.x | ✅ | ✅ | ✅ | — | TSPlugin | oai responses |
-| [Pi](https://github.com/earendil-works/pi) | 0.99.x | ✅ | ✅ | — | ✅³ | TSExtension | oai completions |
-| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.24.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
+| [Pi](https://github.com/earendil-works/pi) | 1.1.x | ✅ | ✅ | — | ✅³ | TSExtension | oai completions |
+| [Qwen Code](https://github.com/nicepkg/qwen-code) | 0.25.x | ✅ | ✅ | ✅ | — | JSONNested | oai completions |
 
 **16/16** headless · **12/16** ACP · **4/16** SDK · **33 mode-tests in CI**
 
@@ -314,11 +314,11 @@ new process and records whether the agent raises the approval again, with what
 re-raised request instead of approving it; `inflight=hold` answers nothing on
 the resumed session either.
 
-**Six agents put an approval in flight, and not one of them mentions it again.**
-hermes, kilo, kimi, omp, opencode and qwen each asked before running a shell
+**Seven agents put an approval in flight, and not one of them mentions it again.**
+hermes, kilo, kimi, kiro, omp, opencode and qwen each asked before running a shell
 command, each resumed the session after the client was killed mid-approval, and
 each came back with nothing to say about the tool call that was waiting. No
-error, no repeated request; the work is simply gone. All six also resumed the
+error, no repeated request; the work is simply gone. All seven also resumed the
 same session twice.
 
 For a runner that is the shape to design around: an approval interrupted by a
@@ -340,10 +340,20 @@ through each agent's own shell tool:
 
 | Asked the client first | Ran it without asking |
 |------------------------|-----------------------|
-| gemini, hermes, kilo, kimi, omp, opencode, qwen | copilot, droid, goose, grok, kiro |
+| gemini, hermes, kilo, kimi, kiro, omp, opencode, qwen | copilot, droid, goose, grok |
 
-Seven of twelve. The earlier "none of them ask" was the measurement, not the
+Eight of twelve. The earlier "none of them ask" was the measurement, not the
 agents.
+
+kiro was in the right-hand column while this suite ran agentprotocol v0.13.0,
+and that was the client too. kiro sends `session/request_permission` with a
+string id; agentprotocol's ACP client before v0.15.0 read ids as integers,
+took the line for stdout noise and dropped it, and kiro, never answered, ran
+the command. The shared JSON-RPC transport (agentprotocol 7cd4d5b) echoes ids
+as they come, and kiro asks. Bisected in Docker on kiro 2.28.0; copilot, goose
+and grok answer the same on both clients. kiro's load after a kill was
+also refused for 2 s under v0.13.0 (`acp/resume.retried`) and is accepted on
+the first call under v0.19.0; that one was not bisected.
 
 Tool names are read off the wire with `--probe tools`, which prints
 what each agent declared to the model, and stored per agent as `ToolCallGated`.
@@ -814,6 +824,11 @@ in plain `exec` or over ACP; PreCompact fires only in the TUI. Measured on
 with the source for each. Written up for the vendor in
 [docs/droid-hooks.md](docs/droid-hooks.md).
 
+droid 0.236.0 runs UserPromptSubmit over ACP, and the hook's context reaches
+the model (`acp/hook.prompt` and `acp/hook-injection` pass in the nightly of
+2026-10-08; 0.235.0 skipped both). The registry's reason now names the
+versions before it.
+
 ### Reading and writing agents' own session stores
 
 `--probe transcript` decodes the session an agent saved after a turn, with the
@@ -853,6 +868,34 @@ blaming the agent: pi runs headless with `--no-session`, so the runner drops it
 when the transcript probe is on; and agents with `ACPNeedsTempHome` run under a
 temp `HOME`, so stores are opened at the HOME the agent was given, not the
 runner's.
+
+omp broke both seeds in October, each time through a rule the writer had
+guessed or left out:
+
+- **omp 18.5.0: the appended seed loaded and the fact never arrived.** The
+  writer named omp's project directory "-" and the last path element, as seen
+  on one sample. omp's rule (`getDefaultSessionDirName`) names a cwd from the
+  temp root before the home from 18.5.0, and the harness's agent home is under
+  `/tmp`, so omp moved its sessions to `-tmp-harness-test-omp-<n>-test-repo`.
+  The appended session went to the old directory as a second file with the
+  same id, and omp loaded its own. The omp writer now follows that rule, and
+  writes a session omp already keeps over its own file.
+- **omp 18.6: every hand-built seed was refused,** `Could not restore model
+  undefined/undefined`. omp's ACP `session/load` restores the session's model
+  and, with no UI to warn on, refuses a session whose model it cannot resolve.
+  The writer recorded none, so omp took `<provider>/<model>` from an assistant
+  message that has neither. A session omp gets afresh now starts with a
+  `model_change`, naming the session's own model, or for another agent's
+  session, that of omp's latest session in the store.
+
+Both are fixed in agentprotocol v0.19.0 and measured on omp 18.4.12 and 18.8.7.
+
+droid 0.236.0 refused the seedkinds session (`Load session request failed`).
+Its session schema types a tool call's `input` as an object, and 0.236.0
+enforces that on `session/load`; the session carries codex's freeform
+`apply_patch`, whose input is the patch as a string. The droid writer now keeps
+a non-object input under `"input"`, as the opencode writer does (agentprotocol
+v0.19.0, measured on 0.235.0 and 0.236.0).
 
 #### Which parts of an imported history reach the model
 
@@ -1286,9 +1329,9 @@ A red nightly: [docs/ci-playbook.md](docs/ci-playbook.md). `tests/triage.sh [run
 
 `tests/expected/<agent>.json` lists the agent's nightly runs (`name`, `mode`, `probes`, an optional `note`) and, per run, `checks`: id → `outcome[:answer]`. The comparison (`harness-test --compare <expected> --reports <dir>`) fails on any difference: a new failure, a finding that appears or disappears, a pass that becomes a skip, a check that is new or no longer reported, a run that did not finish. The default runs are `resume,inflight,compact,transcript,seed,seedkinds=shapes,tools,deferred,hidden`, then `resume=kill`, `inflight=cancel` and `inflight=hold` on their own, each time-boxed (`RUN_TIMEOUT`, 900 s).
 
-A check measured to vary between identical runs goes under the run's `nondeterministic`, with the outcomes seen and the reason; `"absent"` is an outcome for a check that is only sometimes asked. A timing dependency is fixed in the run instead where one can be: gemini's runs carry `resumeafter=65s`, because gemini 0.61 clobbers a session loaded in the UTC minute it was created, which made its resume and seed outcomes depend on the clock. `resumeafter` holds back every load of a session the agent wrote (the resume probe, both in-flight resumes, the compacted resume, the appended seed); with it, gemini's `inflight.resume-twice` is still refused 65 s after the first resume (`Invalid session identifier`), in every run: a property of gemini, not of the minute.
+A check measured to vary between identical runs goes under the run's `nondeterministic`, with the outcomes seen and the reason; `"absent"` is an outcome for a check that is only sometimes asked. A timing dependency is fixed in the run instead where one can be: gemini's runs carry `resumeafter=65s`, because gemini 0.61 clobbers a session loaded in the UTC minute it was created, which made its resume and seed outcomes depend on the clock. `resumeafter` holds back every load of a session the agent wrote (the resume probe, both in-flight resumes, the compacted resume, the appended seed); with it, gemini's `inflight.resume-twice` is still refused 65 s after the first resume (`Invalid session identifier`), in every run: a property of gemini, not of the minute. gemini 0.63.0 resumes it the second time (nightlies of 2026-10-07 and 2026-10-08, every in-flight run).
 
-`hidden` was added to the default probe run on 2026-09-25, generated in Docker and compared clean on one further run per agent; no other check changed. The seedkinds regression shapes (`seedkinds=shapes`) were added to the default probe run on 2026-09-25 with agentprotocol v0.13.0 and transcript/sqlite v0.6.0, generated in Docker and compared clean on one further run per agent; no other check changed. The seedkinds checks for another agent's content (foreign tool calls, a compaction, a tool image) were added on 2026-09-25, generated in Docker and compared clean on one further run per agent; nothing else changed with agentprotocol v0.12.1. The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok, kiro and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first.
+`hidden` was added to the default probe run on 2026-09-25, generated in Docker and compared clean on one further run per agent; no other check changed. The seedkinds regression shapes (`seedkinds=shapes`) were added to the default probe run on 2026-09-25 with agentprotocol v0.13.0 and transcript/sqlite v0.6.0, generated in Docker and compared clean on one further run per agent; no other check changed. The seedkinds checks for another agent's content (foreign tool calls, a compaction, a tool image) were added on 2026-09-25, generated in Docker and compared clean on one further run per agent; nothing else changed with agentprotocol v0.12.1. The expected files were generated in Docker on 2026-09-24 and compared clean on two further runs per agent (gemini: after the `resumeafter` change, one generating run and two clean comparisons). No check needed a `nondeterministic` entry. copilot, droid, goose, grok and pi run without `inflight=cancel`/`inflight=hold`: they run the gated tool without asking the client (`inflight.park = skip:not-gated`), so no answer is ever given and those runs repeat the first. On 2026-10-09, with agentprotocol v0.19.0 and transcript/sqlite v0.7.0, the claude, droid, gemini, kiro and omp files were regenerated in Docker and compared clean on one further run each, and copilot, goose and grok compared clean unchanged: omp and droid seed again (agentprotocol fixes), droid runs its prompt hook over ACP (0.236.0), gemini resumes a session twice (0.63.0), and kiro gates its shell tool and gained the `inflight=cancel`/`inflight=hold` runs.
 
 Regenerate after a deliberate change (a new check, a fixed bug, a new agent release that answers differently):
 

@@ -27,6 +27,7 @@ update
 --no-builtin-tools
 --no-context-files
 --no-extensions
+--no-mcp
 --no-prompt-templates
 --no-session
 --no-skills

@@ -73,7 +73,7 @@ func listJSON() []listEntry {
 	for _, name := range names {
 		h := harness.All[name]
 		out = append(out, listEntry{
-			Name: name, Binary: h.Binary, Session: h.DriverKind(),
+			Name: name, Binary: h.Binary, Session: string(h.DriverKind()),
 			Modes: nonNil(modesOf(h)), CIModes: nonNil(ciModes(h)),
 			CIExcluded: ciExcluded[name], NeedsIntercept: h.NeedsIntercept,
 		})

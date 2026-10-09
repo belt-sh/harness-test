@@ -11,7 +11,7 @@ install
 logs
 mcp
 plugin
-project
+purge
 respawn
 rm
 setup-token
@@ -35,7 +35,6 @@ update
 --bg
 --brief
 --chrome
---client-data-url
 --cloud
 --continue
 --dangerously-skip-permissions

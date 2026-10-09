@@ -1354,7 +1354,7 @@ func (r *TestRunner) resumeSession(id string, gated, emitReplay bool) *SessionDr
 // lines ACP agents have always produced.
 func (r *TestRunner) sessionLabel() string {
 	if k := r.harness.DriverKind(); k != harness.DriverACP {
-		return k
+		return string(k)
 	}
 	return "ACP"
 }

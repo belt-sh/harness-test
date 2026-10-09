@@ -238,7 +238,7 @@ func (r *TestRunner) probeHidden() {
 			continue
 		}
 		r.finding("hidden."+entry+".registry:unused", fmt.Sprintf("hidden: %s %s answers %s, and the registry's %s driver runs %s instead",
-			bin, label, c.how, orNone(r.harness.DriverKind()), orNone(describeEntries(used))))
+			bin, label, c.how, orNone(string(r.harness.DriverKind())), orNone(describeEntries(used))))
 	}
 }
 
